@@ -41,9 +41,8 @@
 
     <dependency>
       <groupId>dev.cronwatch</groupId>
-      <artifactId>cronwatch</artifactId>
+      <artifactId>cronwatch-webtest</artifactId>
       <version>${revision}</version>
-      <type>test-jar</type>
       <scope>test</scope>
     </dependency>
     <dependency>
