@@ -20,10 +20,11 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 /**
  * CronWatch's settings: where alerts go, the grace, the schedule, queues.
  *
- * A Drupal form, so it carries Drupal's form token. Secrets set here (the
- * Slack URL, the webhook's secret) are configuration, and so exported with
- * it; keep them out of the export by setting them in settings.php
- * ($config['cronwatch.settings']['slack_webhook_url'] = getenv(...)).
+ * A Drupal form, so it carries Drupal's form token. Keys, tokens, and the
+ * webhook's secret are password fields: never sent back to the browser,
+ * kept when left blank. Whatever is saved here is configuration, and so
+ * exported with it; the README shows how to keep secrets out of the export
+ * by setting them in settings.php instead.
  */
 final class SettingsForm extends ConfigFormBase {
 
@@ -124,13 +125,7 @@ final class SettingsForm extends ConfigFormBase {
       '#default_value' => (string) $config->get('webhook_url'),
       '#maxlength' => 2048,
     ];
-    $form['alerts']['webhook_secret'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Webhook signing secret'),
-      '#description' => $this->t('When set, each request is signed with HMAC-SHA256 in the X-CronWatch-Signature header.'),
-      '#default_value' => (string) $config->get('webhook_secret'),
-      '#maxlength' => 1024,
-    ];
+    $this->secretField($form['alerts'], 'webhook_secret', $this->t('Webhook signing secret'), $config, $this->t('When set, each request is signed with HMAC-SHA256 in the X-CronWatch-Signature header.'), 1024);
 
     $this->channelFields($form, $config);
 
@@ -183,6 +178,66 @@ final class SettingsForm extends ConfigFormBase {
   }
 
   /**
+   * A secret's field: a password field, so the saved secret is never sent
+   * back to the browser. Left blank, the saved one stays; "Remove it"
+   * clears it.
+   */
+  private function secretField(array &$parent, string $key, $title, $config, $help, int $max): void {
+    $saved = (string) $config->get($key) !== '';
+    $parent[$key] = [
+      '#type' => 'password',
+      '#title' => $title,
+      '#maxlength' => $max,
+      '#attributes' => ['autocomplete' => 'new-password'],
+    ];
+    $description = $saved ? $this->t('One is saved. Leave blank to keep it.') : NULL;
+    if ($help !== NULL) {
+      $description = $description === NULL ? $help : $this->t('@saved @help', ['@saved' => $description, '@help' => $help]);
+    }
+    if ($description !== NULL) {
+      $parent[$key]['#description'] = $description;
+    }
+    if ($saved) {
+      $parent["{$key}_clear"] = [
+        '#type' => 'checkbox',
+        '#title' => $this->t('Remove it'),
+      ];
+    }
+  }
+
+  /**
+   * What a secret's field means once submitted: the one typed in, else
+   * nothing when "Remove it" is ticked, else the saved one.
+   */
+  private function secretValue(FormStateInterface $form_state, string $key, bool $trim): string {
+    $typed = (string) $form_state->getValue($key);
+    if ($form_state->getValue("{$key}_clear")) {
+      return '';
+    }
+    if (trim($typed) !== '') {
+      return $trim ? trim($typed) : $typed;
+    }
+    return (string) $this->config('cronwatch.settings')->get($key);
+  }
+
+  /**
+   * The keys ChannelSettings marks as secrets.
+   *
+   * @return list<string>
+   */
+  private static function secretKeys(): array {
+    $keys = [];
+    foreach (ChannelSettings::providers() as $provider => $spec) {
+      foreach ($spec['fields'] as $field => $f) {
+        if ($f['kind'] === 'secret') {
+          $keys[] = "{$provider}_{$field}";
+        }
+      }
+    }
+    return $keys;
+  }
+
+  /**
    * The other channels' fields, by section, each provider folded away
    * until one of its fields is set.
    */
@@ -218,6 +273,13 @@ final class SettingsForm extends ConfigFormBase {
       ];
       foreach ($spec['fields'] as $field => $f) {
         $key = "{$provider}_{$field}";
+        if ($f['kind'] === 'secret') {
+          // phpcs:ignore Drupal.Semantics.FunctionT.NotLiteralString
+          $title = $f['required'] ? $this->t($f['label']) : $this->t('@label (optional)', ['@label' => $this->t($f['label'])]);
+          // phpcs:ignore Drupal.Semantics.FunctionT.NotLiteralString
+          $this->secretField($group, $key, $title, $config, isset($f['help']) ? $this->t($f['help']) : NULL, 2048);
+          continue;
+        }
         $group[$key] = [
           '#type' => $f['kind'] === 'choice' ? 'select' : 'textfield',
           // phpcs:ignore Drupal.Semantics.FunctionT.NotLiteralString -- the labels and help ChannelSettings holds, translated where a translation exists.
@@ -261,7 +323,10 @@ final class SettingsForm extends ConfigFormBase {
         $form_state->setErrorByName('schedule', $error->getMessage());
       }
     }
-    $problems = ChannelSettings::problems(fn (string $key): string => (string) $form_state->getValue($key));
+    $secrets = self::secretKeys();
+    $problems = ChannelSettings::problems(fn (string $key): string => in_array($key, $secrets, TRUE)
+      ? $this->secretValue($form_state, $key, TRUE)
+      : (string) $form_state->getValue($key));
     foreach ($problems as $key => $message) {
       $form_state->setErrorByName($key, $message);
     }
@@ -280,14 +345,16 @@ final class SettingsForm extends ConfigFormBase {
     $queues = array_values(array_filter((array) $form_state->getValue('queues'), fn ($value) => is_string($value) && $value !== ''));
     $before = (array) $this->config('cronwatch.settings')->get('queues');
     $config = $this->config('cronwatch.settings');
+    $secrets = self::secretKeys();
     foreach (array_keys(ChannelSettings::defaults()) as $key) {
-      $config->set($key, trim((string) $form_state->getValue($key)));
+      $config->set($key, in_array($key, $secrets, TRUE) ? $this->secretValue($form_state, $key, TRUE) : trim((string) $form_state->getValue($key)));
     }
     $config
       ->set('email_to', trim((string) $form_state->getValue('email_to')))
       ->set('slack_webhook_url', trim((string) $form_state->getValue('slack_webhook_url')))
       ->set('webhook_url', trim((string) $form_state->getValue('webhook_url')))
-      ->set('webhook_secret', (string) $form_state->getValue('webhook_secret'))
+      // Signed with exactly as typed, as in every port.
+      ->set('webhook_secret', $this->secretValue($form_state, 'webhook_secret', FALSE))
       ->set('grace', trim((string) $form_state->getValue('grace')))
       ->set('schedule', trim((string) $form_state->getValue('schedule')))
       ->set('check_on_cron', (bool) $form_state->getValue('check_on_cron'))
