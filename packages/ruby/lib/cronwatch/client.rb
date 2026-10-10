@@ -926,7 +926,7 @@ module Cronwatch
       if threw
         run.status = :failed
         run.error = Output.describe_error(error)
-      elsif (problem = failure&.call(result))
+      elsif (problem = failure_of(failure, result))
         run.status = :failed
         run.error = Output.utf8(problem.to_s)
       else
@@ -943,6 +943,14 @@ module Cronwatch
       # go last, so not even a custom redact can store one.
       run.output = Output.redact_and_cap(run.output, @redact) unless run.output.nil?
       run.error = Output.redact_and_cap(run.error, @redact) unless run.error.nil?
+    end
+
+    # What the failure: callable makes of the result, or nil. One that raises
+    # fails the run with its error described, so the run is still recorded.
+    def failure_of(failure, result)
+      failure&.call(result)
+    rescue StandardError => e
+      Output.describe_error(e)
     end
 
     # Writes a finished run and evaluates it. `recorded` says whether its
