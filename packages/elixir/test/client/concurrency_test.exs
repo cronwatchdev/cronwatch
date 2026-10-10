@@ -99,7 +99,8 @@ defmodule Cronwatch.ConcurrencyTest do
     name = shared_memory()
     %{cw: cw, errors: errors} = make(store: Wrap.spec(inner: Wrap.memory(name), refuse_cas: true))
     assert_raise RuntimeError, "x", fn -> Cronwatch.run("busy", fn _ -> raise "x" end, instance: cw) end
-    assert wheres(errors) == ["evaluating busy"]
+    # The start's write (it holds the run as pending) loses too, and is reported the same way.
+    assert wheres(errors) == ["starting busy", "evaluating busy"]
     assert hd(Cronwatch.runs!("busy", 50, instance: cw)).status == "failed"
   end
 

@@ -83,8 +83,9 @@ defmodule Cronwatch.Check do
           Delivery.report_dropped(c, stored.name, dropped)
           {retried, spent} = Delivery.retry_undelivered(c, stored.name, state, now, spent)
           sent = Delivery.dispatch(c, stored.name, held, now)
+          lost = evaluate_pending(c, stored, recent, state, now)
           {:ok, summary} = ok!(Evaluate.summarize(stored, recent, state, next, now))
-          {jobs ++ [summary], alerts ++ retried ++ sent, spent}
+          {jobs ++ [summary], alerts ++ retried ++ sent ++ lost, spent}
         rescue
           e ->
             Core.report(c, e, "checking #{stored.name}")
@@ -108,6 +109,39 @@ defmodule Cronwatch.Check do
       end
 
     %CheckResult{checked_at: now, jobs: jobs, alerts: alerts, pruned: pruned}
+  end
+
+  # Runs the job's state still holds as pending (Evaluate.hold_run) whose
+  # finish was written but never evaluated: the process that finished them
+  # stopped, or its state write failed, between the two writes. Each one
+  # finished more than the send lease ago is evaluated now, as its finish
+  # would have been; one still running is left to the stuck check, and one
+  # the store no longer has (given back, or pruned) is let go. The wait
+  # leaves a finish under way in another process to write its own
+  # evaluation.
+  defp evaluate_pending(c, stored, recent, state, now) do
+    Enum.flat_map(state.pending_runs || [], fn id ->
+      try do
+        run = Enum.find(recent, &(&1.id == id)) || Core.store!(c, :get_run, [id])
+
+        cond do
+          run == nil or run.job != stored.name ->
+            Core.update_state!(c, stored.name, fn current -> {Evaluate.release_run(current, id), nil} end)
+            []
+
+          run.status == "running" or not is_number(run.finished_at) or
+              run.finished_at > now - Evaluate.send_lease_ms() ->
+            []
+
+          true ->
+            Core.finish_run(c, stored.definition, run, now)
+        end
+      rescue
+        e ->
+          Core.report(c, e, "evaluating run #{id} of #{stored.name}")
+          []
+      end
+    end)
   end
 
   # Every stored job, once each declaration has been written. A job declared
@@ -399,7 +433,7 @@ defmodule Cronwatch.Check do
 
           :inserted ->
             if evaluate? do
-              Core.update_state!(c, run.job, fn before -> {Evaluate.on_run_start(before), nil} end)
+              Core.update_state!(c, run.job, fn before -> {Evaluate.start_run(before, run.id), nil} end)
               if run.status == "running", do: [], else: Core.finish_run(c, definition, run, Core.now(c))
             else
               []
@@ -431,8 +465,14 @@ defmodule Cronwatch.Check do
             Core.report(c, Error.other("run #{run.id} of #{run.job} #{why}; ignored"), "recording #{run.job}")
             []
 
+          {:ok, _late} when not evaluate? ->
+            # Stored unjudged on purpose: a check must not evaluate it as one
+            # whose evaluation was lost.
+            Core.release_run(c, run.job, run.id)
+            []
+
           {:ok, late} ->
-            if not evaluate? or (late and run.status != "ok"),
+            if late and run.status != "ok",
               do: [],
               else: Core.finish_run(c, definition, run, Core.now(c))
         end

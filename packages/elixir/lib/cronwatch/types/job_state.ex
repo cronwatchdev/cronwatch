@@ -15,7 +15,11 @@ defmodule Cronwatch.JobState do
   the keys a newer writer added are kept); it is `nil` when it holds
   nothing, and the key is then left out. `under_floor` holds the metrics
   under their floor at the job's last successful run, `nil` (and the key
-  left out) when there are none. `version` goes up by one on every
+  left out) when there are none. `pending_runs` holds the ids of runs
+  started and not yet judged, oldest first: a run leaves when its finish
+  is evaluated, and a check evaluates one it finds finished and still here
+  (the process that finished it stopped before writing its evaluation);
+  `nil` (and the key left out) when there are none. `version` goes up by one on every
   write (see `c:Cronwatch.Store.compare_and_set_state/3`), `nil`
   for a state written before versions, which counts as 0. `extra` keeps the
   keys after the known ones, in stored order (`version` and any a newer
@@ -36,6 +40,7 @@ defmodule Cronwatch.JobState do
             undelivered: nil,
             sending: nil,
             under_floor: nil,
+            pending_runs: nil,
             version: nil,
             extra: []
 
@@ -49,6 +54,7 @@ defmodule Cronwatch.JobState do
           undelivered: [Alert.t()] | nil,
           sending: [sending()] | nil,
           under_floor: [String.t()] | nil,
+          pending_runs: [String.t()] | nil,
           version: integer() | nil,
           extra: [{String.t(), Cronwatch.JS.Object.value()}]
         }
@@ -65,7 +71,8 @@ defmodule Cronwatch.JobState do
     "pendingRecovery",
     "undelivered",
     "sending",
-    "underFloor"
+    "underFloor",
+    "pendingRuns"
   ]
 
   @doc false
@@ -136,6 +143,7 @@ defmodule Cronwatch.JobState do
     # Only while it holds an alert: never written as [].
     head = if s.sending in [nil, []], do: head, else: head ++ [{"sending", Enum.map(s.sending, &sending_value/1)}]
     head = if s.under_floor in [nil, []], do: head, else: head ++ [{"underFloor", s.under_floor}]
+    head = if s.pending_runs in [nil, []], do: head, else: head ++ [{"pendingRuns", s.pending_runs}]
     o = %Object{pairs: head}
 
     {o, wrote} =
@@ -232,6 +240,12 @@ defmodule Cronwatch.JobState do
         _ -> []
       end
 
+    pending_runs =
+      case Object.get(o, "pendingRuns") do
+        list when is_list(list) -> Enum.filter(list, &is_binary/1)
+        _ -> []
+      end
+
     extra = Enum.reject(o.pairs, fn {k, _} -> k in @known end)
 
     {:ok,
@@ -245,6 +259,7 @@ defmodule Cronwatch.JobState do
        undelivered: undelivered,
        sending: sending,
        under_floor: if(under_floor == [], do: nil, else: under_floor),
+       pending_runs: if(pending_runs == [], do: nil, else: pending_runs),
        version: read_version(Object.get(o, "version")),
        extra: extra
      }}

@@ -55,7 +55,8 @@ defmodule Cronwatch.Evaluate do
         pending_recovery: s.pending_recovery || [],
         undelivered: s.undelivered || [],
         sending: if(s.sending in [nil, []], do: nil, else: s.sending),
-        under_floor: if(s.under_floor in [nil, []], do: nil, else: s.under_floor)
+        under_floor: if(s.under_floor in [nil, []], do: nil, else: s.under_floor),
+        pending_runs: if(s.pending_runs in [nil, []], do: nil, else: s.pending_runs)
     }
   end
 
@@ -173,6 +174,79 @@ defmodule Cronwatch.Evaluate do
     }
 
     queue_undelivered(next, failed)
+  end
+
+  @doc """
+  A check's claim on the undelivered queue, written before it sends, so two
+  processes checking at once never retry the same alert: the queued alerts
+  that still describe the job move into `sending`, oldest first, each with
+  its lease ending at `until`, as many as `sending` has room for under
+  #{@max_undelivered} (the rest wait for the next check); stale ones
+  (`stale_alert?/2`) leave the queue. While the job is silenced only
+  recoveries are claimed. The process whose write lands sends what was
+  claimed. Answers the state, the claimed alerts, and the stale ones.
+  """
+  @spec claim_undelivered(JobState.t(), integer(), integer()) :: {JobState.t(), [Alert.t()], [Alert.t()]}
+  def claim_undelivered(%JobState{} = state, now, until) do
+    next = clone(state)
+    queue = Enum.with_index(next.undelivered)
+    stale = Enum.filter(queue, fn {a, _} -> stale_alert?(a, next) end)
+    stale_at = MapSet.new(stale, &elem(&1, 1))
+    silenced = silenced?(next, now)
+    room = max(0, @max_undelivered - length(next.sending || []))
+
+    claimed =
+      queue
+      |> Enum.filter(fn {a, i} -> not MapSet.member?(stale_at, i) and (not silenced or a.type == "recovered") end)
+      |> Enum.take(room)
+
+    if stale == [] and claimed == [] do
+      {state, [], []}
+    else
+      gone = MapSet.union(stale_at, MapSet.new(claimed, &elem(&1, 1)))
+      claimed = Enum.map(claimed, &elem(&1, 0))
+
+      sending =
+        if claimed == [],
+          do: next.sending,
+          else: (next.sending || []) ++ Enum.map(claimed, &JobState.sending(&1, until))
+
+      next = %{next | undelivered: for({a, i} <- queue, not MapSet.member?(gone, i), do: a), sending: sending}
+      {next, claimed, Enum.map(stale, &elem(&1, 0))}
+    end
+  end
+
+  @max_pending_runs 100
+
+  @doc "Runs held in `pending_runs` per job; past it the oldest go."
+  @spec max_pending_runs() :: pos_integer()
+  def max_pending_runs, do: @max_pending_runs
+
+  @doc """
+  A run just started, held in `pending_runs` until its finish is evaluated
+  (`release_run/2`), so a check can evaluate it if the process that finished
+  it stops before writing the evaluation. Written with `on_run_start/1`'s
+  state. Only the newest #{@max_pending_runs} are kept.
+  """
+  @spec hold_run(JobState.t(), String.t()) :: JobState.t()
+  def hold_run(%JobState{} = state, run_id) do
+    next = clone(state)
+    held = Enum.reject(next.pending_runs || [], &(&1 == run_id)) ++ [run_id]
+    %{next | pending_runs: Enum.take(held, -@max_pending_runs)}
+  end
+
+  @doc "A run taken out of `pending_runs`, as its evaluation is written or once it is gone from the store."
+  @spec release_run(JobState.t(), String.t()) :: JobState.t()
+  def release_run(%JobState{} = state, run_id) do
+    held = state.pending_runs || []
+
+    if run_id in held do
+      next = clone(state)
+      left = Enum.reject(held, &(&1 == run_id))
+      %{next | pending_runs: if(left == [], do: nil, else: left)}
+    else
+      state
+    end
   end
 
   defp clone(%JobState{} = s), do: normalize_state(s, s.job)
@@ -421,6 +495,9 @@ defmodule Cronwatch.Evaluate do
   def on_run_start(state) do
     state |> clone() |> close_condition("missed") |> close_condition("stuck")
   end
+
+  @doc "A run's start as it is written: `on_run_start/1`, and the run held as pending (`hold_run/2`)."
+  def start_run(state, run_id), do: state |> on_run_start() |> hold_run(run_id)
 
   # Math.max(1, def.failuresBeforeAlert ?? 1)
   defp failures_before_alert(def) do
@@ -675,9 +752,16 @@ defmodule Cronwatch.Evaluate do
 
   def silenced?(%JobState{silenced_until: until}, now), do: until != nil and until > now
 
-  @doc "An evaluation as it is saved and sent: while the job was silenced when it began, nothing opens and nothing is sent."
+  @doc """
+  An evaluation as it is saved and sent: while the job was silenced when it
+  began, nothing opens and no new alert is sent, but a recovery is. A
+  condition can only close during a silence if it opened (and alerted)
+  before it, so its recovery closes an incident someone was told about.
+  """
   def apply_silence(previous, {state, alerts}, now) do
-    if silenced?(previous, now), do: {mute_opens(previous, state), []}, else: {state, alerts}
+    if silenced?(previous, now),
+      do: {mute_opens(previous, state), Enum.filter(alerts, &(elem(&1, 0) == "recovered"))},
+      else: {state, alerts}
   end
 
   @doc """

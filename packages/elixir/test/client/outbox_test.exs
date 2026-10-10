@@ -10,6 +10,8 @@ defmodule Cronwatch.OutboxTest do
   import Cronwatch.Test.More
 
   alias Cronwatch.Evaluate
+  alias Cronwatch.JobState
+  alias Cronwatch.Store.Memory
   alias Cronwatch.Test.Capture
   alias Cronwatch.Test.Clock
   alias Cronwatch.Test.Wrap
@@ -192,7 +194,128 @@ defmodule Cronwatch.OutboxTest do
     s = state(store_of(cw), "backup")
     assert Enum.map(s.undelivered, & &1.type) == ["failed"]
     assert s.sending == nil
-    assert count(writes) == 1, "one write: the failure and its alert together"
+    assert s.pending_runs == nil
+
+    assert count(writes) == 2,
+           "the start holds the run; then one write: the failure, its alert, and the run's release together"
+  end
+
+  # A channel that refuses while `down` holds 1, and tells the test each
+  # alert it took.
+  defp flaky(test, down) do
+    channel("flaky", fn alert ->
+      if :atomics.get(down, 1) == 1 do
+        {:error, "down"}
+      else
+        send(test, {:sent, alert.type})
+        :ok
+      end
+    end)
+  end
+
+  defp sent_types do
+    receive do
+      {:sent, type} -> [type | sent_types()]
+    after
+      0 -> []
+    end
+  end
+
+  test "two processes checking at once retry a queued alert once: the one whose claim lands sends it" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    down = :atomics.new(1, [])
+    :atomics.put(down, 1, 1)
+    test = self()
+    %{cw: a} = make(store: Wrap.spec(inner: shared), clock_ref: clock, alerts: [flaky(test, down)])
+    %{cw: b} = make(store: Wrap.spec(inner: shared), clock_ref: clock, alerts: [flaky(test, down)])
+    assert_raise RuntimeError, fn -> Cronwatch.run("nightly", fn _ -> raise "disk full" end, instance: a) end
+    assert Enum.map(state(shared, "nightly").undelivered, & &1.type) == ["failed"]
+    :atomics.put(down, 1, 0)
+    Clock.advance(clock, @min)
+    [ta, tb] = for cw <- [a, b], do: Task.async(fn -> Cronwatch.check!(instance: cw) end)
+    Task.await(ta)
+    Task.await(tb)
+    assert sent_types() == ["failed"]
+    s = state(shared, "nightly")
+    assert s.undelivered == []
+    assert s.sending == nil
+  end
+
+  test "while a job is silenced a retry claims only recoveries; the rest wait in the queue" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    down = :atomics.new(1, [])
+    :atomics.put(down, 1, 1)
+    %{cw: cw} = make(store: Wrap.spec(inner: shared), clock_ref: clock, alerts: [flaky(self(), down)])
+    assert_raise RuntimeError, fn -> Cronwatch.run("nightly", fn _ -> raise "disk full" end, instance: cw) end
+    Cronwatch.silence!("nightly", "1h", instance: cw)
+    :atomics.put(down, 1, 0)
+    Clock.advance(clock, @min)
+    Cronwatch.check!(instance: cw)
+    assert sent_types() == []
+    assert Enum.map(state(shared, "nightly").undelivered, & &1.type) == ["failed"]
+    Cronwatch.unsilence!("nightly", instance: cw)
+    Cronwatch.check!(instance: cw)
+    assert sent_types() == ["failed"]
+  end
+
+  test "a finished run whose evaluation was never written is evaluated by a later check, once" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    # The finish's state write keeps losing, as if the process stopped
+    # between the run's write and its evaluation.
+    refuse = :atomics.new(1, [])
+    store = Wrap.spec(inner: shared, refuse_cas_when: fn -> :atomics.get(refuse, 1) == 1 end)
+    %{cw: cw, alerts: alerts} = make(store: store, clock_ref: clock)
+    {:ok, handle} = Cronwatch.start(Cronwatch.job!("nightly", instance: cw))
+    :atomics.put(refuse, 1, 1)
+    Cronwatch.fail(handle, "disk full")
+    :atomics.put(refuse, 1, 0)
+    {Memory, h} = shared
+    {:ok, run} = Memory.get_run(h, handle.id)
+    assert run.status == "failed"
+    assert Capture.types(alerts) == []
+    assert state(shared, "nightly").pending_runs == [handle.id]
+
+    # Left alone at first, in case its finish is still being written elsewhere.
+    Clock.advance(clock, @min)
+    Cronwatch.check!(instance: cw)
+    assert Capture.types(alerts) == []
+    Clock.advance(clock, Evaluate.send_lease_ms())
+    Cronwatch.check!(instance: cw)
+    assert Capture.types(alerts) == ["failed"]
+    assert state(shared, "nightly").pending_runs == nil
+    Cronwatch.check!(instance: cw)
+    assert Capture.types(alerts) == ["failed"]
+  end
+
+  test "a pending run the store no longer has is let go, and a run stored unjudged on purpose is not evaluated" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    %{cw: cw, alerts: alerts} = make(store: Wrap.spec(inner: shared), clock_ref: clock)
+    Cronwatch.job!("nightly", instance: cw)
+    {Memory, h} = shared
+
+    {:ok, gone} =
+      JobState.from_json(
+        ~s({"job":"nightly","open":{},"consecutiveFailures":0,"silencedUntil":null,"lastAlertAt":null,"pendingRuns":["gone"]})
+      )
+
+    :ok = Memory.set_state(h, gone)
+    Cronwatch.check!(instance: cw)
+    assert state(shared, "nightly").pending_runs == nil
+
+    run = %Cronwatch.Run{id: "imported", job: "nightly", status: "running", started_at: Clock.now(clock), trigger: "x"}
+    Cronwatch.record_run!(run, instance: cw)
+    assert state(shared, "nightly").pending_runs == ["imported"]
+
+    finished = %{run | status: "failed", finished_at: Clock.now(clock), duration_ms: 0, error: "x"}
+    Cronwatch.record_run!(finished, instance: cw, evaluate: false)
+    assert state(shared, "nightly").pending_runs == nil
+    Clock.advance(clock, Evaluate.send_lease_ms() + @min)
+    Cronwatch.check!(instance: cw)
+    assert Capture.types(alerts) == []
   end
 
   defp store_of(cw), do: Cronwatch.Config.get(cw).store

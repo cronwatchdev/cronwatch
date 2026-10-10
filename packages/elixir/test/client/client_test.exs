@@ -157,7 +157,7 @@ defmodule Cronwatch.ClientTest do
     assert Capture.types(alerts) == ["missed", "recovered"], "the next run owes nothing"
   end
 
-  test "a schedule removed while silenced closes missed quietly" do
+  test "a schedule removed while silenced closes missed with its recovery, which the silence does not hold back" do
     %{cw: cw, clock: c, alerts: alerts} = make()
     Cronwatch.job!("sync", schedule: "every 1h", grace: "10m", instance: cw)
     Cronwatch.check!(instance: cw)
@@ -166,11 +166,11 @@ defmodule Cronwatch.ClientTest do
     Cronwatch.silence!("sync", "1h", instance: cw)
     Cronwatch.job!("sync", instance: cw)
     Clock.advance(c, @min)
-    assert Cronwatch.check!(instance: cw).alerts == []
+    assert Enum.map(Cronwatch.check!(instance: cw).alerts, & &1.type) == ["recovered"]
     assert Cronwatch.job_summary!("sync", instance: cw).open == []
     Clock.advance(c, 2 * @hour)
     assert Cronwatch.check!(instance: cw).alerts == []
-    assert Capture.types(alerts) == ["missed"]
+    assert Capture.types(alerts) == ["missed", "recovered"]
   end
 
   test "check marks a run that never finished as stuck" do
@@ -294,6 +294,38 @@ defmodule Cronwatch.ClientTest do
     Cronwatch.unsilence!("flaky", instance: cw)
     assert_raise RuntimeError, fn -> Cronwatch.run(job, fn _ -> raise "y" end) end
     assert Capture.types(alerts) == ["failed"]
+  end
+
+  test "a recovery for an alert sent before the silence is sent during it; new problems are not" do
+    %{cw: cw, alerts: alerts} = make()
+    job = Cronwatch.job!("flaky", instance: cw)
+    assert_raise RuntimeError, fn -> Cronwatch.run(job, fn _ -> raise "x" end) end
+    Cronwatch.silence!("flaky", "1h", instance: cw)
+    Cronwatch.run(job, fn _ -> "ok" end)
+    assert Capture.types(alerts) == ["failed", "recovered"]
+    assert_raise RuntimeError, fn -> Cronwatch.run(job, fn _ -> raise "y" end) end
+    assert Capture.types(alerts) == ["failed", "recovered"]
+  end
+
+  test "after a forget, run/3 and resume_run/3 by name declare the job again as it was written, not bare" do
+    %{cw: cw, clock: c, alerts: alerts} = make()
+    options = [schedule: "0 2 * * *", description: "Nightly export", instance: cw]
+    Cronwatch.job!("nightly", options)
+    Cronwatch.run("nightly", fn _ -> :ok end, instance: cw)
+    {:ok, handle} = Cronwatch.start(Cronwatch.job!("nightly", options))
+    :ok = Cronwatch.forget("nightly", instance: cw)
+    assert Cronwatch.job_summary!("nightly", instance: cw) == nil
+    Cronwatch.run("nightly", fn _ -> :ok end, instance: cw)
+    summary = Cronwatch.job_summary!("nightly", instance: cw)
+    assert Object.get(summary.definition, "schedule") == "0 2 * * *"
+    assert Object.get(summary.definition, "description") == "Nightly export"
+    :ok = Cronwatch.forget("nightly", instance: cw)
+    {:ok, resumed} = Cronwatch.resume_run("nightly", handle.id, instance: cw)
+    assert resumed.id == handle.id
+    Clock.advance(c, @hour)
+    Cronwatch.check!(instance: cw)
+    assert Object.get(Cronwatch.job_summary!("nightly", instance: cw).definition, "schedule") == "0 2 * * *"
+    refute "recovered" in Capture.types(alerts), "no 'no longer scheduled' recovery"
   end
 
   test "triage output is attached to failure alerts and never blocks them" do
