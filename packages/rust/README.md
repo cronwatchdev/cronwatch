@@ -122,7 +122,7 @@ let app = axum::Router::new().nest_service("/cronwatch", routes);
 # }
 ```
 
-Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps you signed in. Without a token it answers 503, except in development (`CRONWATCH_ENV`, `APP_ENV`, or `RUST_ENV` set to `development`, `dev`, `local`, `test`, or `testing`), where it makes one and prints a sign-in link on its first request; `RoutesOptions::no_token()` serves it open behind your own auth. Writes from another site are refused. Behind a proxy, `origin("https://app.example.com")` or `trust_proxy()` says what the browser sees. With the `tower` feature `Routes` is a `tower::Service` for hyper, tonic, or anything else built on tower; without it, `routes.handle(web::Request)` answers a `web::Response` for a framework of your own.
+Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps you signed in. Without a token it answers 503, except in development (`CRONWATCH_ENV`, `APP_ENV`, or `RUST_ENV` set to `development`, `dev`, `local`, `test`, or `testing`), where it makes one and prints a sign-in link on its first request; `RoutesOptions::no_token()` serves it open behind your own auth. Writes from another site are refused. Behind a proxy, `origin("https://app.example.com")` or `trust_proxy()` says what the browser sees. An app that terminates TLS itself (axum-server with rustls, say) marks its requests with `.layer(axum::Extension(cronwatch::web::Tls))` or sets `origin`: an HTTP/1.1 request does not say it came over TLS, and without either the dashboard's forms are refused as cross-site. With the `tower` feature `Routes` is a `tower::Service` for hyper, tonic, or anything else built on tower; without it, `routes.handle(web::Request)` answers a `web::Response` for a framework of your own.
 
 ## Handler
 
@@ -140,6 +140,8 @@ let app = axum::Router::new().route_service("/api/cron/nightly", handler);
 ```
 
 It is a tower service too, so on AWS Lambda `lambda_http::run(handler)` serves it (and `lambda_http::run(routes)` the dashboard) with no code of the crate's own. An EventBridge Scheduler invoking the function directly sends no bearer, so give that handler `HandlerOptions::new().no_secret()`.
+
+The function runs in a task of its own, so a caller that hangs up or a platform deadline that passes leaves the job running to its end, recorded as it really ends, as the SDK's handler does. `HandlerOptions::new().cancel_with_request()` runs it in the request's future instead, cancelled and recorded as failed when the request is dropped.
 
 ## Runs that span calls
 

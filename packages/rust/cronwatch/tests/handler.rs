@@ -7,6 +7,8 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use common::{Kit, T0};
 use cronwatch::js::{self, Object, Value};
@@ -277,4 +279,75 @@ async fn the_handler_as_a_tower_service_and_behind_a_real_server() {
     assert!(body.starts_with(r#"{"ok":true,"job":"served","run":""#), "{body}");
     assert_eq!(k.runs("served").await[0].output.as_deref(), Some("POST /api/cron/served over the wire"));
     server.abort();
+}
+
+/// A handler whose job waits for `go` after telling `started`.
+fn waiting(
+    job: &cronwatch::Job,
+    options: HandlerOptions,
+) -> (cronwatch::Handler, tokio::sync::mpsc::Receiver<()>, Arc<tokio::sync::Notify>) {
+    let (started, wait_started) = tokio::sync::mpsc::channel(1);
+    let go = Arc::new(tokio::sync::Notify::new());
+    let gate = go.clone();
+    let h = job.handler(
+        move |j, _req| {
+            let (started, gate) = (started.clone(), gate.clone());
+            async move {
+                started.send(()).await.unwrap();
+                gate.notified().await;
+                j.log("finished after the caller left");
+                Ok::<_, std::io::Error>(())
+            }
+        },
+        options,
+    );
+    (h, wait_started, go)
+}
+
+#[tokio::test]
+async fn a_dropped_request_leaves_the_run_going() {
+    let k = Kit::new();
+    let job = k.cw.job("long", JobOptions::new()).unwrap();
+    let (h, mut started, go) = waiting(&job, HandlerOptions::new());
+    let request = tokio::spawn({
+        let h = h.clone();
+        async move { h.handle(Request::new("GET", "/api/cron/long")).await }
+    });
+    started.recv().await.unwrap();
+    // The caller goes away (a client timeout, a platform's deadline).
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    go.notify_one();
+    for _ in 0..200 {
+        if k.runs("long").await.first().is_some_and(|r| r.status != RunStatus::Running) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let run = &k.runs("long").await[0];
+    assert_eq!(run.status, RunStatus::Ok, "recorded as it really ended: {:?}", run.error);
+    assert_eq!(run.output.as_deref(), Some("finished after the caller left"));
+}
+
+#[tokio::test]
+async fn cancel_with_request_cancels_the_run() {
+    let k = Kit::new();
+    let job = k.cw.job("long", JobOptions::new()).unwrap();
+    let (h, mut started, _go) = waiting(&job, HandlerOptions::new().cancel_with_request());
+    let request = tokio::spawn({
+        let h = h.clone();
+        async move { h.handle(Request::new("GET", "/api/cron/long")).await }
+    });
+    started.recv().await.unwrap();
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    for _ in 0..200 {
+        if k.runs("long").await.first().is_some_and(|r| r.status != RunStatus::Running) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let run = &k.runs("long").await[0];
+    assert_eq!(run.status, RunStatus::Failed);
+    assert_eq!(run.error.as_deref(), Some("Cancelled: the run's future was dropped before it finished"));
 }
