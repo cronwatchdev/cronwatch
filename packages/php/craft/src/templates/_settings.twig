@@ -1,12 +1,38 @@
 {% import '_includes/forms.twig' as forms %}
 
+{#
+  A field config/cronwatch.php sets is shown disabled and empty, so a value the file reads from the
+  environment never reaches the page. A secret written in plain is never shown again: its field left
+  blank keeps it, and its "Remove it" box clears it. An environment variable's name is shown as written.
+#}
+{% macro instructions(name, help, overrides, saved) %}
+  {%- if name in overrides -%}
+    {{ 'Set in config/cronwatch.php.'|t('cronwatch') }}
+  {%- elseif name in saved -%}
+    {{ 'One is saved. Leave blank to keep it.'|t('cronwatch') }}{{ help ? ' ' ~ help }}
+  {%- else -%}
+    {{ help }}
+  {%- endif -%}
+{% endmacro %}
+
+{% macro removeBox(name, saved) %}
+  {% import '_includes/forms.twig' as forms %}
+  {% if name in saved %}
+    {{ forms.checkboxField({
+      label: 'Remove it'|t('cronwatch'),
+      name: name ~ 'Clear',
+      value: '1',
+    }) }}
+  {% endif %}
+{% endmacro %}
+
 <p>{{ 'Nothing leaves the site until a channel is set; with none, alerts go to Craft’s log. Each field takes an environment variable ($SLACK_WEBHOOK_URL), so a credential need not be in project config.'|t('cronwatch') }}</p>
 
 {{ forms.autosuggestField({
   label: 'Email alerts to'|t('cronwatch'),
-  instructions: 'One or more addresses, separated by commas. Sent through Craft’s mailer.'|t('cronwatch'),
+  instructions: _self.instructions('emailTo', 'One or more addresses, separated by commas. Sent through Craft’s mailer.'|t('cronwatch'), overrides, saved),
   name: 'emailTo',
-  value: settings.emailTo,
+  value: values.emailTo,
   suggestEnvVars: true,
   errors: settings.getErrors('emailTo'),
   disabled: 'emailTo' in overrides,
@@ -14,8 +40,9 @@
 
 {{ forms.autosuggestField({
   label: 'Slack incoming webhook URL'|t('cronwatch'),
+  instructions: _self.instructions('slackWebhookUrl', null, overrides, saved),
   name: 'slackWebhookUrl',
-  value: settings.slackWebhookUrl,
+  value: values.slackWebhookUrl,
   suggestEnvVars: true,
   errors: settings.getErrors('slackWebhookUrl'),
   disabled: 'slackWebhookUrl' in overrides,
@@ -23,9 +50,9 @@
 
 {{ forms.autosuggestField({
   label: 'Webhook URL'|t('cronwatch'),
-  instructions: 'Each alert is POSTed here as JSON.'|t('cronwatch'),
+  instructions: _self.instructions('webhookUrl', 'Each alert is POSTed here as JSON.'|t('cronwatch'), overrides, saved),
   name: 'webhookUrl',
-  value: settings.webhookUrl,
+  value: values.webhookUrl,
   suggestEnvVars: true,
   errors: settings.getErrors('webhookUrl'),
   disabled: 'webhookUrl' in overrides,
@@ -33,13 +60,14 @@
 
 {{ forms.autosuggestField({
   label: 'Webhook signing secret'|t('cronwatch'),
-  instructions: 'When set, each request is signed with HMAC-SHA256 in the X-CronWatch-Signature header.'|t('cronwatch'),
+  instructions: _self.instructions('webhookSecret', 'When set, each request is signed with HMAC-SHA256 in the X-CronWatch-Signature header.'|t('cronwatch'), overrides, saved),
   name: 'webhookSecret',
-  value: settings.webhookSecret,
+  value: values.webhookSecret,
   suggestEnvVars: true,
   errors: settings.getErrors('webhookSecret'),
   disabled: 'webhookSecret' in overrides,
 }) }}
+{{ _self.removeBox('webhookSecret', saved) }}
 
 <h2>{{ 'More channels'|t('cronwatch') }}</h2>
 <p>{{ 'Each channel sends once all of its required fields are set. Put keys and tokens in environment variables ($RESEND_API_KEY) to keep them out of project config.'|t('cronwatch') }}</p>
@@ -59,8 +87,9 @@
           {% endfor %}
           {{ forms.selectField({
             label: label,
+            instructions: field.name in overrides ? 'Set in config/cronwatch.php.'|t('cronwatch') : null,
             name: field.name,
-            value: attribute(settings, field.name),
+            value: values[field.name] ?? '',
             options: options,
             errors: settings.getErrors(field.name),
             disabled: field.name in overrides,
@@ -68,13 +97,14 @@
         {% else %}
           {{ forms.autosuggestField({
             label: label,
-            instructions: field.help is defined ? field.help|t('cronwatch') : null,
+            instructions: _self.instructions(field.name, field.help is defined ? field.help|t('cronwatch') : null, overrides, saved),
             name: field.name,
-            value: attribute(settings, field.name),
+            value: values[field.name] ?? '',
             suggestEnvVars: true,
             errors: settings.getErrors(field.name),
             disabled: field.name in overrides,
           }) }}
+          {{ _self.removeBox(field.name, saved) }}
         {% endif %}
       {% endfor %}
     </details>
@@ -87,7 +117,7 @@
   label: 'Grace'|t('cronwatch'),
   instructions: 'How late a run may be before it is reported missed, such as 10m or 1h.'|t('cronwatch'),
   name: 'grace',
-  value: settings.grace,
+  value: values.grace,
   errors: settings.getErrors('grace'),
   required: true,
   disabled: 'grace' in overrides,
