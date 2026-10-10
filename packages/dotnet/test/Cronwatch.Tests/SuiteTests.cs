@@ -27,6 +27,23 @@ public class SuiteTests
         }
     }
 
+    /// <summary>
+    /// Every section of the fixtures whose replays read sections by name is one they replay, so a
+    /// section the SDK adds fails here rather than going unreplayed. Duration, schedule, client,
+    /// health, evaluate, and channels guard their own.
+    /// </summary>
+    [Fact]
+    public void Every_section_of_the_other_fixtures_is_replayed()
+    {
+        DurationConformanceTests.Known(Fixtures.Load("format"), "alerts", "numbers", "capOutput", "toStored", "checkExpectation");
+        DurationConformanceTests.Known(Fixtures.Load("output"), "outputCap", "redactEdge", "redact", "redactAndCap", "errorMessage", "expectText");
+        var store = Fixtures.Load("store");
+        DurationConformanceTests.Known(store, "prune", "compareAndSetState", "updateRunIf", "foreignVersion", "nul", "foreignRows");
+        HealthConformanceTests.Known(Fixtures.Object(store, "foreignRows"), "rows", "check");
+        DurationConformanceTests.Known(Fixtures.Load("triage"), "contexts", "requests", "responses", "wire");
+        DurationConformanceTests.Known(Fixtures.Load("pgcron"), "schedules", "names", "runs", "holdMs");
+    }
+
     [Fact]
     public void The_fixtures_are_read_in_utc()
     {
