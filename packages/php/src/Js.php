@@ -156,8 +156,13 @@ final class Js
     }
 
     /** String(value) as JavaScript writes a primitive, for messages. */
-    public static function string(mixed $value): string
+    public static function string(mixed $value, int $depth = 0): string
     {
+        // Array.prototype.join writes a cycle as empty. An array that holds
+        // itself by reference has no identity to track, so depth stands in.
+        if ($depth > self::MAX_DEPTH) {
+            return '';
+        }
         return match (true) {
             $value === null => 'null',
             $value === true => 'true',
@@ -165,7 +170,7 @@ final class Js
             is_int($value), is_float($value) => self::number($value),
             is_string($value) => $value,
             $value instanceof \Stringable => (string) $value,
-            is_array($value) => implode(',', array_map(fn ($v) => $v === null ? '' : self::string($v), $value)),
+            is_array($value) => implode(',', array_map(fn ($v) => $v === null ? '' : self::string($v, $depth + 1), $value)),
             default => '[object Object]',
         };
     }
@@ -389,10 +394,33 @@ final class Js
      * JSON.stringify for plain data: arrays (a list is a JSON array, anything
      * else an object), stdClass objects, strings, numbers, booleans, null,
      * and anything with toJson() (this package's types). A non-finite number
-     * is null, as in JavaScript.
+     * is null, as in JavaScript. A value that holds itself throws, as
+     * JSON.stringify does on a cycle, and so does one nested deeper than
+     * MAX_DEPTH (an array can hold itself by reference, which has no identity
+     * to track), so a caller's fallback runs before PHP's memory runs out.
      */
     public static function stringify(mixed $value): string
     {
+        return self::stringifyAt($value, [], 0);
+    }
+
+    /** How deep stringify() and string() go before they treat a value as a cycle. */
+    public const MAX_DEPTH = 512;
+
+    /** @param array<int, true> $path the ids of the objects being written, outermost first */
+    private static function stringifyAt(mixed $value, array $path, int $depth): string
+    {
+        if ($depth > self::MAX_DEPTH) {
+            throw new \InvalidArgumentException('Converting circular structure to JSON');
+        }
+        if (is_object($value)) {
+            $id = spl_object_id($value);
+            if (isset($path[$id])) {
+                throw new \InvalidArgumentException('Converting circular structure to JSON');
+            }
+            $path[$id] = true;
+        }
+        $next = fn (mixed $part): string => self::stringifyAt($part, $path, $depth + 1);
         if ($value === null) {
             return 'null';
         }
@@ -409,21 +437,21 @@ final class Js
             return is_finite($value) ? self::number($value) : 'null';
         }
         if (is_array($value) && \array_is_list($value)) {
-            return '[' . implode(',', array_map(self::stringify(...), $value)) . ']';
+            return '[' . implode(',', array_map($next, $value)) . ']';
         }
         if (is_array($value) || $value instanceof \stdClass) {
             $fields = is_array($value) ? $value : get_object_vars($value);
             $parts = [];
             foreach (self::objectKeys($fields) as $key) {
-                $parts[] = self::quote($key) . ':' . self::stringify($fields[$key]);
+                $parts[] = self::quote($key) . ':' . $next($fields[$key]);
             }
             return '{' . implode(',', $parts) . '}';
         }
         if (is_object($value) && method_exists($value, 'toJson')) {
-            return self::stringify($value->toJson());
+            return $next($value->toJson());
         }
         if ($value instanceof \JsonSerializable) {
-            return self::stringify($value->jsonSerialize());
+            return $next($value->jsonSerialize());
         }
         throw new \InvalidArgumentException(get_debug_type($value) . ' is not JSON serializable');
     }
