@@ -1,6 +1,7 @@
 package dev.cronwatch.spring.web;
 
 import dev.cronwatch.Cronwatch;
+import dev.cronwatch.spring.OnCronwatchEnabled;
 import dev.cronwatch.web.Routes;
 import dev.cronwatch.web.RoutesOptions;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -11,6 +12,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -19,12 +21,13 @@ import org.springframework.context.annotation.Configuration;
  * /cronwatch} by default) within the app's context, ahead of Spring Security's filter chain (behind
  * it when served open, {@code cronwatch.web.open}, so the app's auth guards it). It uses the app's
  * {@link Cronwatch} bean, and a {@link Routes} bean of the app's own replaces the one made here;
- * {@code cronwatch.web.enabled=false} turns it off.
+ * {@code cronwatch.web.enabled=false} turns it off, as {@code cronwatch.enabled=false} does.
  */
 @AutoConfiguration(afterName = "dev.cronwatch.spring.CronwatchAutoConfiguration")
 @ConditionalOnWebApplication
 @ConditionalOnBean(Cronwatch.class)
 @ConditionalOnProperty(prefix = "cronwatch.web", name = "enabled", matchIfMissing = true)
+@Conditional(OnCronwatchEnabled.class)
 @EnableConfigurationProperties(CronwatchWebProperties.class)
 public class CronwatchWebAutoConfiguration {
   /** Made by Spring. */

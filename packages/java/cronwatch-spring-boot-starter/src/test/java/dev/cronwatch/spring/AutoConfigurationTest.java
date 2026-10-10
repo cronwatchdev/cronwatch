@@ -32,6 +32,8 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.sqlite.SQLiteDataSource;
 
 /**
@@ -130,6 +132,35 @@ class AutoConfigurationTest {
     @Bean
     public Cronwatch cronwatch() {
       return MINE;
+    }
+  }
+
+  /** An app with scheduling on, a scheduled method, and a client of its own. */
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  @EnableScheduling
+  public static class OwnScheduled {
+    static final Cronwatch MINE = Cronwatch.builder().noShutdownHook().alerts(List.of()).build();
+
+    /** The app's own client. */
+    @Bean
+    public Cronwatch cronwatch() {
+      return MINE;
+    }
+
+    /** A scheduled method the starter would watch if it were on. */
+    @Scheduled(fixedRate = 3_600_000, initialDelay = 3_600_000)
+    public void hourly() {}
+  }
+
+  @Test
+  void cronwatchEnabledFalseTurnsTheStarterOffBesideTheAppsOwnClient() {
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(OwnScheduled.class, null, new Apps.Errors(), "cronwatch.enabled=false")) {
+      assertSame(OwnScheduled.MINE, ctx.getBean(Cronwatch.class));
+      assertTrue(ctx.getBeansOfType(CronwatchChecker.class).isEmpty());
+      assertTrue(ctx.getBeansOfType(CronwatchScheduling.class).isEmpty());
+      assertTrue(ctx.getBeansOfType(CronwatchQuartzRegistrar.class).isEmpty());
     }
   }
 

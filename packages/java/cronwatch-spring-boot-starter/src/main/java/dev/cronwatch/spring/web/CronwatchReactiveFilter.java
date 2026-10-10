@@ -67,7 +67,7 @@ public final class CronwatchReactiveFilter implements WebFilter, Ordered {
     }
     Request.Builder b =
         Request.builder(req.getMethod().name(), Adapters.target(raw, uri.getRawQuery()))
-            .tls(req.getSslInfo() != null)
+            .tls(tls(req))
             .mount(context + path);
     req.getHeaders()
         .forEach(
@@ -81,6 +81,17 @@ public final class CronwatchReactiveFilter implements WebFilter, Ordered {
     return Mono.fromCallable(() -> endpoint.handle(request))
         .subscribeOn(scheduler)
         .flatMap(answer -> write(exchange.getResponse(), answer));
+  }
+
+  /**
+   * Whether the request came over TLS: the request URI's scheme, which Spring's forwarded-header
+   * handling ({@code server.forward-headers-strategy}) sets from a TLS-terminating proxy's headers,
+   * as the servlet filter reads {@code isSecure()}. A connection's own TLS is not enough: behind
+   * such a proxy it has none, and Spring's transformer removes the headers {@code
+   * cronwatch.web.trust-proxy} would read.
+   */
+  static boolean tls(ServerHttpRequest req) {
+    return "https".equalsIgnoreCase(req.getURI().getScheme()) || req.getSslInfo() != null;
   }
 
   /** The body, joined to at most {@code limit} and one byte, on the virtual thread asking. */
