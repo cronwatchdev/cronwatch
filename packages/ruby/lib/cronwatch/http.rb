@@ -49,6 +49,10 @@ module Cronwatch
         headers.each { |k, v| request[k] = HTTP.trim_header(v) }
         request.body = body
         http = connection(uri)
+        # Net::HTTP opens the socket under Timeout.timeout(open_timeout), or
+        # TCPSocket's own open_timeout where Ruby has one, and both cover the
+        # name lookup: it can be interrupted from Ruby 3.3. On Ruby 3.2 a lookup
+        # that hangs is cut off only by the client's channel deadline.
         http.open_timeout = HTTP.remaining(deadline)
         http.start do |conn|
           remaining = HTTP.remaining(deadline)
