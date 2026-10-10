@@ -282,6 +282,23 @@ final class HandlerTest extends TestCase
         $this->assertSame('', Handler::authorization([]));
     }
 
+    public function testUnderApacheWithoutCgiPassAuthTheBearerIsFoundInGetallheaders(): void
+    {
+        require_once __DIR__ . '/Support/getallheaders.php';
+        $server = $_SERVER;
+        $GLOBALS['cronwatch_getallheaders'] = ['Host' => 'app.test', 'Authorization' => 'Bearer g'];
+        try {
+            unset($_SERVER['HTTP_AUTHORIZATION'], $_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+            // $handler($_SERVER) finds it as serve() does, through Request::fromGlobals's lookup.
+            $this->assertSame('Bearer g', Handler::authorization($_SERVER));
+            $this->assertSame('Bearer g', Request::fromGlobals(null, '')->header('authorization'));
+            $this->assertSame('', Handler::authorization(['REQUEST_METHOD' => 'GET']), 'only $_SERVER itself is the request getallheaders() describes');
+        } finally {
+            $_SERVER = $server;
+            unset($GLOBALS['cronwatch_getallheaders']);
+        }
+    }
+
     public function testTheFunctionGetsTheRequestItWasGivenAndItsContextIsCurrent(): void
     {
         $cw = $this->make();
