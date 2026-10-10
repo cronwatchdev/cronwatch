@@ -601,7 +601,7 @@ func TestRoutesDevelopmentTokenIsPrintedOnceAndRequired(t *testing.T) {
 	for _, variable := range []string{"CRONWATCH_ENV", "APP_ENV", "GO_ENV"} {
 		out := devEnv(t)
 		t.Setenv("CRONWATCH_ENV", "")
-		t.Setenv(variable, "test")
+		t.Setenv(variable, "dev")
 		cw := must[*cronwatch.Client](t)(cronwatch.New(cronwatch.WithoutCronSecret()))
 		routes := must[*cronwatch.Routes](t)(cw.Routes(cronwatch.WithBasePath("/cronwatch/")))
 		for _, c := range []struct {
@@ -994,5 +994,20 @@ func TestRoutesASilenceWhoseJobIsGoneAnswersOkWithNoJob(t *testing.T) {
 		rec := w.send("POST", "/cronwatch/api/jobs/s/"+path, join(auth, hdr{"content-type": "application/json"}), `{"for":"1h"}`)
 		status(t, path, rec, http.StatusOK)
 		eq(t, path, rec.Body.String(), `{"ok":true,"job":null}`)
+	}
+}
+
+// A test or testing environment is not development: no token of its own,
+// and a handler with no secret refuses.
+func TestATestEnvironmentIsNotDevelopment(t *testing.T) {
+	for _, values := range []map[string]string{{"GO_ENV": "test"}, {"APP_ENV": "testing"}, {"CRONWATCH_ENV": " Test "}, {"APP_ENV": "test", "GO_ENV": "development"}} {
+		for _, name := range []string{"CRONWATCH_ENV", "APP_ENV", "GO_ENV", "CRONWATCH_TOKEN", "CRON_SECRET"} {
+			t.Setenv(name, values[name])
+		}
+		cw := must[*cronwatch.Client](t)(cronwatch.New(cronwatch.WithStore(cronwatch.NewMemoryStore())))
+		status(t, jsonOf(values)+" routes", serve(must[*cronwatch.Routes](t)(cw.Routes()), "GET", "http://localhost:3000/cronwatch/api/jobs", nil, ""), 503)
+		job := must[*cronwatch.Job](t)(cw.Job("nightly"))
+		h := job.Handler(func(context.Context, *cronwatch.JobContext, http.ResponseWriter, *http.Request) error { return nil })
+		status(t, jsonOf(values)+" handler", serve(h, "GET", "http://localhost:3000/api/cron/nightly", nil, ""), 503)
 	}
 }

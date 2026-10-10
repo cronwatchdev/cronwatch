@@ -52,11 +52,16 @@ func TestRoutesABlankTokenCountsAsUnset(t *testing.T) {
 	routes := must[*cronwatch.Routes](t)(cw.Routes(cronwatch.WithToken(" \t")))
 	status(t, "the variable's token", serve(routes, "GET", "http://app.test/cronwatch/api/jobs", hdr{"authorization": "Bearer from-env"}, ""), 200)
 
-	// A token that is more than whitespace is used untrimmed.
-	t.Setenv("CRONWATCH_TOKEN", " padded ")
-	routes = must[*cronwatch.Routes](t)(cw.Routes())
-	status(t, "padded", serve(routes, "GET", "http://app.test/cronwatch/?token=%20padded%20", nil, ""), 303)
-	status(t, "trimmed is not it", serve(routes, "GET", "http://app.test/cronwatch/?token=padded", nil, ""), 401)
+	// A token read from a file often ends in a newline no header can carry:
+	// trimmed, given or read, so the bearer a client can send matches.
+	for _, padded := range []string{" padded ", "padded\n"} {
+		t.Setenv("CRONWATCH_TOKEN", padded)
+		for _, routes := range []*cronwatch.Routes{must[*cronwatch.Routes](t)(cw.Routes()), must[*cronwatch.Routes](t)(cw.Routes(cronwatch.WithToken(padded)))} {
+			status(t, "the bearer", serve(routes, "GET", "http://app.test/cronwatch/api/jobs", hdr{"authorization": "Bearer padded"}, ""), 200)
+			status(t, "the query", serve(routes, "GET", "http://app.test/cronwatch/?token=padded", nil, ""), 303)
+			eq(t, "the token in force", routes.Token(), "padded")
+		}
+	}
 }
 
 func TestHandlerABlankCronSecretCountsAsUnset(t *testing.T) {
