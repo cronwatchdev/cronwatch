@@ -92,7 +92,7 @@ async fn child_locked() {
 #[test]
 fn a_development_token_is_printed_once_and_required() {
     for var in ["CRONWATCH_ENV", "APP_ENV", "RUST_ENV"] {
-        let out = child("child_development_token", &[(var, "test")]);
+        let out = child("child_development_token", &[(var, "local")]);
         let lines = announced(&out);
         assert_eq!(lines.len(), 2, "{var}: {out}");
         let intro = "[cronwatch] CRONWATCH_TOKEN is not set, so this development server made a token for the dashboard. Sign in: ";
@@ -426,10 +426,12 @@ async fn child_padded_token() {
         return;
     }
     let routes = client().routes(RoutesOptions::new()).unwrap();
-    assert_eq!(routes.token(), Some(" padded "), "used as it is, untrimmed");
-    let res = serve(&routes, "GET", "http://app.test/cronwatch/?token=%20padded%20", &[]).await;
+    assert_eq!(routes.token(), Some("padded"), "trimmed, as JavaScript's trim trims");
+    let res = serve(&routes, "GET", "http://app.test/cronwatch/?token=padded", &[]).await;
     assert_eq!(res.status, 303);
     assert!(res.header("set-cookie").is_some());
+    let res = serve(&routes, "GET", "http://app.test/cronwatch/api/jobs", &[("authorization", "Bearer padded")]).await;
+    assert_eq!(res.status, 200, "a bearer, whose header HTTP trims, matches");
 }
 
 #[test]

@@ -136,14 +136,20 @@ pub(crate) fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|&b| b as char).collect()
 }
 
-/// Compares two secrets without stopping at the first character that
-/// differs, over UTF-16 code units as the SDK compares them.
-pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (ua, ub) = (js::units(a), js::units(b));
-    if ua.len() != ub.len() {
-        return false;
+/// Compares what a request `sent` with the `secret` without stopping at the
+/// first character that differs, over UTF-16 code units as the SDK compares
+/// them, and in time that depends only on the length of what was sent, so
+/// neither the secret's characters nor its length can be timed: every unit
+/// of `sent` is compared against the secret's unit at the same place
+/// (repeating it past its end), and a length that differs counts as a
+/// difference.
+pub(crate) fn constant_time_eq(sent: &str, secret: &str) -> bool {
+    let (us, uk) = (js::units(sent), js::units(secret));
+    if uk.is_empty() {
+        return us.is_empty();
     }
-    ua.iter().zip(&ub).fold(0u16, |diff, (x, y)| diff | (x ^ y)) == 0
+    let diff = us.iter().enumerate().fold(us.len() ^ uk.len(), |diff, (i, x)| diff | usize::from(x ^ uk[i % uk.len()]));
+    diff == 0
 }
 
 #[cfg(test)]
@@ -185,5 +191,17 @@ mod tests {
         assert!(!constant_time_eq("tok", "toK"));
         assert!(!constant_time_eq("é", &latin1("é".as_bytes())));
         assert!(constant_time_eq("é", &latin1(&[0xe9])));
+    }
+
+    #[test]
+    fn a_compare_runs_over_what_was_sent() {
+        // Neither a prefix nor a repeat of the secret matches, whatever its
+        // length.
+        for sent in ["", "t", "to", "toktok", "tokt", "tokx"] {
+            assert!(!constant_time_eq(sent, "tok"), "{sent:?}");
+        }
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("x", ""));
+        assert!(constant_time_eq("tok", "tok"));
     }
 }

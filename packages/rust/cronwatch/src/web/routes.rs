@@ -196,11 +196,11 @@ impl Client {
     pub fn routes(&self, options: RoutesOptions) -> Result<Routes, Error> {
         let origin = configured_origin(options.origin.as_deref().unwrap_or("")).map_err(Error::Invalid)?;
         let opted_out = options.token == Some(None);
-        // A blank token (empty or only whitespace), given or read, counts as
-        // unset; any other is used as it is, untrimmed.
-        let configured = match options.token {
-            Some(None) => String::new(),
-            Some(Some(t)) if !crate::env::is_blank(&t) => t,
+        // Trimmed, given or read; a blank token (empty or only whitespace)
+        // counts as unset.
+        let configured = match options.token.map(|t| t.and_then(|t| crate::env::secret(&t))) {
+            Some(None) if opted_out => String::new(),
+            Some(Some(t)) => t,
             _ => crate::env::secret_var("CRONWATCH_TOKEN").unwrap_or_default(),
         };
         // A handler cannot tell a local caller from a remote one (proxies,
@@ -713,7 +713,14 @@ impl Routes {
                     .map(|(n, v)| format!("{}={}", form_encode(n), form_encode(v)))
                     .collect();
                 let search = if rest.is_empty() { String::new() } else { format!("?{}", rest.join("&")) };
-                return Ok(redirect(format!("{pathname}{search}"), vec![sign_in_cookie()]));
+                // One leading slash: "//host/..." would be a protocol-relative
+                // Location, off this site, as would "/\host", which a browser
+                // reads as "//host".
+                let path = match pathname.trim_start_matches(['/', '\\']) {
+                    rest if rest.len() < pathname.len() => format!("/{rest}"),
+                    _ => pathname.to_string(),
+                };
+                return Ok(redirect(format!("{path}{search}"), vec![sign_in_cookie()]));
             }
         }
 

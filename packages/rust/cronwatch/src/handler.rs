@@ -139,8 +139,11 @@ impl Job {
         let client = &self.client;
         let (secret, opted_out) = match options.secret {
             Some(None) => (String::new(), true),
-            Some(Some(own)) if !crate::env::is_blank(&own) => (own, false),
-            _ => (client.cron_secret().unwrap_or("").to_string(), client.inner.secret_opt_out),
+            Some(Some(own)) => match crate::env::secret(&own) {
+                Some(own) => (own, false),
+                None => (client.cron_secret().unwrap_or("").to_string(), client.inner.secret_opt_out),
+            },
+            None => (client.cron_secret().unwrap_or("").to_string(), client.inner.secret_opt_out),
         };
         let job = self.clone();
         let f = Arc::new(f);
