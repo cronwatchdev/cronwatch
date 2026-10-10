@@ -65,6 +65,26 @@ final class JsTest extends TestCase
         $this->assertSame(Js::dateUtc(2026, 2, 0), Js::dateUtc(2026, 1, 28), 'day 0 is the last day of the month before');
     }
 
+    public function testStringifyRefusesACycleInsteadOfRunningOutOfMemory(): void
+    {
+        $object = new \stdClass();
+        $object->self = $object;
+        try {
+            Js::stringify($object);
+            $this->fail('a cycle is refused');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertSame('Converting circular structure to JSON', $e->getMessage());
+        }
+        $this->assertSame('[object Object]', \Cronwatch\Job\JobContext::stringify($object), 'a logged cycle falls back to String()');
+
+        $list = [1];
+        $list[] = &$list;
+        $this->assertStringStartsWith('1,1,', \Cronwatch\Job\JobContext::stringify($list), 'an array that holds itself by reference stops at the depth limit');
+
+        $shared = Js::obj(['v' => 1]);
+        $this->assertSame('{"x":{"v":1},"y":{"v":1}}', Js::stringify(['x' => $shared, 'y' => $shared]), 'one object twice is not a cycle');
+    }
+
     public function testRoundIsMathRound(): void
     {
         $this->assertSame(3, Js::round(2.5));
