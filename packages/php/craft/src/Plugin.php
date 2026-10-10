@@ -94,14 +94,70 @@ final class Plugin extends BasePlugin
 
     protected function settingsHtml(): ?string
     {
-        $file = Craft::$app->getConfig()->getConfigFromFile($this->handle);
+        $overrides = $this->overrides();
         $settings = $this->getSettings();
+        $values = [];
+        $saved = [];
+        foreach ($settings->attributes() as $name) {
+            $value = $settings->{$name};
+            if (!is_string($value)) {
+                continue;
+            }
+            if (in_array($name, $overrides, true)) {
+                // Set in config/cronwatch.php: the field is shown disabled, and empty, so
+                // a value the file reads from the environment never reaches the page.
+                $value = '';
+            } elseif (in_array($name, Settings::secretAttributes(), true) && $value !== '' && !self::isEnvReference($value)) {
+                // A secret written in plain is never shown again; its field left blank keeps it.
+                $saved[] = $name;
+                $value = '';
+            }
+            $values[$name] = $value;
+        }
         return Craft::$app->getView()->renderTemplate('cronwatch/_settings.twig', [
             'settings' => $settings,
+            'values' => $values,
+            'saved' => $saved,
             // Settings config/cronwatch.php sets win over the form, so their fields are shown disabled.
-            'overrides' => is_array($file) ? array_keys($file) : [],
+            'overrides' => $overrides,
+            'secrets' => Settings::secretAttributes(),
             'sections' => self::channelSections($settings),
         ]);
+    }
+
+    /**
+     * The settings config/cronwatch.php sets, which win over the form.
+     *
+     * @return list<string>
+     */
+    private function overrides(): array
+    {
+        $file = Craft::$app->getConfig()->getConfigFromFile($this->handle);
+        return is_array($file) ? array_values(array_map('strval', array_keys($file))) : [];
+    }
+
+    /** "$NAME" or "${NAME}" alone: an environment variable's name, not a secret. */
+    private static function isEnvReference(string $value): bool
+    {
+        return preg_match('/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/D', trim($value)) === 1;
+    }
+
+    /**
+     * The settings config/cronwatch.php sets (the API token, the commands,
+     * and the queue jobs among them) are saved as project config held them,
+     * never as the file has them: a save from the Control Panel would
+     * otherwise copy the file's values, an environment variable's resolved
+     * among them, into config/project.
+     */
+    public function beforeSaveSettings(): bool
+    {
+        $settings = $this->getSettings();
+        if ($settings instanceof Settings) {
+            $stored = Craft::$app->getProjectConfig()->get("plugins.{$this->handle}.settings");
+            $stored = is_array($stored) ? \craft\helpers\ProjectConfig::unpackAssociativeArrays($stored) : [];
+            $settings->saving($this->overrides(), $stored);
+        }
+        return parent::beforeSaveSettings();
     }
 
     /**
@@ -133,6 +189,10 @@ final class Plugin extends BasePlugin
 
     public function afterSaveSettings(): void
     {
+        $settings = $this->getSettings();
+        if ($settings instanceof Settings) {
+            $settings->saved();
+        }
         parent::afterSaveSettings();
         $this->recorderInstance?->reset();
     }

@@ -127,11 +127,102 @@ final class Settings extends Model
     /** The JSON API's token, for @cronwatch/mcp; empty turns the API off (unless CRONWATCH_TOKEN is set). */
     public string $apiToken = '';
 
-    /** A setting with an environment variable ("$NAME" or "${NAME}") read. */
+    /**
+     * What toArray() writes in place of the values config/cronwatch.php
+     * set, while the settings are saved: what project config held, so a
+     * save from the Control Panel never copies the file's values (an
+     * environment variable's, resolved) into project config.
+     *
+     * @var array{names: list<string>, stored: array<string, mixed>}|null
+     */
+    private ?array $saving = null;
+
+    /**
+     * A setting with an environment variable ("$NAME" or "${NAME}") read.
+     * The webhook's signing secret is kept exactly as written, as in every
+     * port; the rest are trimmed.
+     */
     public function value(string $name): string
     {
         $value = App::parseEnv((string) $this->{$name});
-        return is_string($value) ? trim($value) : '';
+        if (!is_string($value)) {
+            return '';
+        }
+        return $name === 'webhookSecret' ? $value : trim($value);
+    }
+
+    /**
+     * The settings that hold a secret: the webhook's, and every key,
+     * token, and DSN of the other channels. The form never shows one
+     * written in plain; left blank, the saved one stays.
+     *
+     * @return list<string>
+     */
+    public static function secretAttributes(): array
+    {
+        $out = ['webhookSecret'];
+        foreach (ChannelSettings::providers() as $provider => $spec) {
+            foreach ($spec['fields'] as $field => $f) {
+                if ($f['kind'] === 'secret') {
+                    $out[] = ChannelSettings::camel("{$provider}_{$field}");
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * A secret posted blank keeps the saved one (the form never shows it),
+     * unless its "Remove it" box (<name>Clear) is ticked.
+     */
+    public function setAttributes($values, $safeOnly = true): void
+    {
+        if (is_array($values)) {
+            foreach (self::secretAttributes() as $name) {
+                if (!empty($values["{$name}Clear"])) {
+                    $values[$name] = '';
+                } elseif (array_key_exists($name, $values) && is_string($values[$name]) && trim($values[$name]) === '' && (string) $this->{$name} !== '') {
+                    unset($values[$name]);
+                }
+                unset($values["{$name}Clear"]);
+            }
+        }
+        parent::setAttributes($values, $safeOnly);
+    }
+
+    /**
+     * While the settings are saved (Plugin::beforeSaveSettings()), the
+     * settings config/cronwatch.php sets are written as project config held
+     * them, or left out.
+     *
+     * @param list<string> $names
+     * @param array<string, mixed> $stored
+     */
+    public function saving(array $names, array $stored): void
+    {
+        $this->saving = ['names' => $names, 'stored' => $stored];
+    }
+
+    /** The save is over: toArray() is the settings as they are again. */
+    public function saved(): void
+    {
+        $this->saving = null;
+    }
+
+    public function fields(): array
+    {
+        $fields = parent::fields();
+        if ($this->saving !== null) {
+            foreach ($this->saving['names'] as $name) {
+                if (array_key_exists($name, $this->saving['stored'])) {
+                    $stored = $this->saving['stored'][$name];
+                    $fields[$name] = fn () => $stored;
+                } else {
+                    unset($fields[$name]);
+                }
+            }
+        }
+        return $fields;
     }
 
     protected function defineRules(): array

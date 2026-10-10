@@ -837,6 +837,52 @@ final class CraftTest extends TestCase
         }
     }
 
+    public function testSecretsAreNeverShownAndTheConfigFileIsNeverSaved(): void
+    {
+        self::signIn('admin');
+        $origin = ['Origin' => 'http://127.0.0.1:' . self::$port, 'Content-Type' => 'application/x-www-form-urlencoded'];
+        $save = fn (array $settings): array => self::http('POST', '/admin/settings/plugins/cronwatch', 'admin', $origin, http_build_query([
+            'CRAFT_CSRF_TOKEN' => self::csrf('admin'), 'action' => 'plugins/save-plugin-settings', 'pluginHandle' => 'cronwatch', 'settings' => $settings + ['grace' => '10m'],
+        ]));
+        $stored = function (): array {
+            $file = self::$root . '/storage/runtime/cwt-settings.json';
+            self::exec_("file_put_contents(" . var_export($file, true) . ", json_encode(craft\\helpers\\ProjectConfig::unpackAssociativeArrays(Craft::\$app->getProjectConfig()->get('plugins.cronwatch.settings') ?? [])));");
+            return json_decode((string) file_get_contents($file), true);
+        };
+        $config = self::$root . '/config/cronwatch.php';
+        $before = (string) file_get_contents($config);
+        // A token config/cronwatch.php sets, and a Slack URL read from the environment there.
+        file_put_contents($config, str_replace("return [\n", "return [\n    'apiToken' => 'file-token-never-saved',\n    'slackWebhookUrl' => 'https://hooks.slack.com/services/T0/B0/file-never-shown',\n", $before));
+        self::stopServer();
+        try {
+            [$status] = $save(['webhookSecret' => ' whsec_plain ', 'resendApiKey' => 're_plain_key', 'resendFrom' => 'CronWatch <alerts@example.com>', 'resendTo' => 'ops@example.com']);
+            $this->assertSame(302, $status);
+            $saved = $stored();
+            $this->assertSame(' whsec_plain ', $saved['webhookSecret'], 'the signing secret is kept as typed');
+            $this->assertStringNotContainsString('file-token-never-saved', json_encode($saved));
+            $this->assertStringNotContainsString('file-never-shown', json_encode($saved), 'a file setting is not copied into project config');
+            $this->assertSame(['commands' => null, 'queueJobs' => null], ['commands' => $saved['commands'] ?? null, 'queueJobs' => $saved['queueJobs'] ?? null], 'nor are the file\'s commands and queue jobs');
+
+            [$status, , $form] = self::http('GET', '/admin/settings/plugins/cronwatch', 'admin');
+            $this->assertSame(200, $status);
+            $this->assertStringNotContainsString('whsec_plain', $form);
+            $this->assertStringNotContainsString('re_plain_key', $form);
+            $this->assertStringNotContainsString('file-never-shown', $form, 'a field the file sets is shown empty');
+            $this->assertStringContainsString('name="settings[webhookSecretClear]"', $form);
+
+            // Left blank, a saved secret stays; "Remove it" clears it.
+            [$status] = $save(['webhookSecret' => '', 'resendApiKey' => '', 'resendFrom' => 'CronWatch <alerts@example.com>', 'resendTo' => 'ops@example.com']);
+            $this->assertSame(302, $status);
+            $this->assertSame(['whsec' => ' whsec_plain ', 'resend' => 're_plain_key'], ['whsec' => $stored()['webhookSecret'], 'resend' => $stored()['resendApiKey']]);
+            [$status] = $save(['webhookSecret' => '', 'webhookSecretClear' => '1', 'resendApiKey' => '', 'resendApiKeyClear' => '1', 'resendFrom' => '', 'resendTo' => '']);
+            $this->assertSame(302, $status);
+            $this->assertSame(['', ''], [$stored()['webhookSecret'], $stored()['resendApiKey']]);
+        } finally {
+            file_put_contents($config, $before);
+            self::stopServer();
+        }
+    }
+
     public function testTheJsonApiNeedsAToken(): void
     {
         [$status] = self::http('GET', '/cronwatch/api/jobs');
