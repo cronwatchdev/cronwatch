@@ -2010,7 +2010,12 @@ async function channelCases() {
           webhookPayloads.push({ alert: name, secret: config.options.secret, body: captured.body, signature: captured.headers["x-cronwatch-signature"] });
         }
       }
-      for (const [status, body] of [[500, "no"], [400, "x".repeat(300)], [404, ""]]) {
+      // Slack and Discord also meet a proxy that echoes the request, URL and
+      // all: the URL's credential (its path, and each part of it) is cut out.
+      const echoes = config.channel === "slack" || config.channel === "discord"
+        ? [[502, `<html>502 for POST ${new URL(config.options.webhookUrl).pathname} HTTP/1.1 ${"y".repeat(150)}</html>`], [502, `\u{1F600}`.repeat(150)]]
+        : [];
+      for (const [status, body] of [[500, "no"], [400, "x".repeat(300)], [404, ""], ...echoes]) {
         response = { status, body };
         let error = null;
         try {

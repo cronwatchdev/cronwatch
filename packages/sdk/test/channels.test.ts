@@ -15,6 +15,8 @@ import { parseDsn, sentry } from "../src/alerts/sentry.js";
 import { ses } from "../src/alerts/ses.js";
 import { smsBody, twilio } from "../src/alerts/twilio.js";
 import { signature, webhook } from "../src/alerts/webhook.js";
+import { slack } from "../src/alerts/slack.js";
+import { discord } from "../src/alerts/discord.js";
 import { composeAlert } from "../src/format.js";
 import type { Alert, AlertChannel, Run } from "../src/types.js";
 import { T0 } from "./helpers.js";
@@ -385,4 +387,43 @@ test("webhook signs with Web Crypto, byte for byte what node:crypto signed befor
   await webhook({ url: "https://hooks.example.com/in", secret: "s3cret" }).send(alert);
   const { headers, body: sent } = calls[0]!;
   assert.equal(headers["x-cronwatch-signature"], `sha256=${createHmac("sha256", "s3cret").update(sent).digest("hex")}`);
+});
+
+test("a webhook with an empty secret sends unsigned and says so through onError", async (t) => {
+  const calls = stubFetch(t);
+  const reported: string[] = [];
+  await webhook({ url: "https://hooks.example.com/in", secret: "" }).send(failed(), { onError: (e) => reported.push((e as Error).message) });
+  assert.equal(calls[0]!.headers["x-cronwatch-signature"], undefined);
+  assert.equal(reported.length, 1);
+  assert.match(reported[0]!, /secret is an empty string, so this request is sent unsigned/);
+  // Left out, it sends unsigned on purpose, and says nothing.
+  await webhook({ url: "https://hooks.example.com/in" }).send(failed(), { onError: (e) => reported.push((e as Error).message) });
+  assert.equal(reported.length, 1);
+});
+
+test("Slack and Discord cut the webhook URL's credential out of an answer that echoes it", async (t) => {
+  const slackUrl = "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX";
+  const discordUrl = "https://discord.com/api/webhooks/123456/tokenTOKENtoken";
+  for (const [channel, url] of [[slack({ webhookUrl: slackUrl }), slackUrl], [discord({ webhookUrl: discordUrl }), discordUrl]] as const) {
+    const path = new URL(url).pathname;
+    stubFetch(t, 502, `<html>bad gateway for POST ${path} HTTP/1.1</html>`);
+    await assert.rejects(channel.send(failed()), (error: Error) => {
+      assert.ok(!error.message.includes(path), error.message);
+      assert.ok(!error.message.includes(path.split("/").pop()!), error.message);
+      assert.match(error.message, /\[redacted\]/);
+      return true;
+    });
+  }
+});
+
+test("a successful answer's body is let go of, not left for the garbage collector", async (t) => {
+  const original = globalThis.fetch;
+  let cancelled = 0;
+  globalThis.fetch = (async () => new Response(new ReadableStream({ pull() {}, cancel() { cancelled++; } }), { status: 200 })) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  await webhook({ url: "https://hooks.example.com/in" }).send(failed());
+  await slack({ webhookUrl: "https://hooks.slack.com/services/T/B/X" }).send(failed());
+  await discord({ webhookUrl: "https://discord.com/api/webhooks/1/x" }).send(failed());
+  await resend({ apiKey: "re_key", from: "a@b.c", to: "x@y.z" }).send(failed());
+  assert.equal(cancelled, 4);
 });

@@ -1,5 +1,5 @@
 import type { AlertChannel } from "../types.js";
-import { postable } from "./shared.js";
+import { drain, postable } from "./shared.js";
 
 export interface WebhookOptions {
   url: string;
@@ -8,7 +8,8 @@ export interface WebhookOptions {
   /**
    * When set, each request carries `X-CronWatch-Signature: sha256=<hex>`,
    * the HMAC-SHA256 of the raw body with this secret, so the receiver can
-   * verify it.
+   * verify it. An empty string (an unset variable read as "", say) signs
+   * nothing, and each send reports that to onError.
    */
   secret?: string;
 }
@@ -40,8 +41,11 @@ export function webhook(options: WebhookOptions): AlertChannel {
   if (!options.url) throw new Error("webhook() needs a url");
   return {
     name: "webhook",
-    async send(alert) {
+    async send(alert, context) {
       const body = JSON.stringify({ schema: WEBHOOK_SCHEMA, ...alert });
+      if (options.secret === "") {
+        context?.onError?.(new Error("webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose"));
+      }
       const headers: Record<string, string> = { "content-type": "application/json", "user-agent": "cronwatch" };
       // A pasted Authorization value often carries a stray space or newline, which fetch would refuse.
       for (const [name, value] of Object.entries(options.headers ?? {})) headers[name] = typeof value === "string" ? value.trim() : value;
@@ -52,6 +56,7 @@ export function webhook(options: WebhookOptions): AlertChannel {
       const response = await fetch(postable(options.url), { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
       // Only the origin: a webhook URL's path or query often is the credential.
       if (!response.ok) throw new Error(`Webhook ${origin(options.url)} answered ${response.status}`);
+      await drain(response);
     },
   };
 }

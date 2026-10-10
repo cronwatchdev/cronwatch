@@ -65,7 +65,35 @@ export async function post(provider: string, url: string, init: { headers: Recor
     }
     throw new Error(`${provider} ${origin(url)} answered ${response.status}${text ? `: ${errorBody(text, secrets)}` : ""}`);
   }
+  await drain(response);
   return response;
+}
+
+/**
+ * Lets go of a successful answer's body, which nothing reads, so its
+ * connection goes back to the pool now rather than when it is collected.
+ */
+export async function drain(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Already read, or the connection is gone: nothing to let go of.
+  }
+}
+
+/**
+ * The parts of a webhook URL that are its credential, to cut from an error
+ * body that echoes the request: its path and query together, then the last
+ * segment of its path (Slack's and Discord's token) on its own.
+ */
+export function urlSecrets(url: string): string[] {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").pop() ?? "";
+    return [parsed.pathname + parsed.search, last].filter((part) => part.length > 0 && part !== "/");
+  } catch {
+    return [];
+  }
 }
 
 /** The start of an error body, secrets cut out first, then cut to ERROR_BODY_MAX on a code point. */
