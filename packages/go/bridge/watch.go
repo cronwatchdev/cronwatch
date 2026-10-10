@@ -355,7 +355,7 @@ func Unscheduled(def cronwatch.Definition) []cronwatch.JobOption {
 			}
 		case "failuresBeforeAlert":
 			if n, ok := value.(float64); ok {
-				options = append(options, cronwatch.FailuresBeforeAlert(int(n)))
+				options = append(options, cronwatch.FailuresBeforeAlert(wholeFailures(n)))
 			}
 		}
 	}

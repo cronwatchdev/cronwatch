@@ -200,7 +200,7 @@ func TestSummarizeTakesTheNewestTwentyRuns(t *testing.T) {
 func TestAFailedAlertNamesTheErrorOnce(t *testing.T) {
 	message := func(err string) string {
 		r := Run{ID: "r", Job: "j", Status: StatusFailed, StartedAt: t0, FinishedAt: ptr(t0), DurationMs: ptr(int64(5)), Error: ptr(err), Metrics: Metrics{}, Trigger: "run"}
-		return composeAlert(alertDraft{AlertFailed, &r, FailureDetails{1, 1}}, def(t, `{"name":"j"}`), t0).Message
+		return composeAlert(alertDraft{AlertFailed, &r, FailureDetails{ConsecutiveFailures: 1, Threshold: 1}}, def(t, `{"name":"j"}`), t0).Message
 	}
 	for _, c := range []struct{ err, want string }{
 		{"Error: connect ECONNREFUSED 10.0.0.12:5432", `(?m)^Error: connect ECONNREFUSED`},
@@ -245,5 +245,38 @@ func TestRunDurationAndIsStuckAtTheInt64Limits(t *testing.T) {
 		if got := (JobState{Version: &v}).version(); got != 0 {
 			t.Errorf("version %d counts as %d, want 0", v, got)
 		}
+	}
+}
+
+// A threshold another port stored as 2.5 alerts on the third failure, as
+// the SDK's does, and the details carry 2.5 rather than 2, read back too.
+func TestAFractionalThresholdIsKeptInTheDetails(t *testing.T) {
+	d := def(t, `{"name":"j","failuresBeforeAlert":2.5}`)
+	state := emptyState("j")
+	var drafts []alertDraft
+	for i := range 3 {
+		at := t0 + int64(i)*tHour
+		e, err := onRunFinish(d, testRun("j", StatusFailed, at, 1000), onRunStart(state), nil, at+1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, drafts = e.state, e.alerts
+		if i < 2 && len(drafts) != 0 {
+			t.Fatalf("alerted on failure %d", i+1)
+		}
+	}
+	if len(drafts) != 1 {
+		t.Fatalf("no alert on the third failure: %v", types(drafts))
+	}
+	got := js.Stringify(drafts[0].Details.jsValue())
+	if got != `{"consecutiveFailures":3,"threshold":2.5}` {
+		t.Errorf("details: %s", got)
+	}
+	v, err := js.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back := js.Stringify(detailsFrom(AlertFailed, v.(*js.Object)).jsValue()); back != got {
+		t.Errorf("read back: %s", back)
 	}
 }

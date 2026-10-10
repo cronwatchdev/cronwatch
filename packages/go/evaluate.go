@@ -531,7 +531,7 @@ func onRunFinish(def Definition, run Run, state JobState, history []Run, now int
 	}
 	if float64(next.ConsecutiveFailures) >= threshold {
 		if openCondition(&next, condition, now) {
-			alerts = append(alerts, alertDraft{alertType, &r, FailureDetails{ConsecutiveFailures: next.ConsecutiveFailures, Threshold: int(threshold)}})
+			alerts = append(alerts, alertDraft{alertType, &r, failureDetails(next.ConsecutiveFailures, threshold)})
 		}
 	}
 	return evaluation{next, alerts}, nil
