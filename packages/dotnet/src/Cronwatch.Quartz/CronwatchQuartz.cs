@@ -707,7 +707,7 @@ public sealed class CronwatchQuartz : IAsyncDisposable
             return;
         }
         LetGo();
-        await firing.Run.TakeBackAsync().ConfigureAwait(false);
+        await firing.Run.TakeBackAsync(error.Exception).ConfigureAwait(false);
     }
 
     /// <summary>
