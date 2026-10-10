@@ -3323,6 +3323,132 @@
         },
         "alerts": []
       }
+    },
+    {
+      "previous": {
+        "job": "j",
+        "open": {
+          "failed": 1
+        },
+        "consecutiveFailures": 2,
+        "silencedUntil": 1767609000000,
+        "lastAlertAt": null,
+        "pendingRecovery": [],
+        "undelivered": []
+      },
+      "evaluation": {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767609000000,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "alerts": [
+          {
+            "type": "recovered",
+            "run": null,
+            "details": {
+              "after": [
+                "failed"
+              ]
+            }
+          }
+        ]
+      },
+      "now": 1767605400000,
+      "result": {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767609000000,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "alerts": [
+          {
+            "type": "recovered",
+            "run": null,
+            "details": {
+              "after": [
+                "failed"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "previous": {
+        "job": "j",
+        "open": {
+          "failed": 1
+        },
+        "consecutiveFailures": 0,
+        "silencedUntil": 1767609000000,
+        "lastAlertAt": null,
+        "pendingRecovery": [],
+        "undelivered": []
+      },
+      "evaluation": {
+        "state": {
+          "job": "j",
+          "open": {
+            "slow": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767609000000,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "alerts": [
+          {
+            "type": "recovered",
+            "run": null,
+            "details": {
+              "after": [
+                "failed"
+              ]
+            }
+          },
+          {
+            "type": "slow",
+            "run": null,
+            "details": {
+              "consecutiveFailures": 1,
+              "threshold": 1
+            }
+          }
+        ]
+      },
+      "now": 1767605400000,
+      "result": {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767609000000,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "alerts": [
+          {
+            "type": "recovered",
+            "run": null,
+            "details": {
+              "after": [
+                "failed"
+              ]
+            }
+          }
+        ]
+      }
     }
   ],
   "staleAlert": [
@@ -4438,6 +4564,7 @@
   "delivery": {
     "maxUndelivered": 20,
     "sendLeaseMs": 300000,
+    "maxPendingRuns": 100,
     "alertKey": [
       {
         "alert": {
@@ -4729,6 +4856,72 @@
           "silencedUntil": null,
           "lastAlertAt": null,
           "sending": null
+        },
+        "normalized": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRuns": [
+            "a",
+            1,
+            null,
+            "b"
+          ]
+        },
+        "normalized": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRuns": []
+        },
+        "normalized": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRuns": "r1"
         },
         "normalized": {
           "job": "j",
@@ -11797,6 +11990,3288 @@
             ]
           },
           "dropped": 0
+        }
+      }
+    ],
+    "claimUndelivered": [
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {},
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": []
+          },
+          "claimed": [],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r1",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            },
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r1",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ],
+          "stale": [
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            },
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000,
+            "slow": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            }
+          ],
+          "sending": [
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "missed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j missed",
+                "message": "m",
+                "at": 1767605520000,
+                "details": {
+                  "dueAt": 1767604200000,
+                  "deadline": 1767604800000,
+                  "graceMs": 600000,
+                  "lastRunAt": null
+                }
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000,
+              "slow": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "missed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j missed",
+                  "message": "m",
+                  "at": 1767605520000,
+                  "details": {
+                    "dueAt": 1767604200000,
+                    "deadline": 1767604800000,
+                    "graceMs": 600000,
+                    "lastRunAt": null
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r1",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "slow",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r2",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j slow",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "durationMs": 20000,
+                    "thresholdMs": 10000,
+                    "basis": "maxDuration"
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            }
+          ],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767605700001,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": 1767605700001,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": {
+                  "id": "r1",
+                  "job": "j",
+                  "status": "failed",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767605401500,
+                  "durationMs": 1500,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            ]
+          },
+          "claimed": [],
+          "stale": [
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767605700000,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": 1767605700000,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r1",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {},
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "recovered",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r3",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j recovered",
+                  "message": "m",
+                  "at": 1767605460000,
+                  "details": {
+                    "after": [
+                      "failed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ],
+          "stale": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "slow": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": 1767605700001,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            },
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "slow": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": 1767605700001,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [
+              {
+                "type": "slow",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": {
+                  "id": "r2",
+                  "job": "j",
+                  "status": "failed",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767605401500,
+                  "durationMs": 1500,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "title": "j slow",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "durationMs": 20000,
+                  "thresholdMs": 10000,
+                  "basis": "maxDuration"
+                }
+              }
+            ],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "recovered",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r3",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j recovered",
+                  "message": "m",
+                  "at": 1767605460000,
+                  "details": {
+                    "after": [
+                      "failed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "recovered",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r3",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j recovered",
+              "message": "m",
+              "at": 1767605460000,
+              "details": {
+                "after": [
+                  "failed"
+                ]
+              }
+            }
+          ],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000,
+            "slow": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            },
+            {
+              "type": "slow",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r2",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j slow",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "durationMs": 20000,
+                "thresholdMs": 10000,
+                "basis": "maxDuration"
+              }
+            }
+          ],
+          "sending": [
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605401000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605402000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605403000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605404000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605405000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605406000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605407000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605408000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605409000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605410000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605411000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605412000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605413000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605414000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605415000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605416000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605417000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605418000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000,
+              "slow": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [
+              {
+                "type": "slow",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": {
+                  "id": "r2",
+                  "job": "j",
+                  "status": "failed",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767605401500,
+                  "durationMs": 1500,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "title": "j slow",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "durationMs": 20000,
+                  "thresholdMs": 10000,
+                  "basis": "maxDuration"
+                }
+              }
+            ],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605401000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605402000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605403000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605404000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605405000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605406000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605407000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605408000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605409000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605410000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605411000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605412000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605413000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605414000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605415000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605416000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605417000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605418000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": {
+                    "id": "r1",
+                    "job": "j",
+                    "status": "failed",
+                    "startedAt": 1767605400000,
+                    "finishedAt": 1767605401500,
+                    "durationMs": 1500,
+                    "error": null,
+                    "output": null,
+                    "metrics": {},
+                    "trigger": "run"
+                  },
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ],
+          "stale": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {
+            "failed": 1767605400000
+          },
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [
+            {
+              "type": "failed",
+              "job": "j",
+              "definition": {
+                "name": "j"
+              },
+              "run": {
+                "id": "r1",
+                "job": "j",
+                "status": "failed",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767605401500,
+                "durationMs": 1500,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "title": "j failed",
+              "message": "m",
+              "at": 1767605400000,
+              "details": {
+                "consecutiveFailures": 1,
+                "threshold": 1
+              }
+            }
+          ],
+          "sending": [
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605401000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605402000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605403000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605404000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605405000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605406000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605407000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605408000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605409000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605410000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605411000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605412000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605413000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605414000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605415000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605416000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605417000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605418000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            },
+            {
+              "until": 1767606000000,
+              "alert": {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": null,
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605419000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            }
+          ]
+        },
+        "now": 1767605700000,
+        "until": 1767606000000,
+        "result": {
+          "state": {
+            "job": "j",
+            "open": {
+              "failed": 1767605400000
+            },
+            "consecutiveFailures": 0,
+            "silencedUntil": null,
+            "lastAlertAt": null,
+            "pendingRecovery": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "run": {
+                  "id": "r1",
+                  "job": "j",
+                  "status": "failed",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767605401500,
+                  "durationMs": 1500,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "title": "j failed",
+                "message": "m",
+                "at": 1767605400000,
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                }
+              }
+            ],
+            "sending": [
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605400000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605401000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605402000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605403000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605404000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605405000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605406000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605407000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605408000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605409000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605410000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605411000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605412000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605413000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605414000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605415000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605416000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605417000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605418000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              },
+              {
+                "until": 1767606000000,
+                "alert": {
+                  "type": "failed",
+                  "job": "j",
+                  "definition": {
+                    "name": "j"
+                  },
+                  "run": null,
+                  "title": "j failed",
+                  "message": "m",
+                  "at": 1767605419000,
+                  "details": {
+                    "consecutiveFailures": 1,
+                    "threshold": 1
+                  }
+                }
+              }
+            ]
+          },
+          "claimed": [],
+          "stale": []
+        }
+      }
+    ],
+    "holdRun": [
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r1"
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0",
+            "r1"
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r1",
+            "r2"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r2",
+            "r1"
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "p0",
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+            "p6",
+            "p7",
+            "p8",
+            "p9",
+            "p10",
+            "p11",
+            "p12",
+            "p13",
+            "p14",
+            "p15",
+            "p16",
+            "p17",
+            "p18",
+            "p19",
+            "p20",
+            "p21",
+            "p22",
+            "p23",
+            "p24",
+            "p25",
+            "p26",
+            "p27",
+            "p28",
+            "p29",
+            "p30",
+            "p31",
+            "p32",
+            "p33",
+            "p34",
+            "p35",
+            "p36",
+            "p37",
+            "p38",
+            "p39",
+            "p40",
+            "p41",
+            "p42",
+            "p43",
+            "p44",
+            "p45",
+            "p46",
+            "p47",
+            "p48",
+            "p49",
+            "p50",
+            "p51",
+            "p52",
+            "p53",
+            "p54",
+            "p55",
+            "p56",
+            "p57",
+            "p58",
+            "p59",
+            "p60",
+            "p61",
+            "p62",
+            "p63",
+            "p64",
+            "p65",
+            "p66",
+            "p67",
+            "p68",
+            "p69",
+            "p70",
+            "p71",
+            "p72",
+            "p73",
+            "p74",
+            "p75",
+            "p76",
+            "p77",
+            "p78",
+            "p79",
+            "p80",
+            "p81",
+            "p82",
+            "p83",
+            "p84",
+            "p85",
+            "p86",
+            "p87",
+            "p88",
+            "p89",
+            "p90",
+            "p91",
+            "p92",
+            "p93",
+            "p94",
+            "p95",
+            "p96",
+            "p97",
+            "p98",
+            "p99"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+            "p6",
+            "p7",
+            "p8",
+            "p9",
+            "p10",
+            "p11",
+            "p12",
+            "p13",
+            "p14",
+            "p15",
+            "p16",
+            "p17",
+            "p18",
+            "p19",
+            "p20",
+            "p21",
+            "p22",
+            "p23",
+            "p24",
+            "p25",
+            "p26",
+            "p27",
+            "p28",
+            "p29",
+            "p30",
+            "p31",
+            "p32",
+            "p33",
+            "p34",
+            "p35",
+            "p36",
+            "p37",
+            "p38",
+            "p39",
+            "p40",
+            "p41",
+            "p42",
+            "p43",
+            "p44",
+            "p45",
+            "p46",
+            "p47",
+            "p48",
+            "p49",
+            "p50",
+            "p51",
+            "p52",
+            "p53",
+            "p54",
+            "p55",
+            "p56",
+            "p57",
+            "p58",
+            "p59",
+            "p60",
+            "p61",
+            "p62",
+            "p63",
+            "p64",
+            "p65",
+            "p66",
+            "p67",
+            "p68",
+            "p69",
+            "p70",
+            "p71",
+            "p72",
+            "p73",
+            "p74",
+            "p75",
+            "p76",
+            "p77",
+            "p78",
+            "p79",
+            "p80",
+            "p81",
+            "p82",
+            "p83",
+            "p84",
+            "p85",
+            "p86",
+            "p87",
+            "p88",
+            "p89",
+            "p90",
+            "p91",
+            "p92",
+            "p93",
+            "p94",
+            "p95",
+            "p96",
+            "p97",
+            "p98",
+            "p99",
+            "r1"
+          ]
+        }
+      }
+    ],
+    "releaseRun": [
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r1"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": []
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0",
+            "r1",
+            "r2"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0",
+            "r2"
+          ]
+        }
+      },
+      {
+        "state": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0"
+          ]
+        },
+        "runId": "r1",
+        "result": {
+          "job": "j",
+          "open": {},
+          "consecutiveFailures": 0,
+          "silencedUntil": null,
+          "lastAlertAt": null,
+          "pendingRecovery": [],
+          "undelivered": [],
+          "pendingRuns": [
+            "r0"
+          ]
         }
       }
     ]

@@ -135,6 +135,14 @@ export interface JobState {
    */
   underFloor?: string[];
   /**
+   * The ids of runs started and not yet judged, oldest first (see
+   * holdRun). A run leaves when its finish is evaluated; one a check finds
+   * finished and still here (the process that finished it stopped before
+   * writing its evaluation) is evaluated by that check. Absent when empty,
+   * and in state written before this field existed.
+   */
+  pendingRuns?: string[];
+  /**
    * Goes up by one on every write, so a store can refuse a write made from a
    * stale read (see Store.compareAndSetState). Absent counts as 0.
    */

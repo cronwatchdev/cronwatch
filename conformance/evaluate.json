@@ -9802,7 +9802,36 @@
           "at": 1767608401000,
           "status": "ok",
           "expect": {
-            "alerts": [],
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r3",
+                  "job": "flaky",
+                  "status": "ok",
+                  "startedAt": 1767608400000,
+                  "finishedAt": 1767608401000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "failed"
+                  ]
+                },
+                "job": "flaky",
+                "definition": {
+                  "name": "flaky",
+                  "schedule": "every 1h"
+                },
+                "title": "flaky recovered",
+                "message": "A run 2026-01-05 10:20:00 UTC (now) succeeded after: failed.\nRan 1s.",
+                "at": 1767608401000
+              }
+            ],
             "state": {
               "job": "flaky",
               "open": {},
@@ -9960,6 +9989,346 @@
                 "p50Ms": 1000,
                 "p95Ms": 1000
               }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a recovery for an alert sent before the silence goes out during it",
+      "definition": {
+        "name": "flaky"
+      },
+      "createdAt": 1767519000000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767605401000,
+          "status": "failed",
+          "error": "Error: boom",
+          "expect": {
+            "alerts": [
+              {
+                "type": "failed",
+                "run": {
+                  "id": "r1",
+                  "job": "flaky",
+                  "status": "failed",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767605401000,
+                  "durationMs": 1000,
+                  "error": "Error: boom",
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                },
+                "job": "flaky",
+                "definition": {
+                  "name": "flaky"
+                },
+                "title": "flaky failed",
+                "message": "Started 2026-01-05 09:30:00 UTC (now), ran 1s.\nError: boom",
+                "at": 1767605401000
+              }
+            ],
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767605401000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "silence",
+          "until": 1767616200000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767605401000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r2",
+          "at": 1767607200000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767605401000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r2",
+          "at": 1767607201000,
+          "status": "failed",
+          "error": "Error: boom",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767605401000
+              },
+              "consecutiveFailures": 2,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r3",
+          "at": 1767609000000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767605401000
+              },
+              "consecutiveFailures": 2,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r3",
+          "at": 1767609001000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r3",
+                  "job": "flaky",
+                  "status": "ok",
+                  "startedAt": 1767609000000,
+                  "finishedAt": 1767609001000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "failed"
+                  ]
+                },
+                "job": "flaky",
+                "definition": {
+                  "name": "flaky"
+                },
+                "title": "flaky recovered",
+                "message": "A run 2026-01-05 10:30:00 UTC (now) succeeded after: failed.\nRan 1s.",
+                "at": 1767609001000
+              }
+            ],
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r4",
+          "at": 1767612600000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r4",
+          "at": 1767612601000,
+          "status": "failed",
+          "error": "Error: boom",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 1,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r5",
+          "at": 1767614400000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 1,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r5",
+          "at": 1767614401000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": 1767616200000,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "unsilence",
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r6",
+          "at": 1767619800000,
+          "expect": {
+            "state": {
+              "job": "flaky",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r6",
+          "at": 1767619801000,
+          "status": "failed",
+          "error": "Error: boom",
+          "expect": {
+            "alerts": [
+              {
+                "type": "failed",
+                "run": {
+                  "id": "r6",
+                  "job": "flaky",
+                  "status": "failed",
+                  "startedAt": 1767619800000,
+                  "finishedAt": 1767619801000,
+                  "durationMs": 1000,
+                  "error": "Error: boom",
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                },
+                "job": "flaky",
+                "definition": {
+                  "name": "flaky"
+                },
+                "title": "flaky failed",
+                "message": "Started 2026-01-05 13:30:00 UTC (now), ran 1s.\nError: boom",
+                "at": 1767619801000
+              }
+            ],
+            "state": {
+              "job": "flaky",
+              "open": {
+                "failed": 1767619801000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
             }
           }
         }
@@ -12111,7 +12480,26 @@
           "op": "check",
           "at": 1767609660000,
           "expect": {
-            "alerts": [],
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": null,
+                "details": {
+                  "after": [
+                    "missed"
+                  ],
+                  "reason": "unscheduled",
+                  "since": 1767609600000
+                },
+                "job": "j",
+                "definition": {
+                  "name": "j"
+                },
+                "title": "j is no longer scheduled",
+                "message": "Missed since 2026-01-05 10:40:00 UTC (1m ago). It has no schedule now, so nothing is due; the missed alert is closed.",
+                "at": 1767609660000
+              }
+            ],
             "state": {
               "job": "j",
               "open": {},

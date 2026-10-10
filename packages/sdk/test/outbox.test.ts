@@ -135,5 +135,90 @@ test("a process that queues its alerts for a check elsewhere writes them with th
   const state = (await shared.getState("backup"))!;
   assert.deepEqual(state.undelivered!.map((a) => a.type), ["failed"]);
   assert.equal(state.sending, undefined);
-  assert.equal(writes, 1, "one write: the failure and its alert together");
+  assert.equal(state.pendingRuns, undefined);
+  assert.equal(writes, 2, "the start holds the run; then one write: the failure, its alert, and the run's release together");
+});
+
+test("two processes checking at once retry a queued alert once: the one whose claim lands sends it", async () => {
+  const c = clock();
+  const shared = memory();
+  let down = true;
+  const sent: Alert[] = [];
+  const channel: AlertChannel = { name: "flaky", send: async (alert) => { if (down) throw new Error("down"); sent.push(alert); } };
+  const a = cronwatch({ store: shared, now: c.now, alerts: [channel], cronSecret: null, onError: () => {} });
+  const b = cronwatch({ store: shared, now: c.now, alerts: [channel], cronSecret: null, onError: () => {} });
+  await assert.rejects(a.run("nightly", async () => { throw new Error("disk full"); }));
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered!.map((x) => x.type), ["failed"]);
+  down = false;
+  c.advance(MIN);
+  await Promise.all([a.check(), b.check()]);
+  assert.deepEqual(sent.map((x) => x.type), ["failed"]);
+  const state = (await shared.getState("nightly"))!;
+  assert.deepEqual(state.undelivered, []);
+  assert.equal(state.sending, undefined);
+});
+
+test("while a job is silenced a retry claims only recoveries; the rest wait in the queue", async () => {
+  const c = clock();
+  const shared = memory();
+  let down = true;
+  const sent: Alert[] = [];
+  const channel: AlertChannel = { name: "flaky", send: async (alert) => { if (down) throw new Error("down"); sent.push(alert); } };
+  const cw = cronwatch({ store: shared, now: c.now, alerts: [channel], cronSecret: null, onError: () => {} });
+  await assert.rejects(cw.run("nightly", async () => { throw new Error("disk full"); }));
+  await cw.silence("nightly", "1h");
+  down = false;
+  c.advance(MIN);
+  await cw.check();
+  assert.deepEqual(sent, []);
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered!.map((x) => x.type), ["failed"]);
+  await cw.unsilence("nightly");
+  await cw.check();
+  assert.deepEqual(sent.map((x) => x.type), ["failed"]);
+});
+
+test("a finished run whose evaluation was never written is evaluated by a later check, once", async () => {
+  const c = clock();
+  const shared = memory();
+  // The finish's state write keeps losing, as if the process stopped between the run's write and its evaluation.
+  let refuse = false;
+  const contested: Store = { ...shared, compareAndSetState: async (state, version) => (refuse ? false : shared.compareAndSetState!(state, version)) };
+  const sent = capture();
+  const cw = cronwatch({ store: contested, now: c.now, alerts: [sent], cronSecret: null, onError: () => {} });
+  const handle = await cw.job("nightly").start();
+  refuse = true;
+  await handle.finish({ error: new Error("disk full") });
+  refuse = false;
+  assert.equal((await shared.getRun(handle.id))!.status, "failed");
+  assert.deepEqual(sent.types(), []);
+  assert.deepEqual((await shared.getState("nightly"))!.pendingRuns, [handle.id]);
+  // Left alone at first, in case its finish is still being written elsewhere.
+  c.advance(MIN);
+  await cw.check();
+  assert.deepEqual(sent.types(), []);
+  c.advance(SEND_LEASE_MS);
+  await cw.check();
+  assert.deepEqual(sent.types(), ["failed"]);
+  assert.equal((await shared.getState("nightly"))!.pendingRuns, undefined);
+  await cw.check();
+  assert.deepEqual(sent.types(), ["failed"]);
+});
+
+test("a pending run the store no longer has is let go, and a run stored unjudged on purpose is not evaluated", async () => {
+  const c = clock();
+  const shared = memory();
+  const sent = capture();
+  const cw = cronwatch({ store: shared, now: c.now, alerts: [sent], cronSecret: null });
+  cw.job("nightly");
+  await shared.setState({ job: "nightly", open: {}, consecutiveFailures: 0, silencedUntil: null, lastAlertAt: null, pendingRuns: ["gone"] });
+  await cw.check();
+  assert.equal((await shared.getState("nightly"))!.pendingRuns, undefined);
+  const run = { id: "imported", job: "nightly", status: "running" as const, startedAt: c.now(), finishedAt: null, durationMs: null, error: null, output: null, metrics: {}, trigger: "x" };
+  await cw.recordRun(run);
+  assert.deepEqual((await shared.getState("nightly"))!.pendingRuns, ["imported"]);
+  await cw.recordRun({ ...run, status: "failed", finishedAt: c.now(), durationMs: 0, error: "x" }, { evaluate: false });
+  assert.equal((await shared.getState("nightly"))!.pendingRuns, undefined);
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  assert.deepEqual(sent.types(), []);
 });

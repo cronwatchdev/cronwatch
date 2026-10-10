@@ -102,7 +102,8 @@ test("an update that keeps losing gives up and reports, and the run still finish
   const contested: Store = { ...store, compareAndSetState: async () => false };
   const cw = cronwatch({ store: contested, alerts: [capture()], cronSecret: null, onError: (_e, where) => errors.push(where) });
   await assert.rejects(cw.run("busy", async () => { throw new Error("x"); }), /x/);
-  assert.deepEqual(errors, ["evaluating busy"]);
+  // The start's write (it holds the run as pending) loses too, and is reported the same way.
+  assert.deepEqual(errors, ["starting busy", "evaluating busy"]);
   assert.equal((await cw.runs("busy"))[0]!.status, "failed");
 });
 

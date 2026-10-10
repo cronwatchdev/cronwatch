@@ -3,10 +3,11 @@ import { isDevelopment, isProduction, readSecretEnv, secretOption } from "./env.
 import {
   applySilence,
   BASELINE_WINDOW,
+  claimUndelivered,
   emptyState,
   hasFullBaseline,
   holdAlerts,
-  isSilenced,
+  holdRun,
   isStuck,
   MAX_UNDELIVERED,
   normalizeState,
@@ -14,11 +15,11 @@ import {
   onRunFinish,
   onRunStart,
   recordSent,
+  releaseRun,
   releaseSending,
   runDuration,
   SEND_LEASE_MS,
   silenceEnd,
-  staleAlert,
   stateVersion,
   summarize,
   timeoutMs,
@@ -645,7 +646,7 @@ export class Cronwatch {
     }
     // Closing missed and stuck happens beside the job, which never waits on it.
     const started = recorded
-      ? this.updateState(name, (before) => ({ state: onRunStart(before), result: undefined }))
+      ? this.updateState(name, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }))
           .then(() => {}, (e) => this.onError(e, `starting ${name}`))
       : Promise.resolve();
 
@@ -819,7 +820,7 @@ export class Cronwatch {
       this.onError(e, `recording ${name}`);
     }
     if (recorded) {
-      await this.updateState(name, (before) => ({ state: onRunStart(before), result: undefined }))
+      await this.updateState(name, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }))
         .catch((e: unknown) => this.onError(e, `starting ${name}`));
     }
     return this.runHandle(definition, run.id, run, recorded, null);
@@ -1052,7 +1053,7 @@ export class Cronwatch {
       throw e;
     }
     if (!evaluate) return [];
-    await this.updateState(run.job, (before) => ({ state: onRunStart(before), result: undefined }));
+    await this.updateState(run.job, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }));
     if (run.status === "running") return [];
     return this.finishRun(definition, run, this.now());
   }
@@ -1069,7 +1070,13 @@ export class Cronwatch {
       this.report(new Error(`run ${run.id} of ${run.job} ${claim.ignored}; ignored`), `recording ${run.job}`);
       return [];
     }
-    if (!evaluate || (claim.lateAfterTimeout && run.status !== "ok")) return [];
+    if (!evaluate) {
+      // Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+      await this.updateState(run.job, (current) => ({ state: releaseRun(current, run.id), result: undefined }))
+        .catch((e: unknown) => this.onError(e, `recording ${run.job}`));
+      return [];
+    }
+    if (claim.lateAfterTimeout && run.status !== "ok") return [];
     return this.finishRun(definition, run, this.now());
   }
 
@@ -1084,7 +1091,8 @@ export class Cronwatch {
       let history: Run[] | null = null;
       ({ result: held } = await this.updateState(run.job, async (previous) => {
         history ??= await this.history(run);
-        return this.outbox(applySilence(previous, onRunFinish(definition, run, previous, history, now), now), definition, now);
+        const before = releaseRun(previous, run.id);
+        return this.outbox(applySilence(before, onRunFinish(definition, run, before, history, now), now), definition, now);
       }));
     } catch (e) {
       this.onError(e, `evaluating ${run.job}`);
@@ -1204,6 +1212,7 @@ export class Cronwatch {
         this.reportDropped(stored.name, held.dropped);
         alerts.push(...(await this.retryUndelivered(stored.name, state, now, retries)));
         alerts.push(...(await this.dispatch(stored.name, held.alerts, now)));
+        alerts.push(...(await this.evaluatePending(stored, recent, state, now)));
         jobs.push(summarize(stored, recent, state, nextExpectedAt, now));
       } catch (e) {
         this.onError(e, `checking ${stored.name}`);
@@ -1222,6 +1231,33 @@ export class Cronwatch {
     }
 
     return { checkedAt: now, jobs, alerts, pruned };
+  }
+
+  /**
+   * Runs the job's state still holds as pending (holdRun) whose finish was
+   * written but never evaluated: the process that finished them stopped, or
+   * its state write failed, between the two writes. Each one finished more
+   * than SEND_LEASE_MS ago is evaluated now, as its finish would have been;
+   * one still running is left to the stuck check, and one the store no
+   * longer has (given back, or pruned) is let go. The wait leaves a finish
+   * under way in another process to write its own evaluation.
+   */
+  private async evaluatePending(stored: StoredJob, recent: Run[], state: JobState, now: number): Promise<Alert[]> {
+    const alerts: Alert[] = [];
+    for (const id of state.pendingRuns ?? []) {
+      try {
+        const run = recent.find((r) => r.id === id) ?? (await this.store.getRun(id));
+        if (!run || run.job !== stored.name) {
+          await this.updateState(stored.name, (current) => ({ state: releaseRun(current, id), result: undefined }));
+          continue;
+        }
+        if (run.status === "running" || typeof run.finishedAt !== "number" || run.finishedAt > now - SEND_LEASE_MS) continue;
+        alerts.push(...(await this.finishRun(stored.definition, run, now)));
+      } catch (e) {
+        this.onError(e, `evaluating run ${id} of ${stored.name}`);
+      }
+    }
+    return alerts;
   }
 
   /** A job's summary and its newest runs, without alerting. A job that cannot be evaluated is reported and shown as failing. */
@@ -1404,21 +1440,35 @@ export class Cronwatch {
 
   /**
    * Send the alerts that no channel accepted last time, once each, oldest
-   * first. `state` is the job's state as this check left it: an alert that
-   * no longer describes it (staleAlert) is dropped instead. Retries across a
-   * check share RETRY_BUDGET_MS of wall-clock time; once it is spent the rest
-   * stay queued for the next check.
+   * first. They are claimed first (claimUndelivered): moved into `sending`
+   * with a lease, in one conditional write, so when several processes check
+   * at once only the one whose write lands sends them. An alert that no
+   * longer describes the job (staleAlert) is dropped instead. Retries across
+   * a check share RETRY_BUDGET_MS of wall-clock time; claimed alerts it has
+   * no time left for go back to the queue for the next check.
    */
   private async retryUndelivered(name: string, state: JobState, now: number, budget: { spentMs: number }): Promise<Alert[]> {
-    const pending = state.undelivered ?? [];
-    if (pending.length === 0 || isSilenced(state, now) || this.deferDelivery) return [];
+    if ((state.undelivered ?? []).length === 0 || this.deferDelivery) return [];
+    let claimed: Alert[];
+    try {
+      ({ result: claimed } = await this.updateState(name, (previous) => {
+        const claim = claimUndelivered(previous, now, this.now() + SEND_LEASE_MS);
+        return { state: claim.state, result: claim.claimed };
+      }));
+    } catch (e) {
+      this.onError(e, `claiming undelivered alerts for ${name}`);
+      return [];
+    }
+    if (claimed.length === 0) return [];
     const delivered: Alert[] = [];
     const failed: Alert[] = [];
-    const dropped = pending.filter((alert) => staleAlert(alert, state));
-    for (const alert of pending) {
-      if (dropped.includes(alert)) continue;
+    for (const alert of claimed) {
       const left = RETRY_BUDGET_MS - budget.spentMs;
-      if (left <= 0) break;
+      if (left <= 0) {
+        // Not tried: back to the queue as it was.
+        failed.push(alert);
+        continue;
+      }
       const started = Date.now();
       // An alert queued by a process that delivers at check time was never
       // triaged. One that was tried (triage: null) is not tried again.
@@ -1426,7 +1476,7 @@ export class Cronwatch {
       (await this.deliver(alert) ? delivered : failed).push(alert);
       budget.spentMs += Math.max(0, Date.now() - started);
     }
-    await this.recordDelivery(name, delivered, failed, dropped, now);
+    await this.recordDelivery(name, delivered, failed, [], now);
     return delivered;
   }
 
