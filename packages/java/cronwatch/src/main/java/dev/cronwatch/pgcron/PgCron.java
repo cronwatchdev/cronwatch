@@ -92,6 +92,8 @@ public final class PgCron {
         c.setAutoCommit(true);
       }
       try (PreparedStatement ps = c.prepareStatement(sql)) {
+        // As the store's statements: a database that stops answering fails the source's read.
+        ps.setQueryTimeout(60);
         for (int i = 0; i < params.size(); i++) {
           Object p = params.get(i);
           if (p instanceof Long n) {

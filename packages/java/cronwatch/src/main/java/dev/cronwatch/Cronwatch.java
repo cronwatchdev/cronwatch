@@ -30,6 +30,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import java.util.function.UnaryOperator;
@@ -847,18 +848,26 @@ public final class Cronwatch implements AutoCloseable {
 
   /**
    * Waits for the check in flight to end, as the SDK's close awaits {@code this.checking}, so it
-   * never writes to a store already closed; an interrupt stops waiting. {@link #close} does not
-   * call it from a thread of the client's own, which the check may be waiting on.
+   * never writes to a store already closed; an interrupt stops waiting. The wait is bounded by the
+   * longest a check's own timeouts let it take (a channel's, triage's, and the retries' budget) and
+   * the close's own wait, so a store that never answers cannot hold {@link #close} for ever: past
+   * that, it is reported and the close goes on. {@link #close} does not call it from a thread of
+   * the client's own, which the check may be waiting on.
    */
   private void awaitCheck() {
     CompletableFuture<CheckResult> inFlight = core.checking.get();
     if (inFlight == null) {
       return;
     }
+    Core.Timings t = core.timings;
+    long bound = t.channelMs + t.triageMs + t.retryBudgetMs + t.closeWaitMs;
     try {
-      inFlight.get();
+      inFlight.get(bound, TimeUnit.MILLISECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    } catch (TimeoutException e) {
+      core.report(
+          "the check in flight did not end within " + bound + "ms; closing without it", "closing");
     } catch (ExecutionException | CancellationException e) {
       // The check's own failure, reported to whoever asked for it.
     }

@@ -69,6 +69,13 @@ public final class SqlStore implements Store {
   /** How long opening SQLite keeps retrying a busy database before it gives up (busy.ts). */
   private static final long BUSY_RETRY_MS = 2_000;
 
+  /**
+   * Every statement's own limit on a database server, in seconds, so one that stops answering (a
+   * network partition, a lock held elsewhere) fails the call instead of holding a check, a run's
+   * recording, or {@code close()} for ever. Far past any statement the store makes.
+   */
+  static final int QUERY_TIMEOUT_S = 60;
+
   private final DataSource dataSource;
   private final Dialect dialect;
   private final String prefix;
@@ -343,6 +350,17 @@ public final class SqlStore implements Store {
     }
   }
 
+  /**
+   * Gives a statement the store's {@link #QUERY_TIMEOUT_S} on a database server. Not on SQLite: a
+   * file on this machine, whose driver makes a query timeout the connection's {@code busy_timeout},
+   * which the SDK sets to five seconds.
+   */
+  private void limit(Statement s) throws SQLException {
+    if (dialect != Dialect.SQLITE) {
+      s.setQueryTimeout(QUERY_TIMEOUT_S);
+    }
+  }
+
   /** Runs a statement, answering how many rows it changed. */
   private long run(String text, List<Param> params) throws SQLException {
     return with(c -> update(c, text, params));
@@ -350,6 +368,7 @@ public final class SqlStore implements Store {
 
   private long update(Connection c, String text, List<Param> params) throws SQLException {
     try (PreparedStatement ps = c.prepareStatement(text)) {
+      limit(ps);
       bind(ps, params);
       return ps.executeLargeUpdate();
     }
@@ -360,6 +379,7 @@ public final class SqlStore implements Store {
     return with(
         c -> {
           try (PreparedStatement ps = c.prepareStatement(text)) {
+            limit(ps);
             bind(ps, params);
             try (ResultSet rs = ps.executeQuery()) {
               ResultSetMetaData meta = rs.getMetaData();
@@ -534,6 +554,7 @@ public final class SqlStore implements Store {
             if (lockKey != null) {
               try (PreparedStatement ps =
                   c.prepareStatement("SELECT pg_advisory_xact_lock(hashtext(?))")) {
+                limit(ps);
                 ps.setString(1, lockKey);
                 ps.execute();
               }
@@ -605,6 +626,7 @@ public final class SqlStore implements Store {
         c -> {
           for (String statement : statements) {
             try (Statement s = c.createStatement()) {
+              limit(s);
               s.execute(statement);
             }
           }

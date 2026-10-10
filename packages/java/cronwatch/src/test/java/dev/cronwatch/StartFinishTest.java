@@ -524,6 +524,50 @@ class StartFinishTest {
     assertEquals(List.of("send", "close"), order);
   }
 
+  @Test
+  void closeStopsWaitingForACheckWhoseStoreNeverAnswers() throws Exception {
+    java.util.concurrent.atomic.AtomicBoolean hang =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    CountDownLatch hung = new CountDownLatch(1);
+    CountDownLatch never = new CountDownLatch(1);
+    MemoryStore inner = new MemoryStore();
+    Store store =
+        (Store)
+            java.lang.reflect.Proxy.newProxyInstance(
+                Store.class.getClassLoader(),
+                new Class<?>[] {Store.class},
+                (proxy, method, args) -> {
+                  if (hang.get() && !method.getName().equals("close")) {
+                    hung.countDown();
+                    never.await();
+                  }
+                  try {
+                    return method.invoke(inner, args);
+                  } catch (java.lang.reflect.InvocationTargetException e) {
+                    throw e.getCause();
+                  }
+                });
+    Errors errors = new Errors();
+    Cronwatch.Builder builder = Support.builder(new Clock(), new Capture(), errors).store(store);
+    builder.timings.channelMs = 10;
+    builder.timings.triageMs = 10;
+    builder.timings.retryBudgetMs = 10;
+    builder.timings.closeWaitMs = 10;
+    Cronwatch cw = builder.build();
+    cw.job("stuck", JobOptions.builder().schedule("every 5m")).run(job -> {});
+    hang.set(true);
+    Thread check = Support.background(cw::check);
+    hung.await();
+    Thread closing = Thread.ofVirtual().start(cw::close);
+    closing.join(Duration.ofSeconds(10));
+    assertTrue(!closing.isAlive(), "close returned while the store still hangs");
+    assertTrue(
+        String.join("\n", errors.messages()).contains("did not end within"),
+        String.join("\n", errors.messages()));
+    never.countDown();
+    check.join(Duration.ofSeconds(10));
+  }
+
   /** A store that logs each call by name into {@code calls}, over a memory store. */
   private static Store logged(List<String> calls) {
     MemoryStore inner = new MemoryStore();

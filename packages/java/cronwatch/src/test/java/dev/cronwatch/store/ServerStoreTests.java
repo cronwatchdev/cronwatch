@@ -89,6 +89,21 @@ abstract class ServerStoreTests {
     return Servers.store(kind(), prefix());
   }
 
+  @Test
+  void everyStatementOfTheStoreHasAQueryTimeout() {
+    // A server that stops answering fails the call instead of holding a check or close() for ever.
+    StatementTimeouts.Watched w = StatementTimeouts.watch(Servers.dataSource(kind()));
+    SqlStore store =
+        kind() == Kind.MYSQL || kind() == Kind.MARIADB
+            ? SqlStore.mysql(w.dataSource())
+            : SqlStore.postgres(w.dataSource());
+    StoreContract.run(store.prefix(prefix()));
+    assertTrue(!w.seen().isEmpty(), "no statement was seen");
+    for (String s : w.seen()) {
+      assertTrue(s.endsWith("=" + SqlStore.QUERY_TIMEOUT_S), w.seen().toString());
+    }
+  }
+
   /** A table beside the store's, dropped when the test ends. */
   String table(String name) {
     String t = prefix() + name;
