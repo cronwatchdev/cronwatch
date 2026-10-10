@@ -187,6 +187,8 @@ defmodule Cronwatch.Alerts.Post do
         end
       end)
 
+    guard(parent, pid)
+
     result =
       receive do
         {^ref, :status, status} ->
@@ -210,6 +212,25 @@ defmodule Cronwatch.Alerts.Post do
     Process.demonitor(monitor, [:flush])
     flush(ref)
     result
+  end
+
+  # The request dies with its caller: a caller killed before its deadline (a
+  # triage task shut down when the retry budget ran out) takes the request,
+  # its connection, and the credentials it holds down with it, rather than
+  # leave it running to the transport's own timeout, or for good with a
+  # transport that has none. A watcher rather than a link, so neither the
+  # caller's kill at the deadline nor a crash in the transport reaches the
+  # caller. It ends when either does.
+  defp guard(caller, request) do
+    spawn(fn ->
+      caller_ref = Process.monitor(caller)
+      request_ref = Process.monitor(request)
+
+      receive do
+        {:DOWN, ^caller_ref, :process, _, _} -> Process.exit(request, :kill)
+        {:DOWN, ^request_ref, :process, _, _} -> :ok
+      end
+    end)
   end
 
   defp left(deadline), do: max(0, deadline - System.monotonic_time(:millisecond))
