@@ -44,7 +44,7 @@ import org.jspecify.annotations.Nullable;
  * MVC and WebFlux. Safe to share between threads.
  *
  * <pre>{@code
- * Routes routes = cw.routes(RoutesOptions.builder().token(System.getenv("CRONWATCH_TOKEN")).build());
+ * Routes routes = cw.routes(); // the token from CRONWATCH_TOKEN
  * WebServer.mount(server, "/cronwatch", routes);
  * }</pre>
  */
