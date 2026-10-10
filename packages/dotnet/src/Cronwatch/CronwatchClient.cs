@@ -239,7 +239,7 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
 
     private Job DeclaredOrNew(string name, JobOptions? options)
     {
-        JobDef? def = options == null ? Declared(name) : null;
+        JobDef? def = options == null ? DeclaredOrForgotten(name) : null;
         return def == null ? Job(name, options) : new Job(this, def);
     }
 
@@ -459,7 +459,7 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
     /// <exception cref="CronwatchException">Of kind <see cref="CronwatchErrorKind.Invalid"/> when it is not, or the run is another job's.</exception>
     public Task<RunHandle> ResumeRunAsync(string name, string runId, CancellationToken cancellationToken = default)
     {
-        JobDef def = Declared(name) ?? throw CronwatchException.Invalid("resumeRun: job " + JsonText.Quote(name) + " is not declared; call Job() first");
+        JobDef def = DeclaredOrForgotten(name) ?? throw CronwatchException.Invalid("resumeRun: job " + JsonText.Quote(name) + " is not declared; call Job() first");
         return ResumeHandleAsync(def, runId, cancellationToken);
     }
 
@@ -538,7 +538,13 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
     public Task<JobState> UnsilenceAsync(string name, CancellationToken cancellationToken = default) =>
         Spawn(() => PatchStateAsync(name, s => s.SilencedUntil = null)).WaitAsync(cancellationToken);
 
-    /// <summary>Forgets a job: its declaration here, and its definition, runs, and state in the store.</summary>
+    /// <summary>
+    /// Forgets a job: its declaration here, and its definition, runs, and state in the store. A job
+    /// still declared in code comes back, with no history: here on its next run, declared as it was
+    /// written (<see cref="RunAsync(string, Func{JobContext, CancellationToken, Task}, CancellationToken)"/>
+    /// and <see cref="ResumeRunAsync"/> by name included), and in any other process that declares
+    /// it on its next run there, or at that process's next check or dashboard read.
+    /// </summary>
     /// <exception cref="CronwatchException">When the store fails.</exception>
     public Task ForgetAsync(string name, CancellationToken cancellationToken = default) =>
         Spawn(() => ForgetNowAsync(name)).WaitAsync(cancellationToken);
