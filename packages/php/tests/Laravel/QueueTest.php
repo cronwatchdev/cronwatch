@@ -44,6 +44,20 @@ final class QueueTest extends TestCase
         }
     }
 
+    public function testAClientThatCannotBeBuiltLeavesWatchedJobsRunning(): void
+    {
+        $this->app->singleton(Cronwatch::class, fn () => throw new \InvalidArgumentException('cronwatch.retention cannot be read'));
+        FlakyJob::$succeedOn = 1;
+        try {
+            FlakyJob::dispatch();
+            $this->work();
+        } finally {
+            FlakyJob::$succeedOn = 3;
+        }
+        // Had the listener thrown, the attempt would have failed and been released for another.
+        $this->assertSame(0, $this->app['db']->table('jobs')->count(), 'the job ran and succeeded, so nothing is left to retry');
+    }
+
     public function testEachAttemptIsARunAndTheOneThatSucceedsRecovers(): void
     {
         $cw = $this->client();

@@ -91,6 +91,12 @@ final class ProviderTest extends TestCase
         $this->assertSame([], $pdo->query("SELECT name FROM sqlite_master WHERE name LIKE 'cronwatch_%'")->fetchAll(\PDO::FETCH_COLUMN));
     }
 
+    public function testTheMigrationIsLoadedForTheAppsSqlite(): void
+    {
+        $paths = $this->app->make('migrator')->paths();
+        $this->assertCount(1, array_filter($paths, fn (string $path) => str_contains($path, 'Laravel/migrations')));
+    }
+
     protected function noCreate($app): void
     {
         $app['config']->set('cronwatch.create_tables', false);

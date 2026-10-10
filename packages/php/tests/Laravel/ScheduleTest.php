@@ -101,6 +101,35 @@ final class ScheduleTest extends TestCase
         $this->assertCount(2, $this->errors, 'reported once');
     }
 
+    public function testAClientThatCannotBeBuiltLeavesTheScheduleRunning(): void
+    {
+        // As on an app whose default connection is SQL Server: building the client throws, every time.
+        $this->app->singleton(Cronwatch::class, fn () => throw new \InvalidArgumentException('CronWatch keeps its tables in MySQL, MariaDB, Postgres, or SQLite'));
+        $logged = [];
+        $this->app['log']->listen(function ($message) use (&$logged): void {
+            $logged[] = $message->message;
+        });
+        $ran = 0;
+        $this->schedule()->call(function () use (&$ran): void {
+            $ran++;
+        })->everyMinute()->name('still-runs');
+
+        $this->artisan('schedule:run')->assertExitCode(0);
+
+        $this->assertSame(1, $ran, 'the task ran, unrecorded');
+        $ours = array_values(array_filter($logged, fn (string $line) => str_starts_with($line, '[cronwatch] ')));
+        $this->assertNotEmpty($ours, 'the failure is in the app\'s log');
+        $this->assertStringContainsString('MySQL, MariaDB, Postgres, or SQLite', $ours[0]);
+    }
+
+    public function testTheCheckIsScheduledWithoutOverlapping(): void
+    {
+        $check = collect($this->schedule()->events())->first(fn ($e) => str_contains((string) $e->command, 'cronwatch:check'));
+        $this->assertNotNull($check);
+        $this->assertTrue($check->withoutOverlapping, 'a slow check is not run twice at once');
+        $this->assertTrue($check->onOneServer, 'the test app\'s array cache takes locks, so one server checks');
+    }
+
     public function testScheduleRunRecordsCallbacksAndShellCommands(): void
     {
         $cw = $this->client();
