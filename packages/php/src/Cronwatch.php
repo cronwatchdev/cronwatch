@@ -130,6 +130,8 @@ final class Cronwatch
     private static array $current = [];
     /** Memory given back to PHP when a fatal error (memory exhausted, say) ends a run, so the run can still be recorded. */
     private static ?string $reserve = null;
+    /** The request (by its start time) whose time limit holdOn() has moved on already. */
+    private static mixed $heldOnFor = null;
 
     /**
      * @param Store|null $store where jobs, runs, and state live; default an in-memory store that forgets when the process ends
@@ -1596,13 +1598,22 @@ final class Cronwatch
      * caller hanging up) leaves them to a check once their lease runs out,
      * five minutes on. Outside the command line the request is kept going, so
      * they go out now: a caller that hangs up no longer stops it, and a time
-     * limit is moved on to leave two minutes for delivery.
+     * limit is moved on to leave two minutes for delivery. Once a request:
+     * set_time_limit() starts the count again each time, so a check that
+     * dispatches for many jobs would otherwise never meet its limit.
      */
     private static function holdOn(): void
     {
         if (\PHP_SAPI === 'cli') {
             return;
         }
+        // A worker that serves many requests (FrankenPHP, RoadRunner) keeps
+        // this static between them; the request's start time tells them apart.
+        $request = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        if ($request !== null && $request === self::$heldOnFor) {
+            return;
+        }
+        self::$heldOnFor = $request;
         ignore_user_abort(true);
         $limit = (int) ini_get('max_execution_time');
         if ($limit > 0 && function_exists('set_time_limit')) {

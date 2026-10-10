@@ -454,6 +454,34 @@ final class HandlerTest extends TestCase
         }
     }
 
+    public function testAWebRequestsTimeLimitIsMovedOnOnceNotAtEveryDispatch(): void
+    {
+        if (!function_exists('proc_open')) {
+            $this->markTestSkipped('needs proc_open');
+        }
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        $name = (string) stream_socket_get_name($probe, false);
+        fclose($probe);
+        $port = (int) substr($name, strrpos($name, ':') + 1);
+        $server = proc_open(
+            [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__ . '/servers/hold.php'],
+            [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+            $pipes,
+        );
+        try {
+            self::waitFor($port);
+            foreach ([1, 2] as $request) {
+                [$status, , $body] = self::http($port, 'GET', '/', '');
+                $this->assertSame(200, $status);
+                // set_time_limit() restarts the count, so a check over many jobs would never meet its limit.
+                $this->assertSame(['first' => '120', 'second' => '30'], json_decode($body, true), "request {$request}");
+            }
+        } finally {
+            proc_terminate($server);
+            proc_close($server);
+        }
+    }
+
     private static function waitFor(int $port): void
     {
         for ($i = 0; $i < 100; $i++) {
