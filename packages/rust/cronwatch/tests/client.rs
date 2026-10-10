@@ -165,7 +165,9 @@ async fn a_job_declared_again_without_its_schedule_closes_missed() {
 }
 
 #[tokio::test]
-async fn a_schedule_removed_while_silenced_closes_missed_quietly() {
+async fn a_schedule_removed_while_silenced_closes_missed_with_its_recovery() {
+    // The missed alert went out before the silence, so its recovery goes
+    // out during it.
     let k = Kit::new();
     k.cw.job("sync", JobOptions::new().schedule("every 1h").grace("10m")).unwrap();
     k.check().await;
@@ -174,11 +176,13 @@ async fn a_schedule_removed_while_silenced_closes_missed_quietly() {
     k.cw.silence("sync", Duration::from_secs(3600)).await.unwrap();
     k.cw.job("sync", JobOptions::new()).unwrap();
     k.advance(MIN);
-    assert!(k.check().await.alerts.is_empty(), "quiet");
+    let closed = k.check().await.alerts;
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].title, "sync is no longer scheduled");
     assert!(k.summary("sync").await.unwrap().open.is_empty());
     k.advance(2 * HOUR);
-    assert!(k.check().await.alerts.is_empty(), "still quiet");
-    assert_eq!(k.types(), ["missed"]);
+    assert!(k.check().await.alerts.is_empty(), "nothing more");
+    assert_eq!(k.types(), ["missed", "recovered"]);
 }
 
 #[tokio::test]
@@ -333,6 +337,40 @@ async fn forget_removes_the_job_and_its_runs() {
     k.cw.forget("gone").await.unwrap();
     assert!(k.cw.jobs().await.unwrap().is_empty());
     assert!(k.summary("gone").await.is_none(), "summary of a forgotten job");
+}
+
+#[tokio::test]
+async fn after_a_forget_run_and_resume_run_by_name_declare_the_job_again_as_it_was_written() {
+    let k = Kit::new();
+    let options = || JobOptions::new().schedule("0 2 * * *").description("Nightly export");
+    k.cw.job("nightly", options()).unwrap();
+    k.cw.run("nightly", None, ok_job).await.unwrap().unwrap();
+    let handle = k.cw.job("nightly", options()).unwrap().start(cronwatch::StartOptions::new()).await.unwrap();
+    k.cw.forget("nightly").await.unwrap();
+    assert!(k.summary("nightly").await.is_none());
+    k.cw.run("nightly", None, ok_job).await.unwrap().unwrap();
+    let summary = k.summary("nightly").await.unwrap();
+    assert_eq!(summary.definition.schedule(), "0 2 * * *");
+    assert_eq!(summary.definition.description(), "Nightly export");
+    k.cw.forget("nightly").await.unwrap();
+    let resumed = k.cw.resume_run("nightly", handle.id()).await.unwrap();
+    assert_eq!(resumed.id(), handle.id());
+    k.advance(HOUR);
+    k.check().await;
+    assert_eq!(k.summary("nightly").await.unwrap().definition.schedule(), "0 2 * * *");
+    assert!(!k.types().contains(&"recovered".to_string()), "no 'no longer scheduled' recovery");
+}
+
+#[tokio::test]
+async fn a_recovery_for_an_alert_sent_before_the_silence_is_sent_during_it() {
+    let k = Kit::new();
+    let job = k.cw.job("flaky", JobOptions::new()).unwrap();
+    assert!(job.run(failing("x")).await.is_err());
+    k.cw.silence("flaky", "1h").await.unwrap();
+    job.run(ok_job).await.unwrap();
+    assert_eq!(k.types(), ["failed", "recovered"]);
+    assert!(job.run(failing("y")).await.is_err());
+    assert_eq!(k.types(), ["failed", "recovered"], "new problems are not sent");
 }
 
 #[tokio::test]

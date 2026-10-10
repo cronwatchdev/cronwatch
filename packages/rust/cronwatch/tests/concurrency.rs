@@ -170,9 +170,12 @@ async fn an_update_that_keeps_losing_gives_up_and_the_run_finishes() {
     let store = Arc::new(TestStore { cas_refuses: true, ..Default::default() });
     let k = Kit::with(|b| b.store_arc(store));
     assert!(k.cw.run("busy", None, |_| async { Err::<(), _>(Boom("x")) }).await.unwrap().is_err());
-    assert_eq!(k.wheres(), ["evaluating busy"]);
+    // The start's write (it holds the run as pending) loses too, and is
+    // reported the same way.
+    assert_eq!(k.wheres(), ["starting busy", "evaluating busy"]);
     assert_eq!(k.runs("busy").await[0].status, RunStatus::Failed);
-    assert_eq!(k.messages(), ["the state of busy changed under 10 attempts in a row to update it; gave up"]);
+    let gave_up = "the state of busy changed under 10 attempts in a row to update it; gave up";
+    assert_eq!(k.messages(), [gave_up, gave_up]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

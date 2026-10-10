@@ -4,9 +4,9 @@
 use super::format::{definition, draft_from, draft_value};
 use super::{Failures, field, fixture, int, objects, opt_int};
 use crate::evaluate::{
-    Evaluation, MAX_UNDELIVERED, SEND_LEASE_MS, alert_key, apply_silence, hold_alerts, is_stuck, job_health,
-    mute_opens, normalize_state, queue_undelivered, record_sent, release_sending, silence_end, summarize,
-    unevaluable_summary,
+    Evaluation, MAX_PENDING_RUNS, MAX_UNDELIVERED, SEND_LEASE_MS, alert_key, apply_silence, claim_undelivered,
+    hold_alerts, hold_run, is_stuck, job_health, mute_opens, normalize_state, queue_undelivered, record_sent,
+    release_run, release_sending, silence_end, summarize, unevaluable_summary,
 };
 use crate::js::{Object, Value};
 use crate::stats::{median, percentile};
@@ -213,6 +213,7 @@ fn delivery(d: &Object, fails: &mut Failures) -> usize {
     let mut cases = 0;
     fails.same("maxUndelivered", &MAX_UNDELIVERED.into(), field(d, "maxUndelivered"));
     fails.same("sendLeaseMs", &SEND_LEASE_MS.into(), field(d, "sendLeaseMs"));
+    fails.same("maxPendingRuns", &MAX_PENDING_RUNS.into(), field(d, "maxPendingRuns"));
     for (i, c) in objects(d, "alertKey").into_iter().enumerate() {
         cases += 1;
         let alert = Alert::from_value(field(c, "alert")).expect("an alert");
@@ -254,8 +255,39 @@ fn delivery(d: &Object, fails: &mut Failures) -> usize {
         ));
         fails.same(&format!("recordSent {i}"), &sorted(&got), &sorted(field(c, "result")));
     }
-    let listed = ["alertKey", "normalizeState", "queueUndelivered", "holdAlerts", "releaseSending", "recordSent"];
-    let known = ["maxUndelivered", "sendLeaseMs"];
+    for (i, c) in objects(d, "claimUndelivered").into_iter().enumerate() {
+        cases += 1;
+        let (next, claimed, stale) = claim_undelivered(&state(field(c, "state")), int(c, "now"), int(c, "until"));
+        let list = |l: &[Alert]| Value::Array(l.iter().map(Alert::to_value).collect());
+        let got = Value::Object(
+            Object::new().with("state", next.to_value()).with("claimed", list(&claimed)).with("stale", list(&stale)),
+        );
+        fails.same(&format!("claimUndelivered {i}"), &sorted(&got), &sorted(field(c, "result")));
+    }
+    for (i, c) in objects(d, "holdRun").into_iter().enumerate() {
+        cases += 1;
+        let id = field(c, "runId").as_str().expect("a run id");
+        let got = hold_run(&state(field(c, "state")), id).to_value();
+        fails.same(&format!("holdRun {i}"), &sorted(&got), &sorted(field(c, "result")));
+    }
+    for (i, c) in objects(d, "releaseRun").into_iter().enumerate() {
+        cases += 1;
+        let id = field(c, "runId").as_str().expect("a run id");
+        let got = release_run(&state(field(c, "state")), id).to_value();
+        fails.same(&format!("releaseRun {i}"), &sorted(&got), &sorted(field(c, "result")));
+    }
+    let listed = [
+        "alertKey",
+        "normalizeState",
+        "queueUndelivered",
+        "holdAlerts",
+        "releaseSending",
+        "recordSent",
+        "claimUndelivered",
+        "holdRun",
+        "releaseRun",
+    ];
+    let known = ["maxUndelivered", "sendLeaseMs", "maxPendingRuns"];
     for key in d.keys() {
         assert!(listed.contains(&key) || known.contains(&key), "health.json's delivery has {key}, not replayed");
     }

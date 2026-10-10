@@ -4,10 +4,12 @@
 mod common;
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use common::{Boom, Held, Kit, MIN, Mortal, T0};
-use cronwatch::{Alert, Deliver, JobOptions, MemoryStore, Store, channel_fn, triage_fn};
+use common::{Boom, Held, Kit, MIN, Mortal, T0, TestStore};
+use cronwatch::{
+    Alert, Deliver, JobOptions, MemoryStore, RecordOptions, Run, RunStatus, StartOptions, Store, channel_fn, triage_fn,
+};
 
 /// How long an alert in `sending` is left to its sender (evaluate.ts
 /// `SEND_LEASE_MS`).
@@ -160,7 +162,12 @@ async fn a_process_that_queues_its_alerts_for_a_check_elsewhere_writes_them_with
     let s = state(&shared, "backup").await;
     assert_eq!(common::alert_types(&s.undelivered.unwrap()), ["failed"]);
     assert_eq!(s.sending, None);
-    assert_eq!(counting.state_writes.load(Ordering::SeqCst), 1, "one write: the failure and its alert together");
+    assert_eq!(s.pending_runs, None);
+    assert_eq!(
+        counting.state_writes.load(Ordering::SeqCst),
+        2,
+        "the start holds the run; then one write: the failure, its alert, and the run's release together"
+    );
 }
 
 #[tokio::test]
@@ -198,4 +205,114 @@ async fn a_queued_alert_keeps_the_fields_a_newer_release_gave_it_through_a_faile
     let body = sent[0].to_json();
     assert!(body.contains(r#""futureAlertField":"kept""#), "{body}");
     assert!(body.contains(r#","futureDetail":1}"#), "{body}");
+}
+
+/// A channel that fails while `down` is set and otherwise keeps what it was sent.
+fn flaky(down: &Arc<AtomicBool>, sent: &Arc<std::sync::Mutex<Vec<Alert>>>) -> Arc<dyn cronwatch::Channel> {
+    let (down, sent) = (down.clone(), sent.clone());
+    channel_fn("flaky", move |alert: Alert| {
+        let (down, sent) = (down.clone(), sent.clone());
+        async move {
+            if down.load(Ordering::SeqCst) {
+                return Err("down".into());
+            }
+            sent.lock().unwrap().push(alert);
+            Ok(())
+        }
+    })
+}
+
+fn sent_types(sent: &std::sync::Mutex<Vec<Alert>>) -> Vec<String> {
+    common::alert_types(&sent.lock().unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_processes_checking_at_once_retry_a_queued_alert_once() {
+    let shared = Arc::new(MemoryStore::new());
+    let down = Arc::new(AtomicBool::new(true));
+    let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let a = Kit::with(|b| b.store_arc(shared.clone()).alerts([flaky(&down, &sent)]));
+    let b = Kit::with(|b| b.store_arc(shared.clone()).alerts([flaky(&down, &sent)]));
+    assert!(a.cw.run("nightly", None, |_| async { Err::<(), _>(Boom("disk full")) }).await.unwrap().is_err());
+    assert_eq!(common::alert_types(&state(&shared, "nightly").await.undelivered.unwrap()), ["failed"]);
+    down.store(false, Ordering::SeqCst);
+    a.advance(MIN);
+    b.advance(MIN);
+    let (x, y) = tokio::join!(a.cw.check(), b.cw.check());
+    x.unwrap();
+    y.unwrap();
+    assert_eq!(sent_types(&sent), ["failed"], "sent once, by the process whose claim landed");
+    let s = state(&shared, "nightly").await;
+    assert_eq!(s.undelivered, Some(Vec::new()));
+    assert_eq!(s.sending, None);
+}
+
+#[tokio::test]
+async fn while_a_job_is_silenced_a_retry_claims_only_recoveries() {
+    let shared = Arc::new(MemoryStore::new());
+    let down = Arc::new(AtomicBool::new(true));
+    let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let k = Kit::with(|b| b.store_arc(shared.clone()).alerts([flaky(&down, &sent)]));
+    assert!(k.cw.run("nightly", None, |_| async { Err::<(), _>(Boom("disk full")) }).await.unwrap().is_err());
+    k.cw.silence("nightly", "1h").await.unwrap();
+    down.store(false, Ordering::SeqCst);
+    k.advance(MIN);
+    k.check().await;
+    assert!(sent_types(&sent).is_empty());
+    assert_eq!(common::alert_types(&state(&shared, "nightly").await.undelivered.unwrap()), ["failed"]);
+    k.cw.unsilence("nightly").await.unwrap();
+    k.check().await;
+    assert_eq!(sent_types(&sent), ["failed"]);
+}
+
+#[tokio::test]
+async fn a_finished_run_whose_evaluation_was_never_written_is_evaluated_by_a_later_check_once() {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    let job = k.cw.job("nightly", JobOptions::new()).unwrap();
+    let handle = job.start(StartOptions::new()).await.unwrap();
+    // The finish's state write fails, as if the process stopped between the
+    // run's write and its evaluation.
+    store.breaks(&["compare_and_set_state"]);
+    handle.fail("disk full").await;
+    store.mends(&[]);
+    assert_eq!(store.inner.get_run(handle.id()).await.unwrap().unwrap().status, RunStatus::Failed);
+    assert!(k.types().is_empty());
+    let pending = store.inner.get_state("nightly").await.unwrap().unwrap().pending_runs;
+    assert_eq!(pending, Some(vec![handle.id().to_string()]));
+    // Left alone at first, in case its finish is still being written elsewhere.
+    k.advance(MIN);
+    k.check().await;
+    assert!(k.types().is_empty());
+    k.advance(SEND_LEASE_MS);
+    k.check().await;
+    assert_eq!(k.types(), ["failed"]);
+    assert_eq!(store.inner.get_state("nightly").await.unwrap().unwrap().pending_runs, None);
+    k.check().await;
+    assert_eq!(k.types(), ["failed"], "once");
+}
+
+#[tokio::test]
+async fn a_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged_is_not_evaluated() {
+    let shared = Arc::new(MemoryStore::new());
+    let k = Kit::with(|b| b.store_arc(shared.clone()));
+    k.cw.job("nightly", JobOptions::new()).unwrap();
+    let mut seeded = cronwatch::JobState::new("nightly");
+    seeded.pending_runs = Some(vec!["gone".into()]);
+    shared.set_state(&seeded).await.unwrap();
+    k.check().await;
+    assert_eq!(state(&shared, "nightly").await.pending_runs, None);
+    let mut run = Run::new("imported", "nightly", RunStatus::Running, k.now());
+    run.trigger = "x".into();
+    k.cw.record_run(run.clone(), RecordOptions::new()).await.unwrap();
+    assert_eq!(state(&shared, "nightly").await.pending_runs, Some(vec!["imported".to_string()]));
+    run.status = RunStatus::Failed;
+    run.finished_at = Some(k.now());
+    run.duration_ms = Some(0);
+    run.error = Some("x".into());
+    k.cw.record_run(run, RecordOptions::new().without_evaluation()).await.unwrap();
+    assert_eq!(state(&shared, "nightly").await.pending_runs, None);
+    k.advance(SEND_LEASE_MS + MIN);
+    k.check().await;
+    assert!(k.types().is_empty());
 }

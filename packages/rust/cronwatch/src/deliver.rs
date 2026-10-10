@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::client::Client;
 use crate::error::Error;
 use crate::evaluate::{
-    Evaluation, MAX_UNDELIVERED, SEND_LEASE_MS, hold_alerts, is_silenced, normalize_state, record_sent, stale_alert,
+    Evaluation, MAX_UNDELIVERED, SEND_LEASE_MS, claim_undelivered, hold_alerts, normalize_state, record_sent,
 };
 use crate::format::compose_alert;
 use crate::panics::panic_text;
@@ -241,10 +241,13 @@ impl Client {
     }
 
     /// Sends the alerts no channel accepted last time, once each, oldest
-    /// first. `state` is the job's state as this check left it: an alert that
-    /// no longer describes it (`stale_alert`) is dropped instead. Retries
-    /// across a check share `RETRY_BUDGET` of wall-clock time; once it is
-    /// spent the rest stay queued for the next check.
+    /// first. They are claimed first (`claim_undelivered`): moved into
+    /// `sending` with a lease, in one conditional write, so when several
+    /// processes check at once only the one whose write lands sends them. An
+    /// alert that no longer describes the job (`stale_alert`) is dropped
+    /// instead. Retries across a check share `RETRY_BUDGET` of wall-clock
+    /// time; claimed alerts it has no time left for go back to the queue for
+    /// the next check.
     pub(crate) async fn retry_undelivered(
         &self,
         name: &str,
@@ -252,18 +255,38 @@ impl Client {
         now: i64,
         spent: &mut Duration,
     ) -> Vec<Alert> {
-        let pending = state.undelivered.clone().unwrap_or_default();
-        if pending.is_empty() || is_silenced(state, now) || self.inner.defer_delivery {
+        if state.undelivered.as_ref().is_none_or(Vec::is_empty) || self.inner.defer_delivery {
             return Vec::new();
         }
-        let dropped: Vec<Alert> = pending.iter().filter(|a| stale_alert(a, state)).cloned().collect();
+        // Claimed first (claim_undelivered): moved into `sending` with a lease,
+        // in one conditional write, so when several processes check at once
+        // only the one whose write lands sends them.
+        let until = self.now().saturating_add(SEND_LEASE_MS);
+        let claimed = match self
+            .update_state(name, async { Ok(()) }, |previous, _| {
+                let (next, claimed, _) = claim_undelivered(&previous, now, until);
+                Ok((next, claimed))
+            })
+            .await
+        {
+            Ok((_, claimed)) => claimed,
+            Err(err) => {
+                self.report(err, &format!("claiming undelivered alerts for {name}"));
+                return Vec::new();
+            }
+        };
+        if claimed.is_empty() {
+            return Vec::new();
+        }
         let (mut delivered, mut failed) = (Vec::new(), Vec::new());
-        for a in pending.iter().filter(|a| !stale_alert(a, state)) {
+        for a in claimed {
             let Some(left) = RETRY_BUDGET.checked_sub(*spent).filter(|l| !l.is_zero()) else {
-                break;
+                // Not tried: back to the queue as it was.
+                failed.push(a);
+                continue;
             };
             let started = Instant::now();
-            let mut alert = a.clone();
+            let mut alert = a;
             // An alert queued by a process that delivers at check time was
             // never triaged. One that was tried is not tried again.
             if self.inner.triage.is_some() && alert.alert_type != AlertType::Recovered && !alert.triage_tried {
@@ -276,7 +299,7 @@ impl Client {
             }
             *spent += started.elapsed();
         }
-        self.record_delivery(name, &delivered, &failed, &dropped, now).await;
+        self.record_delivery(name, &delivered, &failed, &[], now).await;
         delivered
     }
 

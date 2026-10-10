@@ -9,8 +9,8 @@ use tokio::sync::watch;
 use crate::client::{Client, clamp_limit, lock};
 use crate::error::Error;
 use crate::evaluate::{
-    BASELINE_WINDOW, Evaluation, apply_silence, empty_state, is_stuck, normalize_state, on_check, release_sending,
-    silence_end, summarize, unevaluable_summary,
+    BASELINE_WINDOW, Evaluation, SEND_LEASE_MS, apply_silence, empty_state, is_stuck, normalize_state, on_check,
+    release_run, release_sending, silence_end, summarize, unevaluable_summary,
 };
 use crate::options::DurationSpec;
 use crate::panics::panic_text;
@@ -194,8 +194,47 @@ impl Client {
         self.report_dropped(&job.name, dropped);
         let mut alerts = self.retry_undelivered(&job.name, &state, now, spent).await;
         alerts.extend(self.dispatch(&job.name, held, now).await);
+        alerts.extend(self.evaluate_pending(job, &recent, &state, now).await);
         let summary = summarize(job, &recent, &state, next_expected_at, now).map_err(Error::Other)?;
         Ok((summary, alerts))
+    }
+
+    /// Runs the job's state still holds as pending (`hold_run`) whose finish
+    /// was written but never evaluated: the process that finished them
+    /// stopped, or its state write failed, between the two writes. Each one
+    /// finished more than `SEND_LEASE_MS` ago is evaluated now, as its finish
+    /// would have been; one still running is left to the stuck check, and
+    /// one the store no longer has (given back, or pruned) is let go. The
+    /// wait leaves a finish under way in another process to write its own
+    /// evaluation.
+    async fn evaluate_pending(&self, job: &StoredJob, recent: &[Run], state: &JobState, now: i64) -> Vec<Alert> {
+        let mut alerts = Vec::new();
+        for id in state.pending_runs.clone().unwrap_or_default() {
+            let found = match recent.iter().find(|r| r.id == id) {
+                Some(run) => Ok(Some(run.clone())),
+                None => self.inner.store.get_run(&id).await.map_err(Error::store),
+            };
+            let outcome = match found {
+                Ok(run) if run.as_ref().is_none_or(|r| r.job != job.name) => self
+                    .update_state(&job.name, async { Ok(()) }, |s, _| Ok((release_run(&s, &id), ())))
+                    .await
+                    .map(|_| ()),
+                Ok(Some(run)) => {
+                    let unfinished = run.status == RunStatus::Running
+                        || run.finished_at.is_none_or(|at| at > now.saturating_sub(SEND_LEASE_MS));
+                    if !unfinished {
+                        alerts.extend(self.finish_run(&job.definition, &run, now).await);
+                    }
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(err) => Err(err),
+            };
+            if let Err(err) = outcome {
+                self.report(err, &format!("evaluating run {id} of {}", job.name));
+            }
+        }
+        alerts
     }
 
     /// A job's summary and its newest runs, without alerting. A job that
@@ -311,15 +350,17 @@ impl Client {
     }
 
     /// Removes a job and its runs from the store. A job still declared in code
-    /// comes back: here on its next run, and in any other process that
-    /// declares it on its next run there, or at that process's next check or
-    /// dashboard read.
+    /// comes back, with no history: here on its next run, declared as it was
+    /// written (`run` and `resume_run` by name included), and in any other
+    /// process that declares it on its next run there, or at that process's
+    /// next check or dashboard read.
     pub async fn forget(&self, name: &str) -> Result<(), Error> {
         self.ensure_ready().await?;
         {
             let mut declared = lock(&self.inner.declared);
-            if declared.definitions.remove(name).is_some() {
+            if let Some(def) = declared.definitions.remove(name) {
                 declared.order.retain(|n| n != name);
+                declared.forgotten.insert(name.to_string(), def);
             }
             declared.synced.remove(name);
         }

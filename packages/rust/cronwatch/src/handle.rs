@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use crate::client::{Client, JobDef, lock, new_id};
 use crate::error::Error;
-use crate::evaluate::on_run_start;
+use crate::evaluate::{hold_run, on_run_start};
 use crate::js::{self, Value};
 use crate::output::{self, OUTPUT_CAP, Recorder};
 use crate::run::{Job, StartOptions, error_text, text_of};
@@ -110,7 +110,7 @@ impl Job {
 impl Client {
     /// [`Job::resume`] for a job declared in this process, by name.
     pub async fn resume_run(&self, name: &str, run_id: &str) -> Result<RunHandle, Error> {
-        let Some(def) = self.declared(name) else {
+        let Some(def) = self.declared_again(name) else {
             return Err(Error::Invalid(format!("resumeRun: job {} is not declared; call job first", js::quote(name))));
         };
         self.resume_handle(&def, run_id).await
@@ -163,7 +163,9 @@ impl Client {
             }
         };
         if recorded {
-            if let Err(err) = self.update_state(name, async { Ok(()) }, |s, _| Ok((on_run_start(&s), ()))).await {
+            let started =
+                self.update_state(name, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run.id), ())));
+            if let Err(err) = started.await {
                 self.report(err, &format!("starting {name}"));
             }
         }
