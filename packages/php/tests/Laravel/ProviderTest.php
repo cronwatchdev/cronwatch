@@ -348,7 +348,7 @@ final class ProviderTest extends TestCase
             $this->app['config']->set('cronwatch.cron_secret', " \u{00A0}");
             $this->assertNull($this->app->make(ClientFactory::class)->client()->cronSecret);
             $this->app['config']->set('cronwatch.cron_secret', ' padded ');
-            $this->assertSame(' padded ', $this->app->make(ClientFactory::class)->client()->cronSecret);
+            $this->assertSame('padded', $this->app->make(ClientFactory::class)->client()->cronSecret);
         } finally {
             putenv($saved[0] === false ? 'CRON_SECRET' : "CRON_SECRET={$saved[0]}");
             unset($_SERVER['CRON_SECRET'], $_ENV['CRON_SECRET']);

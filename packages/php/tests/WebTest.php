@@ -317,7 +317,7 @@ final class WebTest extends TestCase
     /** @return array<string, array{string|null}> */
     public static function notDevelopment(): array
     {
-        return ['unset' => [null], 'production' => ['production'], 'staging' => ['staging']];
+        return ['unset' => [null], 'production' => ['production'], 'staging' => ['staging'], 'test' => ['test'], 'testing' => ['testing']];
     }
 
     #[DataProvider('notDevelopment')]
@@ -336,7 +336,7 @@ final class WebTest extends TestCase
     /** @return array<string, array{string}> */
     public static function development(): array
     {
-        return ['development' => ['development'], 'test' => ['test'], 'local' => ['local']];
+        return ['development' => ['development'], 'dev' => ['dev'], 'local' => ['local']];
     }
 
     #[DataProvider('development')]
@@ -462,7 +462,7 @@ final class WebTest extends TestCase
             $this->assertTrue(\Cronwatch\Env::isProduction(), 'a variable comes first');
             \Cronwatch\Env::setFallback(fn () => throw new \RuntimeException('not booted'));
             putenv('APP_ENV');
-            $this->assertNull(\Cronwatch\Env::environment(), 'a fallback that throws names nothing');
+            $this->assertSame('', \Cronwatch\Env::environment(), 'a fallback that throws names nothing');
         } finally {
             \Cronwatch\Env::setFallback(null);
         }
@@ -488,11 +488,16 @@ final class WebTest extends TestCase
         // A blank token in code falls back to the variable.
         putenv('CRONWATCH_TOKEN=from-env');
         $this->assertSame(200, self::send($this->routes($this->client(), "  \t"), 'GET', '/cronwatch/api/jobs', ['authorization' => 'Bearer from-env'])->status);
-        // A token that is more than whitespace is used untrimmed.
-        putenv('CRONWATCH_TOKEN= padded ');
-        $web = $this->routes($this->client());
-        $this->assertSame(' padded ', $web->token());
-        $this->assertSame(303, self::send($web, 'GET', '/cronwatch/?token=%20padded%20')->status);
+        // Anything else is trimmed, so a value read from a file with a trailing
+        // newline still matches the header a client sends, which HTTP trims.
+        foreach ([' padded ', "padded\n"] as $padded) {
+            putenv("CRONWATCH_TOKEN={$padded}");
+            foreach ([$this->routes($this->client()), $this->routes($this->client(), $padded)] as $web) {
+                $this->assertSame('padded', $web->token());
+                $this->assertSame(200, self::send($web, 'GET', '/cronwatch/api/jobs', ['authorization' => 'Bearer padded'])->status);
+                $this->assertSame(303, self::send($web, 'GET', '/cronwatch/?token=padded')->status);
+            }
+        }
     }
 
     /**
