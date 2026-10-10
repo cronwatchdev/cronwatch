@@ -59,6 +59,24 @@ module Cronwatch
         JS.head16(head, ERROR_BODY_MAX)
       end
 
+      # The parts of a webhook URL that are its credential, to cut from an
+      # error body that echoes the request: its path and query together, then
+      # the last segment of its path (Slack's and Discord's token) on its own.
+      def url_secrets(url)
+        uri = URI.parse(url.to_s)
+        path = uri.path.nil? || uri.path.empty? ? "/" : uri.path
+        last = path.split("/", -1).last.to_s
+        ["#{path}#{"?#{uri.query}" if uri.query && !uri.query.empty?}", last].reject { |part| part.empty? || part == "/" }
+      rescue URI::Error
+        []
+      end
+
+      # The start of a webhook's error answer, with the URL's credential cut
+      # out in case a proxy echoes the request: Slack's and Discord's errors.
+      def webhook_error_body(response, url)
+        error_body(Output.utf8(response.body.to_s).delete_prefix("\u{FEFF}"), url_secrets(url))
+      end
+
       # A credential with the spaces and newlines a paste leaves around it
       # taken off, as it goes in a header. Anything not a String is "".
       def trimmed(value)
