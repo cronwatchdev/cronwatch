@@ -301,6 +301,19 @@ pub(crate) fn postable(raw: &str) -> Result<Url, BoxError> {
     Ok(url)
 }
 
+/// The parts of a webhook URL that are its credential, to cut from an error
+/// body that echoes the request: its path and query together, then the last
+/// segment of its path (Slack's and Discord's token) on its own.
+#[cfg(feature = "alerts")]
+pub(crate) fn url_secrets(raw: &str) -> Vec<String> {
+    let Ok(url) = parse(raw) else {
+        return Vec::new();
+    };
+    let search = url.query().filter(|q| !q.is_empty()).map(|q| format!("?{q}")).unwrap_or_default();
+    let last = url.path().rsplit('/').next().unwrap_or("").to_string();
+    [format!("{}{search}", url.path()), last].into_iter().filter(|p| !p.is_empty() && p != "/").collect()
+}
+
 /// `new URL(url).origin`: the scheme, host, and port only, a port that is the
 /// scheme's own left out. A URL's path or query can hold a credential, so an
 /// error names only this.
