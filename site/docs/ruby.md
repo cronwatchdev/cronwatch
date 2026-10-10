@@ -64,7 +64,7 @@ NIGHTLY.run do |job|
 end
 ```
 
-`run` returns what the block returns. What the block raises is recorded as the failure and raised again, so your own error handling still works. That includes exceptions outside `StandardError`: an `Interrupt`, `SystemExit`, `Sidekiq::Shutdown`, or `Timeout` that stops the block is recorded as a failed run (`Interrupted: Sidekiq::Shutdown`) and raised again, so the run is never left running to be reported stuck later. Without keeping a handle, `CW.run("nightly-report") { |job| ... }` declares the job on first use; `CW.run(id)` without a block reads a run, and takes no options.
+`run` returns what the block returns. What the block raises is recorded as the failure and raised again, so your own error handling still works. That includes exceptions outside `StandardError`: an `Interrupt`, `SystemExit`, `Sidekiq::Shutdown`, or `Timeout` that stops the block is recorded as a failed run (`Interrupted: Sidekiq::Shutdown`) and raised again, so the run is never left running to be reported stuck later. A Sidekiq job stopped by `Sidekiq::Shutdown` during a deploy is recorded but not judged: it opens no failed alert and does not count toward `failures_before_alert`, since Sidekiq runs it again after the restart. Without keeping a handle, `CW.run("nightly-report") { |job| ... }` declares the job on first use; `CW.run(id)` without a block reads a run, and takes no options.
 
 Logged output, a returned string, and an error's message are stored as UTF-8: bytes that are not valid UTF-8 (binary output, a C extension's message) become the replacement character `�`, as they would in a JavaScript string.
 
@@ -161,11 +161,11 @@ Open it once and the browser keeps a cookie, as with any token; scripts and the 
 
 ### Behind a proxy
 
-The request's origin is what the cross-site check on writes (any method other than `GET` and `HEAD`) compares against. It comes from the host and scheme Rack reports (`Rack::Request#base_url`), which already follow `X-Forwarded-Host` and `X-Forwarded-Proto` the way Rails does, so the TypeScript routes' `trustProxy` has no counterpart here. The host is compared lowercased, as browsers send it.
+The request's origin is what the cross-site check on writes (any method other than `GET` and `HEAD`) compares against. By default it is the request's own scheme and `Host` header. With `trust_proxy: true` it is read from the first `X-Forwarded-Proto` and `X-Forwarded-Host` instead, as the TypeScript routes' `trustProxy` reads them; under Rails, which trusts those headers itself, `trust_proxy` defaults to true. The host is compared lowercased, as browsers send it.
 
 - No proxy: nothing to set.
-- One proxy: make sure it sends `X-Forwarded-Host` and `X-Forwarded-Proto` (or `Host`) with the public host and scheme, or pass `origin:` to pin it whatever a request says.
-- More than one proxy: set `origin:`. Where a header lists several values, Rack takes the last (the hop nearest the app), not the public one the TypeScript routes' `trustProxy` reads first.
+- Behind a proxy that sends `X-Forwarded-Host` and `X-Forwarded-Proto`: pass `trust_proxy: true` (already the default under Rails), or pass `origin:` to pin it whatever a request says.
+- More than one proxy: either works; `trust_proxy` reads the first value, the public one, and `origin:` pins it.
 
 ## Stores
 
