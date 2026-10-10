@@ -306,6 +306,81 @@ class AutoConfigurationTest {
         CronwatchChecker.interval(Duration.ofDays(3_000_000_000L)));
   }
 
+  /** An app with two Quartz schedulers of its own. */
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  public static class WithTwoQuartz {
+    private static Scheduler made(String name) throws SchedulerException {
+      Properties p = new Properties();
+      p.setProperty("org.quartz.scheduler.instanceName", name + "-" + UUID.randomUUID());
+      p.setProperty("org.quartz.threadPool.threadCount", "1");
+      p.setProperty("org.quartz.scheduler.skipUpdateCheck", "true");
+      return new StdSchedulerFactory(p).getScheduler();
+    }
+
+    /** The first scheduler. */
+    @Bean(destroyMethod = "shutdown")
+    public Scheduler first() throws SchedulerException {
+      return made("first");
+    }
+
+    /** The second scheduler. */
+    @Bean(destroyMethod = "shutdown")
+    public Scheduler second() throws SchedulerException {
+      return made("second");
+    }
+  }
+
+  @Test
+  void theCheckJobGoesOnOneSchedulerOnly() throws Exception {
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(
+            WithTwoQuartz.class,
+            new MemoryStore(),
+            new Apps.Errors(),
+            "cronwatch.check-mode=quartz")) {
+      int holding = 0;
+      for (Scheduler s : ctx.getBeansOfType(Scheduler.class).values()) {
+        if (s.checkExists(
+            org.quartz.TriggerKey.triggerKey(
+                CronwatchQuartz.CHECK_JOB.getName(), CronwatchQuartz.CHECK_JOB.getGroup()))) {
+          holding++;
+        }
+      }
+      assertEquals(1, holding, "the check would run once per scheduler");
+      assertEquals(
+          CronwatchProperties.CheckMode.QUARTZ, ctx.getBean(CronwatchChecker.class).mode());
+    }
+  }
+
+  /** The Quartz integration as the check sees it, with what it answers set by the test. */
+  private record FakeQuartz(boolean clustered, boolean runsTheCheck)
+      implements CronwatchChecker.QuartzChecks {
+    @Override
+    public void sync() {}
+  }
+
+  @Test
+  void whenNoSchedulerTookTheCheckJobTheCheckRunsInEachInstance() {
+    // A scheduler that refused the check job left the cluster with no check at all: missed and
+    // stuck runs were never found.
+    try (Cronwatch cw = Cronwatch.builder().noShutdownHook().alerts(List.of()).build()) {
+      for (CronwatchProperties.CheckMode asked :
+          List.of(CronwatchProperties.CheckMode.QUARTZ, CronwatchProperties.CheckMode.AUTO)) {
+        CronwatchProperties p = new CronwatchProperties();
+        p.setCheckMode(asked);
+        assertEquals(
+            CronwatchProperties.CheckMode.LOCAL,
+            new CronwatchChecker(cw, p, null, null, new FakeQuartz(true, false)).mode(),
+            asked.toString());
+        assertEquals(
+            CronwatchProperties.CheckMode.QUARTZ,
+            new CronwatchChecker(cw, p, null, null, new FakeQuartz(true, true)).mode(),
+            asked.toString());
+      }
+    }
+  }
+
   @Test
   void theAppsQuartzSchedulersAreWatched() throws Exception {
     MemoryStore store = new MemoryStore();
