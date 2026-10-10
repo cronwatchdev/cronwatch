@@ -20,7 +20,57 @@ public class ClientConformanceTests
     private static readonly JsObject Fixture = Fixtures.Load("client");
 
     [Fact]
-    public void Every_section_is_replayed() => DurationConformanceTests.Known(Fixture, "runIds", "unknownFields");
+    public void Every_section_is_replayed() => DurationConformanceTests.Known(Fixture, "runIds", "unknownFields", "environment", "secrets");
+
+    /// <summary>
+    /// <c>environment</c>: <c>CRONWATCH_ENV</c>, <c>APP_ENV</c>, then the language's own, here
+    /// <c>ASPNETCORE_ENVIRONMENT</c>, read as every port reads them, and the app's own environment
+    /// standing where the .NET variable does.
+    /// </summary>
+    [Fact]
+    public void The_environment_is_read_as_the_sdk_reads_it()
+    {
+        var failures = new Fixtures.Failures();
+        foreach (JsObject c in Fixtures.Objects(Fixture, "environment"))
+        {
+            var variables = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["CRONWATCH_ENV"] = Fixtures.String(c, "CRONWATCH_ENV"),
+                ["APP_ENV"] = Fixtures.String(c, "APP_ENV"),
+                ["ASPNETCORE_ENVIRONMENT"] = Fixtures.String(c, "native"),
+            };
+            foreach (bool given in new[] { false, true })
+            {
+                string? fallback = null;
+                if (given)
+                {
+                    fallback = variables["ASPNETCORE_ENVIRONMENT"];
+                    variables["ASPNETCORE_ENVIRONMENT"] = null;
+                }
+                string environment = Env.Environment(fallback, name => variables.GetValueOrDefault(name));
+                var got = new JsObject()
+                    .Set("CRONWATCH_ENV", c.Get("CRONWATCH_ENV")).Set("APP_ENV", c.Get("APP_ENV")).Set("native", c.Get("native"))
+                    .Set("environment", environment).Set("development", environment == "development").Set("production", environment == "production");
+                failures.Same("environment " + Json.Stringify(c) + (given ? ", the app's own" : ""), got, c);
+            }
+        }
+        failures.Check("client environment");
+        Assert.True(failures.Compared > 0);
+    }
+
+    /// <summary><c>secrets</c>: a token or secret trimmed as JavaScript trims, blank as unset.</summary>
+    [Fact]
+    public void Secrets_are_trimmed_as_the_sdk_trims_them()
+    {
+        var failures = new Fixtures.Failures();
+        foreach (JsObject c in Fixtures.Objects(Fixture, "secrets"))
+        {
+            string value = Fixtures.String(c, "value")!;
+            failures.Same("secret " + Json.Stringify(value), new JsObject().Set("value", value).Set("secret", Js.Secret(value)), c);
+        }
+        failures.Check("client secrets");
+        Assert.True(failures.Compared > 0);
+    }
 
     [Fact]
     public async Task Run_ids_are_held_as_the_sdk_holds_them()

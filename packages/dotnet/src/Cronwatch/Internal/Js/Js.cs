@@ -212,8 +212,12 @@ internal static class Js
         return true;
     }
 
-    /// <summary>A token or secret as given, or null when it is blank (<see cref="IsBlank"/>).</summary>
-    public static string? Secret(string? s) => IsBlank(s) ? null : s;
+    /// <summary>
+    /// A token or secret trimmed as <c>String.prototype.trim</c> trims (a value read from a file
+    /// often ends in a newline no header can carry, since HTTP strips the whitespace around a
+    /// header's value), or null when nothing is left.
+    /// </summary>
+    public static string? Secret(string? s) => s == null || Trim(s) is not { Length: > 0 } trimmed ? null : trimmed;
 
     /// <summary><c>String.prototype.trimEnd</c>.</summary>
     public static string TrimEnd(string s)

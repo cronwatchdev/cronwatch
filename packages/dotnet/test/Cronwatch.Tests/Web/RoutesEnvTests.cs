@@ -78,14 +78,16 @@ public class RoutesEnvTests
     [InlineData("production")]
     [InlineData("staging")]
     [InlineData("prod")]
+    [InlineData("test")]
+    [InlineData("testing")]
     public async Task Routes_are_locked_without_a_token_outside_development(string environment)
     {
         await Child("locked", ("CRONWATCH_ENV", environment));
     }
 
     [Theory]
-    [InlineData("CRONWATCH_ENV", "test")]
-    [InlineData("APP_ENV", "test")]
+    [InlineData("CRONWATCH_ENV", "dev")]
+    [InlineData("APP_ENV", "local")]
     [InlineData("ASPNETCORE_ENVIRONMENT", "Development")]
     public async Task A_development_token_is_printed_once_and_required(string variable, string value)
     {
