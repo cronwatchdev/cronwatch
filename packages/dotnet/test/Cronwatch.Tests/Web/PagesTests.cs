@@ -258,6 +258,12 @@ public class PagesTests
         Assert.True(WebText.ConstantTimeEquals("tok", "tok"));
         Assert.False(WebText.ConstantTimeEquals("tok", "toK"));
         Assert.False(WebText.ConstantTimeEquals("tok", "tok2"));
+        // What was sent is compared in full, the secret repeated under it: a prefix, a repeat, and
+        // nothing at all are all differences.
+        Assert.False(WebText.ConstantTimeEquals("toktok", "tok"));
+        Assert.False(WebText.ConstantTimeEquals("", "tok"));
+        Assert.False(WebText.ConstantTimeEquals("tok", ""));
+        Assert.True(WebText.ConstantTimeEquals("", ""));
         Assert.False(WebText.ConstantTimeEquals("é", Encoding.Latin1.GetString(Encoding.UTF8.GetBytes("é"))));
     }
 }

@@ -1,7 +1,7 @@
 using System;
 using System.Globalization;
 using System.Numerics;
-using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Cronwatch.Internal;
@@ -152,23 +152,26 @@ internal static class WebText
     public static bool IsAsciiAlphanumeric(int c) => c is (>= '0' and <= '9') or (>= 'a' and <= 'z') or (>= 'A' and <= 'Z');
 
     /// <summary>
-    /// Compares two secrets without stopping at the first character that differs, over their
-    /// UTF-16 code units as the SDK compares them. Only a difference in length answers early, as
-    /// the SDK's does.
+    /// Compares what a request <paramref name="sent"/> with the <paramref name="secret"/> without
+    /// stopping at the first character that differs, in time that depends only on the length of
+    /// what was sent, so neither the secret's characters nor its length can be timed: every UTF-16
+    /// code unit of <paramref name="sent"/> is compared against the secret's unit at the same place
+    /// (repeating it past its end), and a length that differs counts as a difference, as the SDK
+    /// compares them.
     /// </summary>
-    public static bool ConstantTimeEquals(string a, string b) =>
-        CryptographicOperations.FixedTimeEquals(Units(a), Units(b));
-
-    private static byte[] Units(string s)
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    public static bool ConstantTimeEquals(string sent, string secret)
     {
-        byte[] output = new byte[s.Length * 2];
-        for (int i = 0; i < s.Length; i++)
+        if (secret.Length == 0)
         {
-            char c = s[i];
-            output[2 * i] = (byte)(c >> 8);
-            output[(2 * i) + 1] = (byte)c;
+            return sent.Length == 0;
         }
-        return output;
+        int diff = sent.Length ^ secret.Length;
+        for (int i = 0; i < sent.Length; i++)
+        {
+            diff |= sent[i] ^ secret[i % secret.Length];
+        }
+        return diff == 0;
     }
 
     /// <summary>Whether every character of <paramref name="s"/> is one byte, as text read from the wire as Latin-1 is.</summary>
