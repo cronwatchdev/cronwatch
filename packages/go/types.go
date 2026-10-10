@@ -835,10 +835,30 @@ func (d MissedDetails) jsValue() any {
 type FailureDetails struct {
 	ConsecutiveFailures int
 	Threshold           int
+	// exact is the threshold as stored when it is not a whole number (a row
+	// another port or a hand edit wrote), written in the JSON as the SDK
+	// writes it; Threshold is its whole part.
+	exact float64
 }
 
 func (d FailureDetails) jsValue() any {
-	return js.NewObject("consecutiveFailures", d.ConsecutiveFailures, "threshold", d.Threshold)
+	var threshold any = d.Threshold
+	if d.exact != 0 && int(d.exact) == d.Threshold {
+		threshold = d.exact
+	}
+	return js.NewObject("consecutiveFailures", d.ConsecutiveFailures, "threshold", threshold)
+}
+
+// failureDetails is FailureDetails for a threshold as stored.
+func failureDetails(consecutive int, threshold float64) FailureDetails {
+	if math.IsNaN(threshold) || math.IsInf(threshold, 0) {
+		return FailureDetails{ConsecutiveFailures: consecutive, Threshold: int(toInt(threshold))}
+	}
+	d := FailureDetails{ConsecutiveFailures: consecutive, Threshold: int(threshold)}
+	if threshold != math.Trunc(threshold) {
+		d.exact = threshold
+	}
+	return d
 }
 
 // SlowDetails says how slow a run was.
@@ -1244,7 +1264,7 @@ func detailsFrom(t AlertType, o *js.Object) AlertDetails {
 	case AlertMissed:
 		return MissedDetails{DueAt: integer(o, "dueAt"), Deadline: toFloat(get(o, "deadline")), GraceMs: toFloat(get(o, "graceMs")), LastRunAt: nullableInt(o, "lastRunAt")}
 	case AlertFailed, AlertStuck:
-		return FailureDetails{ConsecutiveFailures: int(integer(o, "consecutiveFailures")), Threshold: int(integer(o, "threshold"))}
+		return failureDetails(int(integer(o, "consecutiveFailures")), toFloat(get(o, "threshold")))
 	case AlertSlow:
 		return SlowDetails{DurationMs: integer(o, "durationMs"), ThresholdMs: toFloat(get(o, "thresholdMs")), Basis: str(o, "basis")}
 	case AlertOverBudget, AlertUnderFloor:

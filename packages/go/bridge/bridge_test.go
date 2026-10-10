@@ -414,3 +414,14 @@ func TestUnscheduleKeepsAnEntryDeclaredMeanwhile(t *testing.T) {
 	w.Settle()
 	eq(t, "stored", strings.Contains(stored(t, store.MemoryStore, "added"), `"schedule":"0 2 * * *"`), true)
 }
+
+// A threshold another port stored as 2.5 alerts on the third failure;
+// declared again, it keeps alerting there rather than one failure early.
+func TestOptionsOfKeepsWhereAFractionalThresholdAlerts(t *testing.T) {
+	var foreign cronwatch.Definition
+	if err := foreign.UnmarshalJSON([]byte(`{"name":"x","failuresBeforeAlert":2.5}`)); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := cronwatch.DescribeJob("x", bridge.OptionsOf(foreign)...)
+	eq(t, "alerts on the third failure", string(must(rebuilt.MarshalJSON())), `{"failuresBeforeAlert":3,"name":"x"}`)
+}

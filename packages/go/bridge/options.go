@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -9,6 +10,17 @@ import (
 	cronwatch "cronwatch.dev/go"
 	"cronwatch.dev/go/internal/js"
 )
+
+// wholeFailures is a stored failuresBeforeAlert as a count that alerts on
+// the same failure: a job alerts once its failures reach the threshold, and
+// failures are whole, so 2.5 (another port's, or a hand edit) alerts on the
+// third, as 3 does. Cut down to 2 it would alert one failure early.
+func wholeFailures(n float64) int {
+	if math.IsNaN(n) || n < math.MinInt32 || n > math.MaxInt32 {
+		return int(n)
+	}
+	return int(math.Ceil(n))
+}
 
 // OptionsOf are the job options that declare a stored definition again, in
 // its order: schedule, timezone, grace, timeout, maxDuration, budget,
@@ -64,7 +76,7 @@ func OptionsOf(def cronwatch.Definition) []cronwatch.JobOption {
 			}
 		case "failuresBeforeAlert":
 			if n, ok := value.(float64); ok {
-				options = append(options, cronwatch.FailuresBeforeAlert(int(n)))
+				options = append(options, cronwatch.FailuresBeforeAlert(wholeFailures(n)))
 			}
 		case "description":
 			if s, ok := value.(string); ok {
