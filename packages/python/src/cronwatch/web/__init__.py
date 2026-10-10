@@ -367,9 +367,20 @@ def _safe_decode(value: str) -> str | None:
         return None
 
 
-def _constant_time_equal(a: str, b: str) -> bool:
-    """Compares two secrets without stopping at the first differing character (UTF-16 units, as the SDK compares)."""
-    return hmac.compare_digest(a.encode("utf-16-le", "surrogatepass"), b.encode("utf-16-le", "surrogatepass"))
+def _constant_time_equal(sent: str, secret: str) -> bool:
+    """Compares what a request `sent` with the `secret` without stopping at the
+    first differing character, and in time that depends only on the length of
+    what was sent, so neither the secret's characters nor its length can be
+    timed. Every UTF-16 unit of `sent` is compared (as the SDK compares),
+    against the secret's unit at the same place (repeating it past its end),
+    and a length that differs counts as a difference."""
+    given = sent.encode("utf-16-le", "surrogatepass")
+    expected = secret.encode("utf-16-le", "surrogatepass")
+    if not expected:
+        return not given
+    repeated = (expected * (len(given) // len(expected) + 1))[: len(given)]
+    same = hmac.compare_digest(given, repeated)
+    return same and len(given) == len(expected)
 
 
 def _cookie_value(token: str) -> str:
@@ -638,9 +649,12 @@ class Web:
             return
         head = str(scope.get("method", "")).upper() == "HEAD"
         if isinstance(body, BodyTooLarge):
-            response = _too_large()
+            # The routes decide how to answer it, as each answers a body over the cap.
+            request = Request.from_asgi(scope, b"")
+            request.body = _too_large_body
         else:
-            response = await asyncio.to_thread(self.handle, Request.from_asgi(scope, body))
+            request = Request.from_asgi(scope, body)
+        response = await asyncio.to_thread(self.handle, request)
         headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in response.wsgi_headers()]
         await send({"type": "http.response.start", "status": response.status, "headers": headers})
         await send({"type": "http.response.body", "body": b"" if head else response.body})
@@ -748,7 +762,11 @@ class Web:
         # The sign-in form posts the token here, in the body, so it stays out
         # of the URL and every access log. Cross-site posts were refused above.
         if self._token and method == "POST" and path == "/signin":
-            given_token = self._read_body(request).get("token")
+            try:
+                given_token = self._read_body(request).get("token")
+            except BodyTooLarge:
+                # A body too large is no token at all.
+                given_token = None
             if given_token is None or not _constant_time_equal(given_token, self._token):
                 return sign_in_page()
             return _redirect(_sign_in_return(request.header("referer"), public_origin, base), {"set-cookie": sign_in_cookie()})
@@ -777,7 +795,9 @@ class Web:
                 # still be in an access log, which is why the sign-in form posts instead.
                 rest = [(k, v) for k, v in request.params() if k != "token"]
                 search = "?" + "&".join(f"{_form_encode(k)}={_form_encode(v)}" for k, v in rest) if rest else ""
-                return _redirect(request.path + search, {"set-cookie": sign_in_cookie()})
+                # One leading slash: "//host/..." (or "/\\host", which a browser reads
+                # the same) would be a protocol-relative Location, off this site.
+                return _redirect(re.sub(r"\A[/\\]+", "/", request.path) + search, {"set-cookie": sign_in_cookie()})
 
         def redirect_back() -> Response:
             referer = request.header("referer") or ""
@@ -820,7 +840,11 @@ class Web:
                 return _html_response(_html.message_page("No such job", f"{name} is not in the store.", base), 404)
             if action == "silence":
                 try:
-                    duration = _silence_duration(self._read_body(request).get("for"))
+                    fields = self._read_body(request)
+                except BodyTooLarge:
+                    return _html_response(_html.message_page("Not silenced", "The request was too large.", base), 413)
+                try:
+                    duration = _silence_duration(fields.get("for"))
                 except ValueError as error:
                     return _html_response(_html.message_page("Not silenced", str(error), base), 400)
                 cw.silence(name, duration)
@@ -859,7 +883,10 @@ class Web:
             if cw.job_summary(name) is None:
                 return _api({"ok": False, "error": "No such job"}, 404)
             if rest[2] == "silence":
-                body = self._read_body(request)
+                try:
+                    body = self._read_body(request)
+                except BodyTooLarge:
+                    return _too_large()
                 try:
                     duration = _silence_duration(body["for"] if "for" in body else request.param("for"))
                 except ValueError as error:
@@ -951,6 +978,11 @@ class Web:
         except Exception:
             return {}
         return {}
+
+
+def _too_large_body() -> bytes:
+    """The body of a request whose body passed MAX_BODY bytes: reading it raises."""
+    raise BodyTooLarge()
 
 
 def _too_large() -> Response:

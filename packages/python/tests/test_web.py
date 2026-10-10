@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import struct
+import urllib.parse
 from typing import Any
 
 import pytest
@@ -1182,33 +1183,46 @@ def test_an_asgi_body_over_the_limit_is_refused_before_anything_reads_it_whole()
     token, so a body past _MAX_BODY is answered 413 and the rest never read."""
     from cronwatch.web import _MAX_BODY
 
-    _, _, web = app()
+    cw, _, web = app()
+    cw.run("big", lambda ctx: None)
     chunk = b"x" * (64 * 1024)
     chunks = _MAX_BODY // len(chunk) + 50
-    received = [0]
-    sent: list[dict[str, Any]] = []
 
-    async def receive() -> dict[str, Any]:
-        received[0] += 1
-        return {"type": "http.request", "body": chunk, "more_body": received[0] < chunks}
+    def post(path: str, headers: list[tuple[bytes, bytes]]) -> tuple[list[dict[str, Any]], int]:
+        received = [0]
+        sent: list[dict[str, Any]] = []
 
-    async def emit(message: dict[str, Any]) -> None:
-        sent.append(message)
+        async def receive() -> dict[str, Any]:
+            received[0] += 1
+            return {"type": "http.request", "body": chunk, "more_body": received[0] < chunks}
 
-    scope = {
-        "type": "http",
-        "method": "POST",
-        "scheme": "http",
-        "path": "/cronwatch/check",
-        "raw_path": b"/cronwatch/check",
-        "root_path": "",
-        "query_string": b"",
-        "headers": [(b"host", b"app.test")],
-    }
-    asyncio.run(web.asgi(scope, receive, emit))
+        async def emit(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(b"host", b"app.test"), *headers],
+        }
+        asyncio.run(web.asgi(scope, receive, emit))
+        return sent, received[0]
+
+    sent, received = post("/cronwatch/api/jobs/big/silence", [(b"authorization", b"Bearer tok"), (b"content-type", b"application/json")])
     assert sent[0]["status"] == 413
     assert json.loads(sent[1]["body"]) == {"ok": False, "error": "Request body too large"}
-    assert received[0] == _MAX_BODY // len(chunk) + 1, "reading stops once the limit is passed"
+    page, _ = post("/cronwatch/jobs/big/silence", [(b"authorization", b"Bearer tok"), (b"content-type", b"application/x-www-form-urlencoded")])
+    assert page[0]["status"] == 413
+    assert b"The request was too large." in page[1]["body"]
+    sign_in, _ = post("/cronwatch/signin", [(b"content-type", b"application/x-www-form-urlencoded")])
+    assert sign_in[0]["status"] == 401, "a body too large is no token at all"
+    assert not any(name == b"set-cookie" for name, _ in sign_in[0]["headers"])
+    assert cw.job_summary("big").silenced_until is None
+    assert received == _MAX_BODY // len(chunk) + 1, "reading stops once the limit is passed"
 
 
 def test_a_wsgi_body_over_the_limit_is_413_and_never_silences_the_job() -> None:
@@ -1219,9 +1233,41 @@ def test_a_wsgi_body_over_the_limit_is_413_and_never_silences_the_job() -> None:
     res = send(web, "POST", "/cronwatch/api/jobs/big/silence", {**JSON_BODY, "content-length": str(_MAX_BODY + 1)}, b'{"for":"2h"}')
     assert res.status == 413
     assert cw.job_summary("big").silenced_until is None
+    assert res.json() == {"ok": False, "error": "Request body too large"}
     form = send(web, "POST", "/cronwatch/jobs/big/silence", {**BEARER, **FORM, "content-length": str(_MAX_BODY + 1)}, b"for=2h")
     assert form.status == 413
+    assert "<title>Not silenced" in form.text and "The request was too large." in form.text
     assert cw.job_summary("big").silenced_until is None
+    sign_in = send(web, "POST", "/cronwatch/signin", {**FORM, "content-length": str(_MAX_BODY + 1)}, b"token=tok")
+    assert sign_in.status == 401, "a body too large is no token at all"
+    assert "set-cookie" not in sign_in.headers
+    fits = send(web, "POST", "/cronwatch/api/jobs/big/silence", JSON_BODY, _js_dumps_padded(_MAX_BODY - 32))
+    assert fits.status == 200
+
+
+def _js_dumps_padded(size: int) -> bytes:
+    return json.dumps({"for": "2h", "pad": "x" * size}).encode()
+
+
+def test_the_token_sign_in_never_redirects_off_the_site_however_many_slashes_lead_the_path() -> None:
+    _, _, web = app(base_path="/")
+    for path in ["//evil.example/x", "///evil.example", "/\\/evil.example"]:
+        res = send(web, "GET", f"http://app.test{path}?token=tok")
+        assert res.status == 303, path
+        location = res.headers["location"]
+        assert location.startswith("/") and not location.startswith("//") and not location.startswith("/\\"), f"{path} -> {location}"
+        assert "evil" not in urllib.parse.urlsplit(urllib.parse.urljoin("http://app.test/", location)).netloc, f"{path} -> {location}"
+
+
+def test_the_secret_compare_matches_only_the_secret_itself_whatever_is_sent() -> None:
+    from cronwatch.web import _constant_time_equal
+
+    cases = [
+        ("tok", "tok", True), ("tok", "tok2", False), ("tok2", "tok", False), ("toktok", "tok", False), ("", "tok", False),
+        ("", "", True), ("x", "", False), ("\U0001F600", "\U0001F600", True), ("\U0001F600", "\U0001F601", False),
+    ]  # fmt: skip
+    for sent, secret, equal in cases:
+        assert _constant_time_equal(sent, secret) is equal, (sent, secret)
 
 
 def test_a_negative_content_length_reads_no_body() -> None:
