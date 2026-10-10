@@ -27,7 +27,9 @@ class Webhook:
     a version: { schema: 1, type, run, details, job, definition, title,
     message, at, triage }.
     With a secret, each request carries ``X-CronWatch-Signature: sha256=<hex>``,
-    the HMAC-SHA256 of the raw body, so the receiver can verify it. Header
+    the HMAC-SHA256 of the raw body, so the receiver can verify it. An empty
+    string (an unset variable read as "", say) signs nothing, and each send
+    reports that to on_error. Header
     values are trimmed. A redirect is an error, not followed (the headers
     and the signature would go with it): point the url at where the
     receiver really is."""
@@ -44,6 +46,9 @@ class Webhook:
 
     def send(self, alert: Alert, context: Any = None) -> None:
         body = _js.dumps({"schema": WEBHOOK_SCHEMA, **alert.to_dict()})
+        report = getattr(context, "on_error", None)
+        if self._secret == "" and callable(report):
+            report(RuntimeError("webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose"))
         headers = {"content-type": "application/json", "user-agent": "cronwatch"}
         # A pasted Authorization value often carries a stray space or newline, which a header would refuse.
         for name, value in self._headers.items():

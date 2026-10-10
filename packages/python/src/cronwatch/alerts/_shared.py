@@ -16,7 +16,7 @@ from typing import Any
 from .. import _js
 from .._duration import iso_time
 from ..types import Alert
-from ._http import HTTP, Response
+from ._http import HTTP, Response, web_url
 from ._http import default as default_http
 
 __all__ = [
@@ -119,6 +119,29 @@ def error_body(text: str, secrets: Iterable[str | None] = ()) -> str:
     for secret in kept:
         head = head.replace(secret, "[redacted]")
     return cut(head, ERROR_BODY_MAX)
+
+
+def url_secrets(url: str) -> list[str]:
+    """The parts of a webhook URL that are its credential, to cut from an
+    error body that echoes the request: its path and query together, then
+    the last segment of its path (Slack's and Discord's token) on its own."""
+    try:
+        parts = urllib.parse.urlsplit(web_url(url))
+    except ValueError:
+        return []
+    pathname = parts.path or "/"
+    search = f"?{parts.query}" if parts.query else ""
+    last = pathname.split("/")[-1]
+    return [part for part in (pathname + search, last) if part and part != "/"]
+
+
+def webhook_error(channel: str, status: int, body: str | None, url: str) -> RuntimeError:
+    """Slack's and Discord's error for an answer outside 2xx: the start of the
+    answer, with the URL's credential cut out in case a proxy echoes the request."""
+    text = body or ""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return RuntimeError(f"{channel} webhook answered {status}: {error_body(text, url_secrets(url))}")
 
 
 def trimmed(value: Any) -> str:

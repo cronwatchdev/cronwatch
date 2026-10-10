@@ -546,6 +546,32 @@ def test_the_default_http_ignores_proxy_settings_as_the_sdk_does(monkeypatch: py
         target.close()
 
 
+def test_a_webhook_with_an_empty_secret_sends_unsigned_and_says_so_through_on_error() -> None:
+    reported: list[str] = []
+    context = alerts.ChannelContext(lambda e: reported.append(str(e)))
+    http = FakeHTTP(200)
+    A.Webhook("https://hooks.example.com/in", secret="", http=http).send(failed(), context)
+    assert "x-cronwatch-signature" not in http.requests[0]["headers"]
+    assert len(reported) == 1
+    assert "secret is an empty string, so this request is sent unsigned" in reported[0]
+    # Left out, it sends unsigned on purpose, and says nothing.
+    A.Webhook("https://hooks.example.com/in", http=http).send(failed(), context)
+    assert len(reported) == 1
+
+
+def test_slack_and_discord_cut_the_webhook_urls_credential_out_of_an_answer_that_echoes_it() -> None:
+    slack_url = "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX"
+    discord_url = "https://discord.com/api/webhooks/123456/tokenTOKENtoken"
+    for make_channel, url in [(A.Slack, slack_url), (A.Discord, discord_url)]:
+        path = urllib.parse.urlsplit(url).path
+        channel = make_channel(webhook_url=url, http=FakeHTTP(502, f"<html>bad gateway for POST {path} HTTP/1.1</html>"))
+        with pytest.raises(RuntimeError) as raised:
+            channel.send(failed())
+        message = str(raised.value)
+        assert path not in message and path.split("/")[-1] not in message, message
+        assert "[redacted]" in message
+
+
 def test_no_channel_follows_a_redirect_so_its_credentials_never_reach_another_origin() -> None:
     evil = LocalServer(202)
     provider = LocalServer(307, {"Location": f"{evil.url}/steal"})
