@@ -152,6 +152,22 @@ class AlertsTest < Minitest::Test
     assert_equal call[:body], Cronwatch::JS.json({ "schema" => 1 }.merge(alert(triage: "db").to_h))
   end
 
+  # An unset variable read as "" signs nothing: the send goes out unsigned,
+  # and says so through the context on every send, without raising.
+  def test_an_empty_webhook_secret_sends_unsigned_and_reports_it
+    http = FakeHTTP.new
+    reported = []
+    context = Cronwatch::Client::ChannelContext.new(->(error) { reported << error.message })
+    channel = Cronwatch::Alerts::Webhook.new(url: "https://hooks.example.com/cw", secret: "", http: http)
+    2.times { channel.call(alert, context) }
+    assert_equal 2, http.calls.length
+    assert_nil http.calls[0][:headers]["x-cronwatch-signature"]
+    assert_equal ["webhook: secret is an empty string, so this request is sent unsigned; " \
+                  "set the secret, or leave it out to send unsigned on purpose"] * 2, reported
+    Cronwatch::Alerts::Webhook.new(url: "https://hooks.example.com/cw", http: http).call(alert, context)
+    assert_equal 2, reported.length, "no secret at all is unsigned on purpose"
+  end
+
   def test_channels_need_their_url
     assert_raises(ArgumentError) { Cronwatch::Alerts::Slack.new(webhook_url: "") }
     assert_raises(ArgumentError) { Cronwatch::Alerts::Discord.new(webhook_url: nil) }
