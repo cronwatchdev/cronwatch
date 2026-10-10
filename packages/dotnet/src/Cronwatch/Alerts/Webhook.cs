@@ -31,7 +31,9 @@ public sealed class WebhookOptions
     /// <summary>
     /// When set, each request carries <c>x-cronwatch-signature: sha256=&lt;hex&gt;</c>, the
     /// HMAC-SHA256 of the raw body with this secret, so the receiver can verify it
-    /// (<see cref="WebhookChannel.Signature"/>).
+    /// (<see cref="WebhookChannel.Signature"/>). An empty string (an unset variable read as
+    /// <c>""</c>, say) signs nothing, and each send reports that through the channel's
+    /// <see cref="ChannelContext.ReportError(string)"/>.
     /// </summary>
     public string? Secret { internal get; init; }
 
@@ -61,6 +63,7 @@ public sealed class WebhookChannel : IChannel
     private readonly string _url;
     private readonly List<KeyValuePair<string, string>> _headers;
     private readonly string _secret;
+    private readonly bool _emptySecret;
     private readonly ITransport? _transport;
 
     /// <summary>The channel.</summary>
@@ -75,6 +78,7 @@ public sealed class WebhookChannel : IChannel
         _url = options.Url;
         _headers = (options.Headers ?? []).ToList();
         _secret = options.Secret ?? "";
+        _emptySecret = options.Secret is { Length: 0 };
         _transport = options.Transport;
     }
 
@@ -103,6 +107,10 @@ public sealed class WebhookChannel : IChannel
             payload.Set(field.Key, field.Value);
         }
         string body = payload.ToJson();
+        if (_emptySecret)
+        {
+            context.ReportError("webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose");
+        }
         // A JavaScript object's keys: an exact name given again keeps its place.
         var headers = new JsObject().Set("content-type", "application/json").Set("user-agent", "cronwatch");
         foreach (var h in _headers)

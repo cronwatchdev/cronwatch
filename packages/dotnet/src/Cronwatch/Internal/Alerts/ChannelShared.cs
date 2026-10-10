@@ -81,6 +81,32 @@ internal static class ChannelShared
     /// <summary>The link option's answer for this alert, <c>""</c> for none.</summary>
     public static string Link(Func<Alert, string?>? link, Alert a) => link == null ? "" : link(a) ?? "";
 
+    /// <summary>
+    /// The parts of a webhook URL that are its credential, to cut from an error body that echoes
+    /// the request (<c>urlSecrets</c>): its path and query together, then the last segment of its
+    /// path (Slack's and Discord's token) on its own.
+    /// </summary>
+    public static List<string> UrlSecrets(string url)
+    {
+        var (_, _, parsed) = WhatwgUrl.Parse(url);
+        if (parsed == null)
+        {
+            return [];
+        }
+        string path = parsed.Path;
+        string search = parsed.Query is { Length: > 0 } query ? "?" + query : "";
+        string last = path[(path.LastIndexOf('/') + 1)..];
+        var parts = new List<string>();
+        foreach (string part in new[] { path + search, last })
+        {
+            if (part.Length > 0 && part != "/")
+            {
+                parts.Add(part);
+            }
+        }
+        return parts;
+    }
+
     /// <summary>The title, message, triage, and link as one plain text block, the way every channel reads.</summary>
     public static string PlainText(Alert a, string link)
     {
