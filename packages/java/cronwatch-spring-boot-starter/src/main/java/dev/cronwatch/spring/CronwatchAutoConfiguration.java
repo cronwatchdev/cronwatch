@@ -109,7 +109,7 @@ public class CronwatchAutoConfiguration {
   static @Nullable String profile(String[] active) {
     for (String p : active) {
       switch (p.strip().toLowerCase(Locale.ROOT)) {
-        case "development", "dev", "local", "test", "testing", "production", "prod" -> {
+        case "development", "dev", "local", "production", "prod" -> {
           return p;
         }
         default -> {

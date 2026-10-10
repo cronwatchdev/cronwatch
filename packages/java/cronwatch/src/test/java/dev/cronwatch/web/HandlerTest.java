@@ -43,6 +43,22 @@ class HandlerTest {
   }
 
   @Test
+  void aSecretWithSpacesAroundItIsTrimmedAsAHeadersValueIs() {
+    // A secret read from a file often ends in a newline, which no header carries.
+    for (String padded : List.of(secret() + "\n", " " + secret() + " ", " " + secret())) {
+      try (WebKit k = new WebKit(RoutesOptions.defaults(), b -> b.cronSecret(padded))) {
+        Handler client = k.cw.job("hourly").handler((j, req) -> null);
+        assertEquals(200, client.handle(get("Bearer " + secret(), false)).status(), padded);
+        Handler own =
+            k.cw
+                .job("own")
+                .handler((j, req) -> null, HandlerOptions.builder().secret(" own\n").build());
+        assertEquals(200, own.handle(get("Bearer own", false)).status(), padded);
+      }
+    }
+  }
+
+  @Test
   void theHandlerChecksTheBearerAndReportsTheRun() {
     String secret = secret();
     try (WebKit k = new WebKit(RoutesOptions.defaults(), b -> b.cronSecret(secret))) {

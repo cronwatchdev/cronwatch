@@ -65,7 +65,8 @@ class RoutesEnvTest {
 
   @Test
   void routesAreLockedWithoutATokenOutsideDevelopment() throws Exception {
-    for (String env : List.of("", "production", "staging", "prod")) {
+    // test and testing are not development: a test run or CI needs a token, as production does.
+    for (String env : List.of("", "production", "staging", "prod", "test", "testing")) {
       child("locked", Map.of("CRONWATCH_ENV", env));
     }
   }
@@ -73,7 +74,7 @@ class RoutesEnvTest {
   @Test
   void aDevelopmentTokenIsPrintedOnceAndRequired() throws Exception {
     for (String var : List.of("CRONWATCH_ENV", "APP_ENV")) {
-      String out = child("developmentToken", Map.of(var, "test"));
+      String out = child("developmentToken", Map.of(var, "dev"));
       List<String> lines = announced(out);
       assertEquals(2, lines.size(), var + ": " + out);
       assertTrue(lines.get(0).startsWith(INTRO), lines.get(0));
@@ -153,7 +154,9 @@ class RoutesEnvTest {
     child(
         "blankTokenFallsBack",
         Map.of("CRONWATCH_ENV", "production", "CRONWATCH_TOKEN", "from-env"));
-    child("paddedToken", Map.of("CRONWATCH_ENV", "production", "CRONWATCH_TOKEN", " padded "));
+    for (String padded : List.of(" padded ", "padded\n")) {
+      child("paddedToken", Map.of("CRONWATCH_ENV", "production", "CRONWATCH_TOKEN", padded));
+    }
   }
 
   @Test

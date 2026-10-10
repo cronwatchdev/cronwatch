@@ -730,6 +730,57 @@ class RoutesTest {
   }
 
   @Test
+  void aSignInBodyPastTheCapIsNoToken() {
+    try (WebKit w = new WebKit()) {
+      Response signIn =
+          w.send(
+              "POST",
+              "/cronwatch/signin",
+              headers(FORM),
+              "token=tok&pad=" + "x".repeat(Request.MAX_BODY));
+      status("sign-in", signIn, 401);
+      assertNull(signIn.header("set-cookie"));
+    }
+  }
+
+  @Test
+  void theTokenSignInNeverRedirectsOffTheSiteHoweverManySlashesLeadThePath() {
+    try (WebKit w =
+        new WebKit(RoutesOptions.builder().token("tok").basePath("/").build(), b -> {})) {
+      for (String path :
+          List.of(
+              "//evil.example/x",
+              "///evil.example",
+              "/\\/evil.example",
+              "/\\evil.example",
+              "//\\evil.example")) {
+        Response res = w.get(path + "?token=tok", headers(h("accept", "text/html")));
+        status(path, res, 303);
+        String location = String.valueOf(res.header("location"));
+        assertTrue(
+            location.startsWith("/") && !location.startsWith("//"), path + " -> " + location);
+        assertFalse(location.startsWith("/\\"), path + " -> " + location);
+        assertFalse(location.contains("\\"), path + " -> " + location);
+      }
+    }
+  }
+
+  @Test
+  void aTokenGivenWithSpacesAroundItIsTrimmed() {
+    for (String padded : List.of(" padded ", "padded\n", " padded﻿")) {
+      try (WebKit w =
+          new WebKit(
+              RoutesOptions.builder().token(padded).basePath("/cronwatch").build(), b -> {})) {
+        status(
+            padded,
+            w.get("/cronwatch/api/jobs", headers(h("authorization", "Bearer padded"))),
+            200);
+        status(padded, w.get("/cronwatch/?token=padded", headers(h("accept", "text/html"))), 303);
+      }
+    }
+  }
+
+  @Test
   void securityHeaders() {
     try (WebKit w = new WebKit()) {
       w.ok("h");
