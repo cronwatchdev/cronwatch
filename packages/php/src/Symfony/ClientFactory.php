@@ -42,12 +42,13 @@ final class ClientFactory
         ?object $mailer = null,
         iterable $channels = [],
         ?Store $store = null,
+        ?object $parameters = null,
     ): Cronwatch {
         $triage = $config['triage'] ?? [];
         $secret = $config['cron_secret'] ?? null;
         $alerts = self::alerts($config, $logger, $mailer, $channels);
         return new Cronwatch(
-            store: $store ?? self::store($config, $projectDir),
+            store: $store ?? self::store($config, $projectDir, $parameters),
             // With no channel and no logger, the console (standard error, or PHP's error log).
             alerts: $alerts === [] ? null : $alerts,
             triage: !empty($triage['enabled']) ? new Anthropic(
@@ -65,11 +66,15 @@ final class ClientFactory
         );
     }
 
-    /** @param array<string, mixed> $config */
-    public static function store(array $config, string $projectDir): Store
+    /**
+     * @param array<string, mixed> $config
+     * @param object|null $parameters the container's parameter bag, for the %name% references a DATABASE_URL holds
+     */
+    public static function store(array $config, string $projectDir, ?object $parameters = null): Store
     {
         $prefix = (string) ($config['table_prefix'] ?? 'cronwatch_');
-        $url = self::text($config['store'] ?? null) ?? Env::read('DATABASE_URL');
+        $env = Env::read('DATABASE_URL');
+        $url = self::text($config['store'] ?? null) ?? ($env === null ? null : self::parameters($env, $projectDir, $parameters));
         $store = $url !== null
             ? Stores::fromUrl($url, $prefix)
             : Stores::fromUrl('sqlite://' . rtrim($projectDir, '/') . '/var/cronwatch.db', $prefix);
@@ -112,6 +117,35 @@ final class ClientFactory
             $out[] = new LoggerChannel($logger);
         }
         return $out;
+    }
+
+    /**
+     * DATABASE_URL as Doctrine reads it: the variable's raw text holds
+     * container parameters, as in Symfony's own
+     * `sqlite:///%kernel.project_dir%/var/data.db`, which are put in here
+     * ("%%" is a percent sign). A name the container does not have is left
+     * as it is.
+     */
+    public static function parameters(string $url, string $projectDir, ?object $parameters = null): string
+    {
+        return (string) preg_replace_callback('/%%|%([^%\s]+)%/', static function (array $m) use ($projectDir, $parameters): string {
+            if ($m[0] === '%%') {
+                return '%';
+            }
+            if ($m[1] === 'kernel.project_dir' && $projectDir !== '') {
+                return rtrim($projectDir, '/');
+            }
+            try {
+                if ($parameters !== null && method_exists($parameters, 'has') && $parameters->has($m[1])) {
+                    $value = $parameters->get($m[1]);
+                    if (is_scalar($value)) {
+                        return (string) $value;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+            return $m[0];
+        }, $url);
     }
 
     private static function text(mixed $value): ?string

@@ -9,6 +9,7 @@ use Cronwatch\Bridge\Unscheduled;
 use Cronwatch\Cronwatch;
 use Cronwatch\Job\JobHandle;
 use Cronwatch\Watch;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Scheduler\Generator\MessageContext;
 use Symfony\Component\Scheduler\RecurringMessage;
@@ -91,6 +92,7 @@ final class ScheduledMessages
         private ?string $app = null,
         private readonly ?object $parameters = null,
         private readonly string $projectDir = '',
+        private readonly ?LoggerInterface $logger = null,
     ) {
         $this->named = $app !== null;
     }
@@ -468,6 +470,13 @@ final class ScheduledMessages
             return;
         }
         $this->reported[$key] = true;
-        $this->cw()->onError($error, $where);
+        try {
+            $cw = $this->cw();
+        } catch (\Throwable) {
+            // A client that cannot be built: the log, as its onError would have written it.
+            Failsafe::report($this->logger, $error, $where);
+            return;
+        }
+        $cw->onError($error, $where);
     }
 }

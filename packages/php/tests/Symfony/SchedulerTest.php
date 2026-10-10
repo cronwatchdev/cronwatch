@@ -173,6 +173,18 @@ final class SchedulerTest extends TestCase
         $this->assertNull(Cronwatch::current());
     }
 
+    public function testAClientThatCannotBeBuiltLeavesTheWorkersRunning(): void
+    {
+        // A store CronWatch has none for: building the client throws, every time it is asked for.
+        self::bootKernel(['cronwatch' => ['store' => 'sqlsrv://localhost/app']]);
+        TestSchedule::$messages = [RecurringMessage::every('1 second', new Report())];
+        Handlers::$succeedOn = 1;
+        $this->consume('scheduler_default', 1);
+        static::getContainer()->get(MessageBusInterface::class)->dispatch(new AsyncReport());
+        $this->consume('async', 1);
+        $this->assertSame(1, Handlers::$asyncCalls, 'the message was handled, once: no attempt failed for CronWatch');
+    }
+
     public function testAMessengerMessageIsRecordedWhereItIsHandledWithEachAttemptARun(): void
     {
         self::bootKernel();

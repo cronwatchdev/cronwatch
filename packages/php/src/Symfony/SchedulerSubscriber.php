@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Cronwatch\Symfony;
 
 use Cronwatch\Cronwatch;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\Messenger\Event\WorkerMessageHandledEvent;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
@@ -36,8 +37,11 @@ final class SchedulerSubscriber implements EventSubscriberInterface
     private array $results = [];
 
     /** @param \Closure(): Cronwatch $client */
-    public function __construct(private readonly \Closure $client, private readonly ScheduledMessages $messages)
-    {
+    public function __construct(
+        private readonly \Closure $client,
+        private readonly ScheduledMessages $messages,
+        private readonly ?LoggerInterface $logger = null,
+    ) {
     }
 
     public static function getSubscribedEvents(): array
@@ -61,7 +65,23 @@ final class SchedulerSubscriber implements EventSubscriberInterface
         }
     }
 
+    // Each listener goes through Failsafe: CronWatch failing never fails the message or stops the worker.
     public function preRun(PreRunEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching the schedule', fn () => $this->start($event));
+    }
+
+    public function postRun(PostRunEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching the schedule', fn () => $this->finish($event));
+    }
+
+    public function failure(FailureEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching the schedule', fn () => $this->fail($event));
+    }
+
+    private function start(PreRunEvent $event): void
     {
         if ($event->shouldCancel()) {
             return;
@@ -74,7 +94,7 @@ final class SchedulerSubscriber implements EventSubscriberInterface
         $this->open[spl_object_id($event->getMessage())] = ($this->client)()->startExecution($found[0]->definition, self::TRIGGER);
     }
 
-    public function postRun(PostRunEvent $event): void
+    private function finish(PostRunEvent $event): void
     {
         $id = spl_object_id($event->getMessage());
         $result = method_exists($event, 'getResult') ? $event->getResult() : ($this->results[$id] ?? null);
@@ -85,7 +105,7 @@ final class SchedulerSubscriber implements EventSubscriberInterface
         }
     }
 
-    public function failure(FailureEvent $event): void
+    private function fail(FailureEvent $event): void
     {
         $key = $this->take($event->getMessage());
         if ($key !== null) {

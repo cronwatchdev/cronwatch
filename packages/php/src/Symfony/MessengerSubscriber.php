@@ -8,6 +8,7 @@ use Cronwatch\Bridge\JobName;
 use Cronwatch\Cronwatch;
 use Cronwatch\Job\JobHandle;
 use Cronwatch\Watch;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\Messenger\Event\WorkerMessageFailedEvent;
 use Symfony\Component\Messenger\Event\WorkerMessageHandledEvent;
@@ -44,8 +45,11 @@ final class MessengerSubscriber implements EventSubscriberInterface
     private array $handles = [];
 
     /** @param \Closure(): Cronwatch $client */
-    public function __construct(private readonly \Closure $client, private readonly ?ScheduledMessages $scheduled = null)
-    {
+    public function __construct(
+        private readonly \Closure $client,
+        private readonly ?ScheduledMessages $scheduled = null,
+        private readonly ?LoggerInterface $logger = null,
+    ) {
     }
 
     public static function getSubscribedEvents(): array
@@ -57,7 +61,23 @@ final class MessengerSubscriber implements EventSubscriberInterface
         ];
     }
 
+    // Each listener goes through Failsafe: CronWatch failing never fails the message or stops the worker.
     public function received(WorkerMessageReceivedEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching messages', fn () => $this->start($event));
+    }
+
+    public function handled(WorkerMessageHandledEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching messages', fn () => $this->finish($event));
+    }
+
+    public function failed(WorkerMessageFailedEvent $event): void
+    {
+        Failsafe::run($this->logger, 'watching messages', fn () => $this->fail($event));
+    }
+
+    private function start(WorkerMessageReceivedEvent $event): void
     {
         $envelope = $event->getEnvelope();
         $message = $envelope->getMessage();
@@ -81,7 +101,7 @@ final class MessengerSubscriber implements EventSubscriberInterface
         $this->open[spl_object_id($message)] = ($this->client)()->startExecution($handle->definition, self::TRIGGER, $id !== null && strlen($id) <= 200 ? $id : null);
     }
 
-    public function handled(WorkerMessageHandledEvent $event): void
+    private function finish(WorkerMessageHandledEvent $event): void
     {
         $key = $this->take($event->getEnvelope()->getMessage());
         if ($key !== null) {
@@ -89,7 +109,7 @@ final class MessengerSubscriber implements EventSubscriberInterface
         }
     }
 
-    public function failed(WorkerMessageFailedEvent $event): void
+    private function fail(WorkerMessageFailedEvent $event): void
     {
         $key = $this->take($event->getEnvelope()->getMessage());
         if ($key !== null) {
