@@ -523,6 +523,12 @@ type JobState struct {
 	// floorBreaches). Nil is absent, as it is when none and in state
 	// written before the field existed.
 	UnderFloor []string
+	// The ids of runs started and not yet judged, oldest first (see
+	// holdRun). A run leaves when its finish is evaluated; one a check finds
+	// finished and still here (the process that finished it stopped before
+	// writing its evaluation) is evaluated by that check. Nil is absent, as
+	// it is when empty and in state written before the field existed.
+	PendingRuns []string
 	// Goes up by one on every write (see Store.CompareAndSetState). Nil is
 	// a state written before versions, which counts as 0, as does a
 	// version outside 0 to 2^53 - 1. One that is not a whole number (a
@@ -530,7 +536,7 @@ type JobState struct {
 	Version *int64
 
 	// Keys after the known ones, in stored order: "version", "sending",
-	// "underFloor", and
+	// "underFloor", "pendingRuns", and
 	// any a newer writer added (their values in extra), so a state is
 	// written back as the SDK's spread would write it.
 	tail  []string
@@ -603,6 +609,9 @@ func (s JobState) clone() JobState {
 	if s.UnderFloor != nil {
 		c.UnderFloor = append([]string{}, s.UnderFloor...)
 	}
+	if s.PendingRuns != nil {
+		c.PendingRuns = append([]string{}, s.PendingRuns...)
+	}
 	c.Version = copyInt(s.Version)
 	c.tail = append([]string(nil), s.tail...)
 	if s.extra != nil {
@@ -653,7 +662,14 @@ func (s JobState) JSValue() any {
 		}
 		return list
 	}
-	wroteVersion, wroteSending, wroteUnderFloor := false, false, false
+	pendingRuns := func() any {
+		list := make([]any, len(s.PendingRuns))
+		for i, id := range s.PendingRuns {
+			list[i] = id
+		}
+		return list
+	}
+	wroteVersion, wroteSending, wroteUnderFloor, wrotePendingRuns := false, false, false, false
 	for _, k := range s.tail {
 		switch k {
 		case "version":
@@ -674,6 +690,12 @@ func (s JobState) JSValue() any {
 				wroteUnderFloor = true
 				continue
 			}
+		case "pendingRuns":
+			if s.PendingRuns != nil {
+				o.Set("pendingRuns", pendingRuns())
+				wrotePendingRuns = true
+				continue
+			}
 		}
 		if v, ok := s.extra[k]; ok {
 			o.Set(k, v)
@@ -681,6 +703,9 @@ func (s JobState) JSValue() any {
 	}
 	if s.UnderFloor != nil && !wroteUnderFloor {
 		o.Set("underFloor", underFloor())
+	}
+	if s.PendingRuns != nil && !wrotePendingRuns {
+		o.Set("pendingRuns", pendingRuns())
 	}
 	if s.Sending != nil && !wroteSending {
 		o.Set("sending", sending())
@@ -776,6 +801,19 @@ func stateFrom(v any) (JobState, error) {
 				for _, m := range list {
 					if name, ok := m.(string); ok {
 						s.UnderFloor = append(s.UnderFloor, name)
+					}
+				}
+				continue
+			}
+		}
+		if k == "pendingRuns" {
+			// Keeps only its strings; anything but a list is kept as it
+			// was, until normalizeState drops it.
+			if list, ok := get(o, "pendingRuns").([]any); ok {
+				s.PendingRuns = []string{}
+				for _, id := range list {
+					if id, ok := id.(string); ok {
+						s.PendingRuns = append(s.PendingRuns, id)
 					}
 				}
 				continue
