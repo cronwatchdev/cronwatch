@@ -161,13 +161,13 @@ final class DashboardController extends ControllerBase {
   private static function signedIn(Request $request, string $token, ?string $cronSecret, bool $orCookie = TRUE): bool {
     $authorization = (string) $request->headers->get('authorization', '');
     if (preg_match('/^Bearer\s+(.+)$/is', $authorization, $m) === 1) {
-      return hash_equals($token, $m[1]) || ($cronSecret !== NULL && hash_equals($cronSecret, $m[1]));
+      return Dashboard::secretMatches($m[1], $token) || ($cronSecret !== NULL && Dashboard::secretMatches($m[1], $cronSecret));
     }
     if (!$orCookie) {
       return FALSE;
     }
     $cookie = $request->cookies->get(Dashboard::COOKIE);
-    return is_string($cookie) && hash_equals(Dashboard::cookieValue($token), $cookie);
+    return is_string($cookie) && Dashboard::secretMatches($cookie, Dashboard::cookieValue($token));
   }
 
   /**

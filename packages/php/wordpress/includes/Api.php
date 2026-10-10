@@ -77,11 +77,11 @@ final class Api
         }
         $bearer = self::bearer((string) $rest->get_header('authorization'));
         if ($bearer !== null) {
-            if (hash_equals((string) $settings['api_token'], $bearer)) {
+            if (Dashboard::secretMatches($bearer, (string) $settings['api_token'])) {
                 return true;
             }
             $secret = Plugin::client()->cronSecret;
-            if ($secret !== null && self::path($rest) === '/check' && hash_equals($secret, $bearer)) {
+            if ($secret !== null && self::path($rest) === '/check' && Dashboard::secretMatches($bearer, $secret)) {
                 return true;
             }
         }

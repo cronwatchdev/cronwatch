@@ -160,6 +160,35 @@ final class WebTest extends TestCase
         $this->assertStringContainsString('text/html', (string) $page->header('content-type'));
     }
 
+    public function testTheSecretCompareMatchesOnlyTheSecretItselfWhateverIsSent(): void
+    {
+        $cases = [
+            ['tok', 'tok', true], ['tok', 'tok2', false], ['tok2', 'tok', false], ['toktok', 'tok', false], ['', 'tok', false],
+            ['', '', true], ['x', '', false], ["\u{1F600}", "\u{1F600}", true], ["\u{1F600}", "\u{1F601}", false],
+        ];
+        foreach ($cases as [$sent, $secret, $equal]) {
+            $this->assertSame($equal, Dashboard::secretMatches($sent, $secret), json_encode([$sent, $secret]));
+        }
+    }
+
+    public function testTheTokenSignInNeverRedirectsOffTheSiteHoweverManySlashesLeadThePath(): void
+    {
+        $web = $this->routes($this->client(), 'tok', '/');
+        foreach (['//evil.example/x', '///evil.example', '/\\/evil.example', '/\\evil.example', '//\\evil.example'] as $path) {
+            $requests = [
+                Request::create('GET', "http://app.test{$path}?token=tok", ['accept' => 'text/html']),
+                Request::fromGlobals(['REQUEST_METHOD' => 'GET', 'HTTP_HOST' => 'app.test', 'REQUEST_URI' => "{$path}?token=tok", 'HTTP_ACCEPT' => 'text/html'], ''),
+            ];
+            foreach ($requests as $request) {
+                $res = $web->handle($request);
+                $this->assertSame(303, $res->status, $path);
+                $location = (string) $res->header('location');
+                $this->assertMatchesRegularExpression('#^/(?![/\\\\])#', $location, "{$path} -> {$location}");
+                $this->assertStringNotContainsString('\\', substr($location, 0, 2), "{$path} -> {$location}");
+            }
+        }
+    }
+
     public function testTheSignInRedirectKeepsTheRestOfTheQueryAsUrlSearchParamsWritesIt(): void
     {
         [, $web] = $this->app();
@@ -281,6 +310,16 @@ final class WebTest extends TestCase
         $this->assertSame(413, $web->handle($unread)->status);
         $form = self::send($web, 'POST', '/cronwatch/jobs/s/silence', self::BEARER + self::FORM, 'for=4h&pad=' . str_repeat('x', Request::MAX_BODY));
         $this->assertSame(413, $form->status);
+        $this->assertStringContainsString('Not silenced', $form->body);
+        $this->assertStringContainsString('The request was too large.', $form->body);
+        // The sign-in form: a body too large is no token at all.
+        $signIn = self::send($web, 'POST', '/cronwatch/signin', self::FORM, 'token=tok&pad=' . str_repeat('x', Request::MAX_BODY));
+        $this->assertSame(401, $signIn->status);
+        $this->assertNull($signIn->header('set-cookie'));
+        // A body just under the cap is read.
+        $fits = self::send($web, 'POST', '/cronwatch/api/jobs/s/silence', self::JSON, json_encode(['for' => '2h', 'pad' => str_repeat('x', Request::MAX_BODY - 32)]));
+        $this->assertSame(200, $fits->status);
+        $cw->unsilence('s');
         // Nothing is read for a caller without the token.
         $stranger = new Request('POST', '/cronwatch/api/jobs/s/silence', '', ['content-type' => 'application/json'], fn () => throw new \LogicException('read'), 'http://app.test');
         $this->assertSame(401, $web->handle($stranger)->status);

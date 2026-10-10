@@ -10,6 +10,7 @@ use Cronwatch\FromEnv;
 use Cronwatch\JobDefinition;
 use Cronwatch\Js;
 use Cronwatch\RunStatus;
+use Cronwatch\Web\Dashboard;
 use Cronwatch\Web\HttpFoundation;
 use Cronwatch\Web\Request;
 use Cronwatch\Web\Response;
@@ -115,7 +116,7 @@ final class Handler
             $this->client->warnNoSecret();
             return self::json(['ok' => false, 'error' => self::NO_SECRET], 503);
         }
-        if ($this->secret !== null && !hash_equals("Bearer {$this->secret}", self::authorization($request))) {
+        if ($this->secret !== null && !Dashboard::secretMatches(self::authorization($request), "Bearer {$this->secret}")) {
             return self::json(['ok' => false, 'error' => 'Unauthorized'], 401);
         }
         return null;

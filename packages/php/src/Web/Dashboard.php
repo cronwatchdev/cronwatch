@@ -332,7 +332,7 @@ final class Dashboard
         // the URL and every access log. Cross-site posts were refused above.
         if ($this->token !== null && $method === 'POST' && $path === '/signin') {
             $sent = $request->bodyTooLarge() ? null : (self::readBody($request)['token'] ?? null);
-            if (!is_string($sent) || !hash_equals($this->token, $sent)) {
+            if (!is_string($sent) || !self::secretMatches($sent, $this->token)) {
                 return $this->signInPage($base);
             }
             return self::redirect(self::signInReturn($request->header('referer'), $publicOrigin, $base), ['set-cookie' => $this->signInCookie($publicOrigin, $base)]);
@@ -343,13 +343,13 @@ final class Dashboard
             $query = $wantsHtml && $method === 'GET' ? $request->param('token') : null;
             $sent = self::readCookie($request, self::COOKIE);
             $secret = $cw->cronSecret;
-            $cronSecretOk = $path === '/api/check' && $bearer !== null && $secret !== null && hash_equals($secret, $bearer);
+            $cronSecretOk = $path === '/api/check' && $bearer !== null && $secret !== null && self::secretMatches($bearer, $secret);
             if ($bearer !== null) {
-                $tokenOk = hash_equals($this->token, $bearer);
+                $tokenOk = self::secretMatches($bearer, $this->token);
             } elseif ($query !== null) {
-                $tokenOk = hash_equals($this->token, $query);
+                $tokenOk = self::secretMatches($query, $this->token);
             } else {
-                $tokenOk = $sent !== null && hash_equals(self::cookieValue($this->token), $sent);
+                $tokenOk = $sent !== null && self::secretMatches($sent, self::cookieValue($this->token));
             }
             if (!$cronSecretOk && !$tokenOk) {
                 if ($wantsHtml) {
@@ -365,7 +365,10 @@ final class Dashboard
                 // an access log, which is why the sign-in form posts instead.
                 $rest = array_filter($request->params(), fn (array $pair) => $pair[0] !== 'token');
                 $search = $rest === [] ? '' : '?' . implode('&', array_map(fn (array $pair) => Request::formEncode($pair[0]) . '=' . Request::formEncode($pair[1]), $rest));
-                return self::redirect($request->path . $search, ['set-cookie' => $this->signInCookie($publicOrigin, $base)]);
+                // One leading slash: "//host/..." or "/\host/..." would be a
+                // protocol-relative Location (browsers read \ as /), off this site.
+                $path = (string) preg_replace('#^[/\\\\]+#', '/', $request->path);
+                return self::redirect($path . $search, ['set-cookie' => $this->signInCookie($publicOrigin, $base)]);
             }
         }
 
@@ -541,6 +544,31 @@ final class Dashboard
             $lanes[] = ['job' => $entry->job, 'runs' => $deeper, 'complete' => count($deeper) < Timeline::BOARD_RUNS];
         }
         return $lanes;
+    }
+
+    /**
+     * Whether what a request `sent` is the `secret`, compared without
+     * stopping at the first differing byte and in time that depends only on
+     * the length of what was sent, so neither the secret's bytes nor its
+     * length can be timed (hash_equals() answers at once when the lengths
+     * differ). Every byte sent is compared with the secret's byte at the same
+     * place, repeating it past its end, and a length that differs counts as a
+     * difference.
+     *
+     * @internal For the dashboard, the handler, and the framework integrations.
+     */
+    public static function secretMatches(string $sent, #[\SensitiveParameter] string $secret): bool
+    {
+        $length = strlen($secret);
+        if ($length === 0) {
+            return $sent === '';
+        }
+        $sentLength = strlen($sent);
+        $diff = $sentLength ^ $length;
+        for ($i = 0; $i < $sentLength; $i++) {
+            $diff |= ord($sent[$i]) ^ ord($secret[$i % $length]);
+        }
+        return $diff === 0;
     }
 
     /** The cookie holds a digest of the token, so a leaked cookie does not reveal the bearer token itself. */
