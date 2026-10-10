@@ -238,7 +238,7 @@ test("without a token outside development the routes are locked", async () => {
 });
 
 test("without a token in development, a made-up token is printed once and required from everyone", async () => {
-  for (const env of ["development", "test"]) {
+  for (const env of ["development", " Development\n"]) {
     await withEnv({ NODE_ENV: env, CRONWATCH_TOKEN: undefined }, async () => {
       const cw = cronwatch({ alerts: [capture()], cronSecret: null });
       const routes = cw.routes({ basePath: "/cronwatch/" });

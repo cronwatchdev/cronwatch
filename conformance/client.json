@@ -717,5 +717,189 @@
         }
       }
     ]
-  }
+  },
+  "environment": [
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": null,
+      "environment": "",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": "",
+      "APP_ENV": " ",
+      "native": "\t",
+      "environment": "",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "development",
+      "environment": "development",
+      "development": true,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": " Development\n",
+      "environment": "development",
+      "development": true,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "dev",
+      "environment": "dev",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "local",
+      "environment": "local",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "test",
+      "environment": "test",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "testing",
+      "environment": "testing",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": "local",
+      "native": "production",
+      "environment": "local",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": "test",
+      "native": "development",
+      "environment": "test",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": "production",
+      "APP_ENV": null,
+      "native": "development",
+      "environment": "production",
+      "development": false,
+      "production": true
+    },
+    {
+      "CRONWATCH_ENV": "development",
+      "APP_ENV": "production",
+      "native": null,
+      "environment": "development",
+      "development": true,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": " ",
+      "APP_ENV": "development",
+      "native": "production",
+      "environment": "development",
+      "development": true,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": "prod",
+      "native": null,
+      "environment": "production",
+      "development": false,
+      "production": true
+    },
+    {
+      "CRONWATCH_ENV": "PROD",
+      "APP_ENV": null,
+      "native": null,
+      "environment": "production",
+      "development": false,
+      "production": true
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": null,
+      "native": "staging",
+      "environment": "staging",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": null,
+      "APP_ENV": "dev",
+      "native": null,
+      "environment": "dev",
+      "development": false,
+      "production": false
+    },
+    {
+      "CRONWATCH_ENV": "dev",
+      "APP_ENV": null,
+      "native": null,
+      "environment": "dev",
+      "development": false,
+      "production": false
+    }
+  ],
+  "secrets": [
+    {
+      "value": "",
+      "secret": null
+    },
+    {
+      "value": " ",
+      "secret": null
+    },
+    {
+      "value": "\n",
+      "secret": null
+    },
+    {
+      "value": "s3cret",
+      "secret": "s3cret"
+    },
+    {
+      "value": " s3cret",
+      "secret": "s3cret"
+    },
+    {
+      "value": "s3cret\n",
+      "secret": "s3cret"
+    },
+    {
+      "value": "\ts3 cret \r\n",
+      "secret": "s3 cret"
+    },
+    {
+      "value": " s3cret ",
+      "secret": "s3cret"
+    },
+    {
+      "value": "﻿s3cret",
+      "secret": "s3cret"
+    }
+  ]
 }

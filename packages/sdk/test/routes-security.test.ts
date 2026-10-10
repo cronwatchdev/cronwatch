@@ -273,11 +273,28 @@ test("a CRONWATCH_TOKEN or token of only whitespace counts as unset, so the rout
     const routes = cronwatch({ alerts: [capture()], cronSecret: null }).routes({ token: "  " });
     assert.equal((await routes.GET(new Request("http://app.test/cronwatch/api/jobs", { headers: { authorization: "Bearer from-env" } }))).status, 200);
   });
-  // Anything else is used as it is, spaces and all.
-  await withEnv({ ...PRODUCTION, CRONWATCH_TOKEN: " padded " }, async () => {
-    const routes = cronwatch({ alerts: [capture()], cronSecret: null }).routes();
-    assert.equal((await routes.GET(new Request("http://app.test/cronwatch/?token=%20padded%20"))).status, 303);
-  });
+  // Anything else is trimmed, so a value read from a file with a trailing
+  // newline still matches the header a client sends, which HTTP trims.
+  for (const padded of [" padded ", "padded\n"]) {
+    await withEnv({ ...PRODUCTION, CRONWATCH_TOKEN: padded }, async () => {
+      for (const routes of [cronwatch({ alerts: [capture()], cronSecret: null }).routes(), cronwatch({ alerts: [capture()], cronSecret: null }).routes({ token: padded })]) {
+        assert.equal((await routes.GET(new Request("http://app.test/cronwatch/api/jobs", { headers: { authorization: "Bearer padded" } }))).status, 200);
+        assert.equal((await routes.GET(new Request("http://app.test/cronwatch/?token=padded"))).status, 303);
+      }
+    });
+  }
+});
+
+test("a dev, local, test, or testing environment is not development: no token of its own, and a handler with no secret refuses", async () => {
+  for (const values of [{ NODE_ENV: "test" }, { APP_ENV: "local" }, { APP_ENV: "dev" }, { CRONWATCH_ENV: "testing" }]) {
+    await withEnv({ ...PRODUCTION, NODE_ENV: undefined, ...values, CRONWATCH_TOKEN: undefined, CRON_SECRET: undefined }, async () => {
+      const cw = cronwatch({ alerts: [capture()] });
+      const label = JSON.stringify(values);
+      assert.equal((await cw.routes().GET(new Request("http://localhost:3000/cronwatch/api/jobs"))).status, 503, label);
+      const handler = cw.job("nightly").handler(() => "ran");
+      assert.equal((await handler(new Request("http://localhost:3000/api/cron/nightly"))).status, 503, label);
+    });
+  }
 });
 
 test("a token given in code that is not a string or null throws, so it never becomes a password", () => {

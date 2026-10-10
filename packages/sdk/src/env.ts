@@ -8,48 +8,60 @@ export function readEnv(name: string): string | undefined {
 }
 
 /**
- * A secret from the environment (CRONWATCH_TOKEN, CRON_SECRET): undefined
- * when the variable is unset, empty, or only whitespace (as
- * String.prototype.trim sees it), so a blank value counts as not set and the
- * routes and handlers fail closed. Any other value is used as it is, untrimmed.
+ * A secret from the environment (CRONWATCH_TOKEN, CRON_SECRET), trimmed (as
+ * String.prototype.trim trims): a value read from a file often ends in a
+ * newline that no header can carry, since HTTP strips the whitespace around
+ * a header's value. Undefined when the variable is unset, empty, or only
+ * whitespace, so a blank value counts as not set and the routes and handlers
+ * fail closed.
  */
 export function readSecretEnv(name: string): string | undefined {
-  const value = readEnv(name);
-  return value === undefined || value.trim() === "" ? undefined : value;
+  const value = readEnv(name)?.trim();
+  return value === undefined || value === "" ? undefined : value;
 }
 
 /**
  * A token or secret passed in code: a string, null (the opt-out), or
- * undefined (not given). A string that is empty or only whitespace counts as
- * not given. Anything else (false, a number, an object) throws a TypeError
- * naming the option, so it never becomes a password.
+ * undefined (not given). A string is trimmed, as readSecretEnv() trims, and
+ * one that is empty or only whitespace counts as not given. Anything else
+ * (false, a number, an object) throws a TypeError naming the option, so it
+ * never becomes a password.
  */
 export function secretOption(value: unknown, what: string): string | null | undefined {
   if (value === undefined || value === null) return value;
   if (typeof value !== "string") {
     throw new TypeError(`${what} must be a string, or null to opt out, not ${Array.isArray(value) ? "an array" : typeof value}`);
   }
-  return value.trim() === "" ? undefined : value;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 /**
- * The environment's name, as every CronWatch library reads it: the first of
- * CRONWATCH_ENV, APP_ENV, and NODE_ENV that holds more than spaces, trimmed
- * and lowercased, with "prod" read as "production" and "dev", "local",
- * "test", and "testing" as "development"; "" when none is set, which is not
- * development. The variables are written out in full so that bundlers which
+ * The environment's name from the values of the variables that name it, in
+ * order, as every CronWatch library reads it: the first that holds more than
+ * whitespace, trimmed and lowercased, with "prod" read as "production"; ""
+ * when none is set. Only "development" itself is development: a "dev",
+ * "local", "test", or "testing" set for another tool is not, so nothing but
+ * an explicit setting makes a token of its own or runs a handler with no
+ * secret.
+ */
+export function environmentOf(values: readonly (string | undefined)[]): string {
+  for (const value of values) {
+    const name = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (name === "") continue;
+    return name === "prod" ? "production" : name;
+  }
+  return "";
+}
+
+/**
+ * The environment's name (environmentOf) from CRONWATCH_ENV, APP_ENV, and
+ * NODE_ENV. The variables are written out in full so that bundlers which
  * inline process.env.NODE_ENV still can.
  */
 export function environment(): string {
   if (typeof process === "undefined" || !process.env) return "";
-  for (const value of [process.env.CRONWATCH_ENV, process.env.APP_ENV, process.env.NODE_ENV]) {
-    const name = typeof value === "string" ? value.trim().toLowerCase() : "";
-    if (name === "") continue;
-    if (name === "prod") return "production";
-    if (name === "dev" || name === "local" || name === "test" || name === "testing") return "development";
-    return name;
-  }
-  return "";
+  return environmentOf([process.env.CRONWATCH_ENV, process.env.APP_ENV, process.env.NODE_ENV]);
 }
 
 /** Development makes a dashboard token of its own and lets a handler with no secret run. */

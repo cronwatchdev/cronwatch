@@ -24,15 +24,17 @@ test("the environment is the first of CRONWATCH_ENV, APP_ENV, and NODE_ENV that 
   const cases: [Partial<Record<(typeof NAMES)[number], string>>, string][] = [
     [{}, ""],
     [{ NODE_ENV: "development" }, "development"],
-    [{ NODE_ENV: "test" }, "development"],
+    [{ NODE_ENV: "test" }, "test"],
     [{ NODE_ENV: "production" }, "production"],
-    [{ APP_ENV: "local", NODE_ENV: "production" }, "development"],
+    [{ APP_ENV: "local", NODE_ENV: "production" }, "local"],
     [{ CRONWATCH_ENV: "production", APP_ENV: "dev", NODE_ENV: "development" }, "production"],
     [{ CRONWATCH_ENV: "staging", NODE_ENV: "development" }, "staging"],
-    // Trimmed and lowercased; "prod" is production; dev, local, test, and testing are development.
+    // Trimmed and lowercased; "prod" is production. Only "development" itself is development:
+    // a dev, local, test, or testing set for another tool is not.
     [{ CRONWATCH_ENV: "  PROD " }, "production"],
-    [{ APP_ENV: "Testing" }, "development"],
-    [{ APP_ENV: "DEV" }, "development"],
+    [{ APP_ENV: "Testing" }, "testing"],
+    [{ APP_ENV: " Development " }, "development"],
+    [{ APP_ENV: "DEV" }, "dev"],
     // Empty or only spaces counts as unset, so the next one is read.
     [{ CRONWATCH_ENV: "", APP_ENV: "   ", NODE_ENV: "production" }, "production"],
     [{ CRONWATCH_ENV: " \t" }, ""],

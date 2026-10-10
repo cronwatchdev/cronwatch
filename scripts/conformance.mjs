@@ -24,6 +24,7 @@ import { discord } from "../packages/sdk/dist/discord.js";
 import { webhook } from "../packages/sdk/dist/webhook.js";
 import { anthropic } from "../packages/sdk/dist/anthropic.js";
 import { formatDuration, formatRelative } from "../packages/sdk/src/duration.ts";
+import { environmentOf, secretOption } from "../packages/sdk/src/env.ts";
 import { expectation, nextFire, parseSchedule, runCovers } from "../packages/sdk/src/schedule.ts";
 import {
   alertKey,
@@ -1814,7 +1815,32 @@ async function foreignRowCases() {
  * stored data it does not know (unknownFields).
  */
 async function clientCases() {
-  return { runIds: await runIdCases(), unknownFields: await unknownFieldCases() };
+  return { runIds: await runIdCases(), unknownFields: await unknownFieldCases(), environment: environmentCases(), secrets: secretCases() };
+}
+
+/**
+ * The environment's name from the variables that name it, in each library's
+ * order: CRONWATCH_ENV, APP_ENV, then the language's own (NODE_ENV here,
+ * `native` in the cases). Only "development" itself is development; "prod"
+ * is production.
+ */
+function environmentCases() {
+  const values = [
+    [undefined, undefined, undefined], ["", " ", "\t"], [undefined, undefined, "development"], [undefined, undefined, " Development\n"],
+    [undefined, undefined, "dev"], [undefined, undefined, "local"], [undefined, undefined, "test"], [undefined, undefined, "testing"],
+    [undefined, "local", "production"], [undefined, "test", "development"], ["production", undefined, "development"],
+    ["development", "production", undefined], [" ", "development", "production"], [undefined, "prod", undefined], ["PROD", undefined, undefined],
+    [undefined, undefined, "staging"], [undefined, "dev", undefined], ["dev", undefined, undefined],
+  ];
+  return values.map(([cronwatchEnv, appEnv, native]) => {
+    const name = environmentOf([cronwatchEnv, appEnv, native]);
+    return { CRONWATCH_ENV: cronwatchEnv ?? null, APP_ENV: appEnv ?? null, native: native ?? null, environment: name, development: name === "development", production: name === "production" };
+  });
+}
+
+/** A token or secret, from the environment or passed in code, as it is used: trimmed, and null when blank. */
+function secretCases() {
+  return ["", " ", "\n", "s3cret", " s3cret", "s3cret\n", "\ts3 cret \r\n", " s3cret ", "﻿s3cret"].map((value) => ({ value, secret: secretOption(value, "secret") ?? null }));
 }
 
 /**

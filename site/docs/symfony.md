@@ -222,4 +222,4 @@ when@test:
         store: memory
 ```
 
-The kernel's environment stands in for `APP_ENV`, so `test` and `dev` count as development: the in-memory store does not warn, and the dashboard with no token makes one of its own and writes its sign-in link to PHP's error log (the terminal running `symfony serve`), for a visitor the role does not let in.
+The kernel's environment stands in for `APP_ENV`. `test` and `dev` are not production, so the in-memory store does not warn, and they are not development either: only an explicit `CRONWATCH_ENV=development` makes the dashboard with no token make one of its own and write its sign-in link to PHP's error log (the terminal running `symfony serve`), for a visitor the role does not let in.
