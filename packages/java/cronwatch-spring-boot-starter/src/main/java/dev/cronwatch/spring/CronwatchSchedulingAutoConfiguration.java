@@ -7,7 +7,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.config.TaskManagementConfigUtils;
 import org.springframework.util.ClassUtils;
@@ -24,6 +26,8 @@ import org.springframework.util.ClassUtils;
     type = "dev.cronwatch.Cronwatch",
     name = TaskManagementConfigUtils.SCHEDULED_ANNOTATION_PROCESSOR_BEAN_NAME)
 @ConditionalOnProperty(prefix = "cronwatch.scheduled", name = "enabled", matchIfMissing = true)
+@Conditional(OnCronwatchEnabled.class)
+@EnableConfigurationProperties(CronwatchProperties.class)
 public class CronwatchSchedulingAutoConfiguration {
   /** Made by Spring. */
   public CronwatchSchedulingAutoConfiguration() {}

@@ -250,6 +250,56 @@ class SpringWebTest {
   }
 
   @Test
+  void cronwatchEnabledFalseMountsNoDashboard() throws Exception {
+    for (String type : List.of("servlet", "reactive")) {
+      try (Cronwatch cw = Cronwatch.builder().noCronSecret().noShutdownHook().build();
+          ConfigurableApplicationContext context =
+              start(cw, type, "cronwatch.enabled=false", "cronwatch.web.token=tok")) {
+        assertTrue(context.getBeansOfType(dev.cronwatch.web.Routes.class).isEmpty(), type);
+        assertEquals(
+            404,
+            RawHttp.send(
+                    port(context),
+                    "GET",
+                    "/cronwatch/api/jobs",
+                    List.of(Map.entry("authorization", "Bearer tok")),
+                    null)
+                .status(),
+            type);
+      }
+    }
+  }
+
+  @Test
+  void behindATlsProxyTheFormsAreSameOriginAndTheCookieIsSecure() throws Exception {
+    // A TLS-terminating proxy in front, and Spring's own forwarded-header handling, which removes
+    // the X-Forwarded-* headers once it has read them.
+    for (String type : List.of("servlet", "reactive")) {
+      try (Cronwatch cw = Cronwatch.builder().noCronSecret().noShutdownHook().build();
+          ConfigurableApplicationContext context =
+              start(
+                  cw,
+                  type,
+                  "cronwatch.web.token=tok",
+                  "server.forward-headers-strategy=framework")) {
+        RawHttp.Answer signedIn =
+            RawHttp.send(
+                port(context),
+                "POST",
+                "/cronwatch/signin",
+                List.of(
+                    Map.entry("origin", "https://app.test"),
+                    Map.entry("x-forwarded-proto", "https"),
+                    Map.entry("content-type", "application/x-www-form-urlencoded")),
+                "token=tok".getBytes(StandardCharsets.UTF_8));
+        assertEquals(303, signedIn.status(), type + ": " + signedIn.text());
+        String cookie = signedIn.header("set-cookie");
+        assertTrue(cookie != null && cookie.contains("Secure"), type + ": " + cookie);
+      }
+    }
+  }
+
+  @Test
   void theSettingsNeverPrintTheToken() {
     CronwatchWebProperties p = new CronwatchWebProperties();
     String token = "t0k" + "-value";

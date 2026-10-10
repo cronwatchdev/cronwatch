@@ -4,7 +4,9 @@ import dev.cronwatch.Cronwatch;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 
 /**
  * The check, on {@code cronwatch.check-every}, from when the context has started until it stops:
@@ -18,6 +20,8 @@ import org.springframework.context.annotation.Bean;
       CronwatchQuartzAutoConfiguration.class
     })
 @ConditionalOnBean(Cronwatch.class)
+@Conditional(OnCronwatchEnabled.class)
+@EnableConfigurationProperties(CronwatchProperties.class)
 public class CronwatchCheckAutoConfiguration {
   /** Made by Spring. */
   public CronwatchCheckAutoConfiguration() {}
