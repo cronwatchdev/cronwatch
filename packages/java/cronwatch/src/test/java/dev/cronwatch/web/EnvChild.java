@@ -295,15 +295,16 @@ public final class EnvChild {
     }
   }
 
-  /** A token that is not blank is used as it is, untrimmed. */
+  /**
+   * A token that is not blank is trimmed, so one read from a file with a trailing newline still
+   * matches the header a client sends, which HTTP trims.
+   */
   private static void paddedToken() {
     try (Cronwatch cw = client()) {
       Routes routes = cw.routes();
-      assertEquals(" padded ", routes.token());
-      Response res = serve(routes, "http://app.test/cronwatch/?token=%20padded%20", NONE);
+      assertEquals("padded", routes.token());
+      Response res = serve(routes, "http://app.test/cronwatch/?token=padded", NONE);
       assertEquals(303, res.status());
-      Response trimmed = serve(routes, "http://app.test/cronwatch/?token=padded", NONE);
-      assertEquals(401, trimmed.status());
     }
   }
 

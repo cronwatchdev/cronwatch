@@ -8,7 +8,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -125,22 +124,21 @@ public final class Text {
   }
 
   /**
-   * Compares two secrets without stopping at the first character that differs, over their UTF-16
-   * code units as the SDK compares them. Only a difference in length answers early, as the SDK's
-   * does.
+   * Compares what a request {@code sent} with the {@code secret} without stopping at the first
+   * character that differs, and in time that depends only on the length of what was sent, so
+   * neither the secret's characters nor its length can be timed. Every UTF-16 code unit of {@code
+   * sent} is compared, as the SDK compares them, against the secret's unit at the same place
+   * (repeating it past its end), and a length that differs counts as a difference.
    */
-  public static boolean constantTimeEquals(String a, String b) {
-    return MessageDigest.isEqual(units(a), units(b));
-  }
-
-  private static byte[] units(String s) {
-    byte[] out = new byte[s.length() * 2];
-    for (int i = 0; i < s.length(); i++) {
-      char c = s.charAt(i);
-      out[2 * i] = (byte) (c >> 8);
-      out[2 * i + 1] = (byte) c;
+  public static boolean constantTimeEquals(String sent, String secret) {
+    if (secret.isEmpty()) {
+      return sent.isEmpty();
     }
-    return out;
+    int diff = sent.length() ^ secret.length();
+    for (int i = 0; i < sent.length(); i++) {
+      diff |= sent.charAt(i) ^ secret.charAt(i % secret.length());
+    }
+    return diff == 0;
   }
 
   /** Whether every character of {@code s} is one byte, as text read from the wire as Latin-1 is. */

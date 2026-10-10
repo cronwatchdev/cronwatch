@@ -41,8 +41,8 @@ public final class Handler implements Endpoint {
       this.secret = "";
       this.optedOut = true;
     } else if (own != null && !Js.isBlank(own)) {
-      // A blank secret falls back to the client's.
-      this.secret = own;
+      // A blank secret falls back to the client's; one that is not blank is trimmed.
+      this.secret = Js.trim(own);
       this.optedOut = false;
     } else {
       this.secret = Objects.requireNonNullElse(cw.cronSecret(), "");

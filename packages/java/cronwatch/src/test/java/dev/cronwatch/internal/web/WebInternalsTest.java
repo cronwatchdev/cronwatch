@@ -226,6 +226,13 @@ class WebInternalsTest {
     assertFalse(Text.constantTimeEquals("tok", "tok2"));
     assertFalse(Text.constantTimeEquals("é", new String(b("é"), StandardCharsets.ISO_8859_1)));
     assertTrue(Text.constantTimeEquals("é", "é"));
+    // Only what was sent is walked, against the secret repeated: a prefix, a repeat, and a longer
+    // or shorter string are all refused, and an empty secret matches only an empty string.
+    assertFalse(Text.constantTimeEquals("to", "tok"));
+    assertFalse(Text.constantTimeEquals("toktok", "tok"));
+    assertFalse(Text.constantTimeEquals("", "tok"));
+    assertFalse(Text.constantTimeEquals("x", ""));
+    assertTrue(Text.constantTimeEquals("", ""));
   }
 
   @Test

@@ -20,9 +20,10 @@ final class Env {
 
   /**
    * The environment's name, lowercased, or {@code ""} when no variable names one. {@code
-   * development}, {@code dev}, {@code local}, {@code test}, and {@code testing} count as {@code
-   * development} and {@code prod} as {@code production}. An unset environment is not development,
-   * which is the safe reading.
+   * development}, {@code dev}, and {@code local} count as {@code development} and {@code prod} as
+   * {@code production}. An unset environment is not development, which is the safe reading, and
+   * neither are {@code test} and {@code testing}: a test run or CI needs {@code CRON_SECRET} or a
+   * token, as production does.
    */
   static String environment() {
     return environment(null);
@@ -58,9 +59,23 @@ final class Env {
     String v = Js.trim(value).toLowerCase(Locale.ROOT);
     return switch (v) {
       case "prod" -> "production";
-      case "dev", "local", "test", "testing" -> "development";
+      case "dev", "local" -> "development";
       default -> v;
     };
+  }
+
+  /**
+   * A secret, from the environment or given in code, trimmed as JavaScript's {@code trim} trims (a
+   * value read from a file often ends in a newline, which no header can carry, since HTTP strips
+   * the whitespace around a header's value); null when it is null, empty, or only whitespace, so a
+   * blank value counts as not set and the routes and handlers fail closed.
+   */
+  static @Nullable String secret(@Nullable String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = Js.trim(value);
+    return trimmed.isEmpty() ? null : trimmed;
   }
 
   /** A variable's value, or null when it is unset. */

@@ -1121,7 +1121,7 @@ public final class Cronwatch implements AutoCloseable {
       } catch (IllegalArgumentException e) {
         throw CronwatchException.invalid(Objects.requireNonNullElse(e.getMessage(), "retention"));
       }
-      String secret = secretGiven ? cronSecret : Env.read("CRON_SECRET");
+      String secret = Env.secret(secretGiven ? cronSecret : Env.read("CRON_SECRET"));
       boolean optOut = secretGiven && cronSecret == null;
       ErrorHandler handler =
           onError != null

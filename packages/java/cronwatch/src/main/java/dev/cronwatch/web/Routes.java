@@ -122,11 +122,12 @@ public final class Routes implements Endpoint {
     if (optedOut) {
       configured = "";
     } else if (given != null && !Js.isBlank(given)) {
-      configured = given;
+      configured = Js.trim(given);
     } else {
-      // A blank token, given or read, counts as unset; one that is not blank is used untrimmed.
+      // A blank token, given or read, counts as unset; one that is not blank is trimmed, as a
+      // header's value is.
       String read = System.getenv("CRONWATCH_TOKEN");
-      configured = read == null || Js.isBlank(read) ? "" : read;
+      configured = read == null || Js.isBlank(read) ? "" : Js.trim(read);
     }
     // A handler cannot tell a local caller from a remote one (proxies, tunnels, and a server
     // listening on every interface all look alike), so development gets a token too: made here,
@@ -650,7 +651,16 @@ public final class Routes implements Endpoint {
           }
         }
         String search = rest.isEmpty() ? "" : "?" + String.join("&", rest);
-        return redirect(pathname + search, signInCookie(said, base));
+        // One leading slash: "//host/..." would be a protocol-relative Location, off this site, and
+        // so would "/\host", which browsers read the same way. The path's backslashes were read
+        // as slashes already; any left at its start are taken as slashes here too.
+        int slashes = 0;
+        while (slashes < pathname.length()
+            && (pathname.charAt(slashes) == '/' || pathname.charAt(slashes) == '\\')) {
+          slashes++;
+        }
+        String onSite = "/" + pathname.substring(slashes);
+        return redirect(onSite + search, signInCookie(said, base));
       }
     }
 
