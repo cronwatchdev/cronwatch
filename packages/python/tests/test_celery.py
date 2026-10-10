@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -252,7 +253,11 @@ def test_a_lost_workers_run_is_found_whatever_its_task_id(task_id: str) -> None:
     def lost() -> None:
         pass
 
-    watch._begin(lost, task_id)
+    # The run starts in a worker of its own (its context stays there), as a pool process's would.
+    worker = threading.Thread(target=watch._begin, args=(lost, task_id))
+    worker.start()
+    worker.join()
+    assert cronwatch.current() is None
     first = cw.runs("e.lost")[0]
     assert first.status == "running"
     assert not first.id.startswith("pgcron:") and "\x00" not in first.id
