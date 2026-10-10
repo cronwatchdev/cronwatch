@@ -35,6 +35,73 @@ final class ClientConformanceTest extends TestCase
         return self::$fixture ??= Js::parse((string) file_get_contents(self::FILE));
     }
 
+    public function testEverySectionIsReplayed(): void
+    {
+        $this->assertSame(['generatedBy', 'sdkVersion', 'runIds', 'unknownFields', 'environment', 'secrets'], array_keys(get_object_vars(self::fixture())));
+    }
+
+    /** The environment's name, from CRONWATCH_ENV, APP_ENV, and PHP's own variable, WP_ENVIRONMENT_TYPE. */
+    public function testEnvironment(): void
+    {
+        $names = ['CRONWATCH_ENV', 'APP_ENV', 'WP_ENVIRONMENT_TYPE'];
+        $saved = array_map(fn (string $name) => [getenv($name), $_ENV[$name] ?? null, $_SERVER[$name] ?? null], $names);
+        $failures = [];
+        try {
+            foreach (self::fixture()->environment as $i => $c) {
+                $values = [$c->CRONWATCH_ENV, $c->APP_ENV, $c->native];
+                foreach ($names as $j => $name) {
+                    unset($_ENV[$name], $_SERVER[$name]);
+                    putenv($values[$j] === null ? $name : "{$name}={$values[$j]}");
+                }
+                $got = [\Cronwatch\Env::environment(), \Cronwatch\Env::isDevelopment(), \Cronwatch\Env::isProduction()];
+                $want = [$c->environment, $c->development, $c->production];
+                if ($got !== $want || \Cronwatch\Env::environmentOf($values) !== $c->environment) {
+                    $failures[] = "#{$i} " . json_encode($values) . ': expected ' . json_encode($want) . ', got ' . json_encode($got);
+                }
+            }
+        } finally {
+            foreach ($names as $j => $name) {
+                [$env, $inEnv, $inServer] = $saved[$j];
+                putenv($env === false ? $name : "{$name}={$env}");
+                if ($inEnv !== null) {
+                    $_ENV[$name] = $inEnv;
+                }
+                if ($inServer !== null) {
+                    $_SERVER[$name] = $inServer;
+                }
+            }
+        }
+        $this->assertSame([], $failures, implode("\n", $failures));
+    }
+
+    /** CRONWATCH_TOKEN, CRON_SECRET, and tokens and secrets given in code: trimmed as JavaScript trims, and blank is unset. */
+    public function testSecrets(): void
+    {
+        $saved = [getenv('CRON_SECRET'), $_ENV['CRON_SECRET'] ?? null, $_SERVER['CRON_SECRET'] ?? null];
+        $failures = [];
+        try {
+            unset($_ENV['CRON_SECRET'], $_SERVER['CRON_SECRET']);
+            foreach (self::fixture()->secrets as $i => $c) {
+                putenv("CRON_SECRET={$c->value}");
+                $fromEnv = \Cronwatch\Env::secret('CRON_SECRET');
+                $option = \Cronwatch\Env::secretOption($c->value, 'token');
+                $fromOption = $option === '' ? null : $option;
+                if ($fromEnv !== $c->secret || $fromOption !== $c->secret) {
+                    $failures[] = "#{$i} " . json_encode($c->value) . ': expected ' . json_encode($c->secret) . ', got ' . json_encode([$fromEnv, $fromOption]);
+                }
+            }
+        } finally {
+            putenv($saved[0] === false ? 'CRON_SECRET' : "CRON_SECRET={$saved[0]}");
+            if ($saved[1] !== null) {
+                $_ENV['CRON_SECRET'] = $saved[1];
+            }
+            if ($saved[2] !== null) {
+                $_SERVER['CRON_SECRET'] = $saved[2];
+            }
+        }
+        $this->assertSame([], $failures, implode("\n", $failures));
+    }
+
     public function testRunIds(): void
     {
         $failures = [];

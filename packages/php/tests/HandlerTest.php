@@ -199,9 +199,10 @@ final class HandlerTest extends TestCase
         // A blank secret given in code never reads CRON_SECRET.
         putenv('CRON_SECRET=from-env');
         $this->assertNull($this->quiet(['cronSecret' => '  '])->cronSecret);
-        // A secret that is more than whitespace is used untrimmed.
-        putenv('CRON_SECRET= padded ');
-        $this->assertSame(' padded ', $this->quiet(['cronSecret' => FromEnv::Read])->cronSecret);
+        // Anything else is trimmed, as a header's value is.
+        putenv("CRON_SECRET= padded\n");
+        $this->assertSame('padded', $this->quiet(['cronSecret' => FromEnv::Read])->cronSecret);
+        $this->assertSame('padded', $this->quiet(['cronSecret' => "\u{FEFF}padded "])->cronSecret);
     }
 
     /** With CRON_SECRET of only spaces, /api/check takes the token alone: a bearer of spaces is 401. */

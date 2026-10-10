@@ -61,13 +61,13 @@ final class EnvTest extends TestCase
     {
         yield 'none set' => [null, null, null, 'none'];
         yield 'own development' => [null, null, 'development', 'development'];
-        yield 'own test' => [null, null, 'test', 'development'];
+        yield 'own test is neither' => [null, null, 'test', 'neither'];
         yield 'own production' => [null, null, 'production', 'production'];
         yield 'APP_ENV before own' => [null, 'local', 'production', 'development'];
         yield 'CRONWATCH_ENV first' => ['production', 'dev', 'development', 'production'];
         yield 'staging is neither' => ['staging', null, 'development', 'neither'];
         yield 'trimmed and lowercased' => ['  PROD ', null, null, 'production'];
-        yield 'Testing' => [null, 'Testing', null, 'development'];
+        yield 'Testing is neither' => [null, 'Testing', null, 'neither'];
         yield 'DEV' => [null, 'DEV', null, 'development'];
         yield 'empty and blank are unset' => ['', '   ', 'production', 'production'];
         yield 'blank alone is none' => [" \t", null, null, 'none'];
@@ -82,7 +82,7 @@ final class EnvTest extends TestCase
         $read = match (true) {
             Env::isDevelopment() => 'development',
             Env::isProduction() => 'production',
-            Env::environment() === null => 'none',
+            Env::environment() === '' => 'none',
             default => 'neither',
         };
         $this->assertSame($expected, $read);
@@ -93,5 +93,13 @@ final class EnvTest extends TestCase
         self::set('APP_ENV', '  ');
         Env::setFallback(fn () => ' Local ');
         $this->assertTrue(Env::isDevelopment());
+        // A framework's name goes through the same reading: Symfony's dev is development, Laravel's testing is not.
+        Env::setFallback(fn () => 'dev');
+        $this->assertSame('development', Env::environment());
+        Env::setFallback(fn () => 'testing');
+        $this->assertSame('testing', Env::environment());
+        $this->assertFalse(Env::isDevelopment());
+        Env::setFallback(fn () => 'prod');
+        $this->assertTrue(Env::isProduction());
     }
 }

@@ -13,9 +13,10 @@ namespace Cronwatch;
  * .env file put its values in one of those; failing those, what a framework
  * integration names with setFallback() (the WordPress plugin gives
  * wp_get_environment_type(), which also reads the constant of that name).
- * "development", "dev", "local", "test", and "testing" are development (the
- * SDK's NODE_ENV "development" and "test", and Laravel's and Symfony's own
- * names); "production" and "prod" are production.
+ * "development", "dev", and "local" are development (Symfony's "dev" and
+ * Laravel's "local" included); "production" and "prod" are production;
+ * anything else ("test", "testing", "staging") is neither, so a test run or
+ * CI needs CRON_SECRET or a token, as production does.
  *
  * It decides whether the in-memory store warns that it forgets, and whether
  * the dashboard makes a development token when none is configured.
@@ -53,45 +54,49 @@ final class Env
 
     /**
      * A secret from the environment (CRONWATCH_TOKEN, CRON_SECRET), from the
-     * first of getenv(), $_ENV, and $_SERVER that holds one, or null. A value
-     * that is empty or only whitespace (as JavaScript's trim() sees it), or
-     * one of the words Laravel's env() reads as null, true, false, or empty,
-     * counts as unset, so the dashboard and handlers fail closed. Any other
-     * value is used as it is, untrimmed.
+     * first of getenv(), $_ENV, and $_SERVER that holds one, trimmed (as
+     * JavaScript's trim() trims: a value read from a file often ends in a
+     * newline that no header can carry, since HTTP strips the whitespace
+     * around a header's value), or null. A value that is empty or only
+     * whitespace, or one of the words Laravel's env() reads as null, true,
+     * false, or empty, counts as unset, so the dashboard and handlers fail
+     * closed.
      */
     public static function secret(string $name): ?string
     {
         $value = getenv($name);
-        if (is_string($value) && self::secretText($value) !== null) {
-            return $value;
+        if (is_string($value) && ($text = self::secretText($value)) !== null) {
+            return $text;
         }
         foreach ([$_ENV, $_SERVER] as $source) {
-            if (isset($source[$name]) && is_string($source[$name]) && self::secretText($source[$name]) !== null) {
-                return $source[$name];
+            if (isset($source[$name]) && is_string($source[$name]) && ($text = self::secretText($source[$name])) !== null) {
+                return $text;
             }
         }
         return null;
     }
 
     /**
-     * A secret's text as given, or null when it counts as unset: empty, only
-     * whitespace, or one of the words Laravel's env() reads as null, true,
-     * false, or empty (see secret()). For a framework integration reading its
-     * own config before it falls back to the environment.
+     * A secret's text, trimmed as secret() trims it, or null when it counts
+     * as unset: empty, only whitespace, or one of the words Laravel's env()
+     * reads as null, true, false, or empty (see secret()). For a framework
+     * integration reading its own config before it falls back to the
+     * environment.
      */
     public static function secretText(?string $value): ?string
     {
-        if ($value === null || self::blank($value) || in_array(strtolower($value), self::NOT_A_SECRET, true)) {
+        $text = $value === null ? '' : Js::trim($value);
+        if ($text === '' || in_array(strtolower($text), self::NOT_A_SECRET, true)) {
             return null;
         }
-        return $value;
+        return $text;
     }
 
     /**
      * A token or secret given in code: a string, null (the opt-out), false
-     * (the deprecated opt-out, until 2.0) or FromEnv::Read. A string that is
-     * empty or only whitespace comes back as "", which each option reads as
-     * not given. Anything else (true, a number, an array, an object) throws
+     * (the deprecated opt-out, until 2.0) or FromEnv::Read. A string is
+     * trimmed, as secret() trims, and one that is empty or only whitespace
+     * comes back as "", which each option reads as not given. Anything else (true, a number, an array, an object) throws
      * a TypeError naming the option, so it never becomes a password, as a
      * caller without strict_types would otherwise make 5 the password "5".
      */
@@ -109,7 +114,7 @@ final class Env
             };
             throw new \TypeError("{$what} must be a string, or null to opt out, not {$type}");
         }
-        return self::blank($value) ? '' : $value;
+        return Js::trim($value);
     }
 
     /** Whether text is empty or only whitespace, as JavaScript's trim() sees it. */
@@ -124,33 +129,57 @@ final class Env
         self::$fallback = $read === null ? null : \Closure::fromCallable($read);
     }
 
-    public static function environment(): ?string
+    /**
+     * The environment's name from the values that name it, in order, as every
+     * CronWatch library reads it: the first that holds more than whitespace,
+     * trimmed and lowercased, with "prod" read as "production" and "dev" and
+     * "local" as "development"; "" when none is set. "test" and "testing" are
+     * not development: a test run or CI needs CRON_SECRET or a token, as
+     * production does.
+     *
+     * @param list<mixed> $values
+     */
+    public static function environmentOf(array $values): string
     {
-        foreach (self::VARIABLES as $name) {
-            // A value of only spaces counts as unset, and the next one is read.
-            $value = Js::trim((string) self::read($name));
-            if ($value !== '') {
-                return strtolower($value);
+        foreach ($values as $value) {
+            $name = is_string($value) ? strtolower(Js::trim($value)) : '';
+            if ($name === '') {
+                continue;
             }
+            return match ($name) {
+                'prod' => 'production',
+                'dev', 'local' => 'development',
+                default => $name,
+            };
         }
+        return '';
+    }
+
+    /**
+     * The environment's name (environmentOf) from CRONWATCH_ENV, APP_ENV, and
+     * WP_ENVIRONMENT_TYPE, and failing those what the framework names (see
+     * setFallback()); "" when nothing does.
+     */
+    public static function environment(): string
+    {
+        $values = array_map(self::read(...), self::VARIABLES);
         if (self::$fallback !== null) {
             try {
-                $value = (self::$fallback)();
+                $values[] = (self::$fallback)();
             } catch (\Throwable) {
-                return null;
+                // A fallback that throws names nothing.
             }
-            return is_string($value) && Js::trim($value) !== '' ? strtolower(Js::trim($value)) : null;
         }
-        return null;
+        return self::environmentOf($values);
     }
 
     public static function isProduction(): bool
     {
-        return in_array(self::environment(), ['production', 'prod'], true);
+        return self::environment() === 'production';
     }
 
     public static function isDevelopment(): bool
     {
-        return in_array(self::environment(), ['development', 'dev', 'local', 'test', 'testing'], true);
+        return self::environment() === 'development';
     }
 }
