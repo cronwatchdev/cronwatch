@@ -7,11 +7,14 @@ package cronwatch_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	cronwatch "cronwatch.dev/go"
 )
@@ -283,4 +286,58 @@ func TestHandlerThroughAServer(t *testing.T) {
 	eq(t, "status", res.StatusCode, 200)
 	eq(t, "body", string(body), "started\ndone\n")
 	eq(t, "ok", runs(t, k.cw, "served")[0].Status, cronwatch.StatusOK)
+}
+
+// A caller that hangs up mid-run leaves the job running to its end and
+// recorded as it went, as the SDK's handler does on Node.
+func TestHandlerJobOutlivesACallerThatHangsUp(t *testing.T) {
+	secret := "s3" + "cret"
+	k := newKit(t, cronwatch.WithCronSecret(secret))
+	job := must[*cronwatch.Job](t)(k.cw.Job("nightly"))
+	type key struct{}
+	started, finished := make(chan struct{}), make(chan error, 1)
+	h := job.Handler(func(ctx context.Context, j *cronwatch.JobContext, w http.ResponseWriter, r *http.Request) error {
+		close(started)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+			finished <- errors.New("the request was never cancelled")
+			return nil
+		}
+		if ctx.Err() != nil {
+			finished <- fmt.Errorf("the job's context ended with the request: %w", ctx.Err())
+			return nil
+		}
+		if ctx.Value(key{}) != "kept" {
+			finished <- errors.New("the request's values were lost")
+			return nil
+		}
+		finished <- nil
+		return nil
+	})
+	server := httptest.NewUnstartedServer(h)
+	server.Config.BaseContext = func(net.Listener) context.Context { return context.WithValue(context.Background(), key{}, "kept") }
+	server.Start()
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := must[*http.Request](t)(http.NewRequestWithContext(ctx, "POST", server.URL, nil))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	go func() {
+		<-started
+		cancel()
+	}()
+	if res, err := http.DefaultClient.Do(req); err == nil {
+		res.Body.Close()
+		t.Fatal("the caller hung up before the answer")
+	}
+	select {
+	case err := <-finished:
+		check(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("the job never finished")
+	}
+	waitFor(t, "the run recorded", func() bool {
+		list := runs(t, k.cw, "nightly")
+		return len(list) == 1 && list[0].Status == cronwatch.StatusOK
+	})
 }

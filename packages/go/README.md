@@ -169,7 +169,7 @@ Everything needs the token: send it as `Authorization: Bearer <token>`, or open 
 
 ## Platform crons
 
-`job.Handler(fn)` is a job as an `http.Handler`, for a cron that calls a URL (Cloud Scheduler, Vercel, a crontab line running curl). A request must carry `Authorization: Bearer <CRON_SECRET>`; each one runs the function as a recorded run and is answered with how it went.
+`job.Handler(fn)` is a job as an `http.Handler`, for a cron that calls a URL (Cloud Scheduler, Vercel, a crontab line running curl). A request must carry `Authorization: Bearer <CRON_SECRET>`; each one runs the function as a recorded run and is answered with how it went. A caller that hangs up first leaves the job running to its end; only the job's timeout stops it.
 
 ```go
 mux.Handle("POST /api/cron/nightly", nightly.Handler(func(ctx context.Context, job *cronwatch.JobContext, w http.ResponseWriter, r *http.Request) error {
