@@ -75,6 +75,7 @@ final class Request
      * place it may be: HTTP_AUTHORIZATION, REDIRECT_HTTP_AUTHORIZATION, and,
      * for $_SERVER itself, getallheaders().
      *
+     * @internal For Job\Handler.
      * @param array<string, mixed> $server
      */
     public static function authorizationIn(array $server): string
