@@ -386,7 +386,7 @@ module Cronwatch
   # when there are none. An open condition this version does not know stays
   # in `open` the same way, under its own name.
   JobState = Struct.new(:job, :open, :consecutive_failures, :silenced_until, :last_alert_at, :pending_recovery,
-                        :undelivered, :version, :sending, :under_floor, :extra, keyword_init: true) do
+                        :undelivered, :version, :sending, :under_floor, :pending_runs, :extra, keyword_init: true) do
     include Serializable
 
     def self.from_h(hash)
@@ -398,6 +398,7 @@ module Cronwatch
       undelivered = Naming.fetch(hash, "undelivered")
       sending = Naming.fetch(hash, "sending")
       under_floor = Naming.fetch(hash, "underFloor")
+      pending_runs = Naming.fetch(hash, "pendingRuns")
       extra = hash.each_with_object({}) { |(k, v), out| out[k.to_s] = v unless JobState::KNOWN.include?(k.to_s) }
       new(
         extra: extra.empty? ? nil : extra,
@@ -411,6 +412,7 @@ module Cronwatch
         version: Naming.fetch(hash, "version"),
         sending: sending.is_a?(Array) ? sending.map { |entry| JobState.sending_entry(entry) } : sending,
         under_floor: under_floor,
+        pending_runs: pending_runs,
       )
     end
 
@@ -436,8 +438,8 @@ module Cronwatch
 
     # pendingRecovery, undelivered, and version are left out when unset, as in
     # state written before they existed. The version comes after them, where
-    # the SDK's spread of a normalized state puts it, then `sending` and
-    # `underFloor`, each only while it holds an entry.
+    # the SDK's spread of a normalized state puts it, then `sending`,
+    # `underFloor`, and `pendingRuns`, each only while it holds an entry.
     def to_h
       out = {
         "job" => job, "open" => open.is_a?(Hash) ? open.transform_keys(&:to_s) : (open || {}),
@@ -457,6 +459,7 @@ module Cronwatch
         end
       end
       out["underFloor"] = under_floor.dup if under_floor.is_a?(Array) && !under_floor.empty?
+      out["pendingRuns"] = pending_runs.dup if pending_runs.is_a?(Array) && !pending_runs.empty?
       extra&.each { |key, value| out[key] = value unless out.key?(key) || JobState::KNOWN.include?(key) }
       out
     end
@@ -464,7 +467,8 @@ module Cronwatch
 
   # The fields this version reads from a stored state; the rest are kept in `extra`.
   # @api private
-  JobState::KNOWN = %w[job open consecutiveFailures silencedUntil lastAlertAt pendingRecovery undelivered version sending underFloor].freeze
+  JobState::KNOWN = %w[job open consecutiveFailures silencedUntil lastAlertAt pendingRecovery undelivered version sending underFloor
+                         pendingRuns].freeze
 
   JobStats = Struct.new(:runs, :ok_rate, :p50_ms, :p95_ms, keyword_init: true) do
     include Serializable

@@ -239,14 +239,9 @@ class ConformanceTest < Minitest::Test
     end
 
     def settle(previous, evaluation, now)
-      state = evaluation.state
-      alerts = evaluation.alerts
-      if Cronwatch::Evaluate.silenced?(previous, now)
-        state = Cronwatch::Evaluate.mute_opens(previous, state)
-        alerts = []
-      end
-      @state = state
-      alerts.map { |draft| Cronwatch::Format.compose_alert(draft, @def, now).to_h }
+      settled = Cronwatch::Evaluate.apply_silence(previous, evaluation, now)
+      @state = settled.state
+      settled.alerts.map { |draft| Cronwatch::Format.compose_alert(draft, @def, now).to_h }
     end
   end
 
@@ -482,6 +477,31 @@ class ConformanceTest < Minitest::Test
       result = Cronwatch::Evaluate.record_sent(parse_state(c["state"]), alerts_from(c["delivered"]), alerts_from(c["failed"]),
                                                alerts_from(c["stale"]), c["now"])
       differs(canonical(c["result"]), result)
+    end
+  end
+
+  def test_claim_undelivered
+    each_case(DELIVERY["claimUndelivered"]) do |c|
+      r = c["result"]
+      expected = { "state" => parse_state(r["state"]).to_h, "claimed" => alerts_from(r["claimed"]).map(&:to_h),
+                   "stale" => alerts_from(r["stale"]).map(&:to_h) }
+      differs(expected, Cronwatch::Evaluate.claim_undelivered(parse_state(c["state"]), c["now"], c["until"]).to_h)
+    end
+  end
+
+  def test_max_pending_runs_is_the_sdks
+    assert_equal DELIVERY["maxPendingRuns"], Cronwatch::Evaluate::MAX_PENDING_RUNS
+  end
+
+  def test_hold_run
+    each_case(DELIVERY["holdRun"]) do |c|
+      differs(c["result"], Cronwatch::Evaluate.hold_run(parse_state(c["state"]), c["runId"]).to_h)
+    end
+  end
+
+  def test_release_run
+    each_case(DELIVERY["releaseRun"]) do |c|
+      differs(c["result"], Cronwatch::Evaluate.release_run(parse_state(c["state"]), c["runId"]).to_h)
     end
   end
 
