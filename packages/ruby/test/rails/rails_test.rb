@@ -94,11 +94,13 @@ class RailsIntegrationTest < Minitest::Test
     assert_equal "constant", defined?(Cronwatch::Web)
   end
 
-  def test_development_follows_rails_env
+  # Rails.env is read before RAILS_ENV and RACK_ENV; "test" is not development.
+  def test_the_environment_follows_rails_env
     before = [ENV.fetch("RAILS_ENV", nil), ENV.fetch("RACK_ENV", nil)]
-    ENV.delete("RAILS_ENV")
-    ENV.delete("RACK_ENV")
-    assert Cronwatch::Client.development?, "Rails.env is #{Rails.env}"
+    ENV["RAILS_ENV"] = "development"
+    ENV["RACK_ENV"] = "development"
+    assert_equal "test", Cronwatch::Environment.environment, "Rails.env is #{Rails.env}"
+    refute Cronwatch::Client.development?
   ensure
     ENV["RAILS_ENV"], ENV["RACK_ENV"] = before
   end

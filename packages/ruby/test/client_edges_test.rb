@@ -309,7 +309,7 @@ class ClientEdgesTest < Minitest::Test
       _, err = capture_io { Cronwatch.new.jobs }
       assert_match(/using the in-memory store/, err)
     end
-    with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => "test", "RACK_ENV" => "production") do
+    with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => "development", "RACK_ENV" => "production") do
       assert Cronwatch::Client.development?, "RAILS_ENV before RACK_ENV"
     end
     with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => nil, "RACK_ENV" => nil) do
@@ -320,17 +320,19 @@ class ClientEdgesTest < Minitest::Test
 
   # CRONWATCH_ENV, then APP_ENV, then the app's own (RAILS_ENV here, where
   # the SDK's table has NODE_ENV): the first that holds more than spaces,
-  # trimmed, lowercased, with the aliases. env.test.ts's cases.
+  # trimmed, lowercased, with the aliases. env.test.ts's cases: "test" and
+  # "testing" are not development.
   ENVIRONMENTS = [
     [nil, nil, nil, nil],
     [nil, nil, "development", "development"],
-    [nil, nil, "test", "development"],
+    [nil, nil, "test", "test"],
     [nil, nil, "production", "production"],
     [nil, "local", "production", "development"],
     %w[production dev development production],
     ["staging", nil, "development", "staging"],
     ["  PROD ", nil, nil, "production"],
-    [nil, "Testing", nil, "development"],
+    [nil, "Testing", nil, "testing"],
+    [nil, " Development ", nil, "development"],
     [nil, "DEV", nil, "development"],
     ["", "   ", "production", "production"],
     [" \t", nil, nil, nil],
@@ -367,8 +369,11 @@ class ClientEdgesTest < Minitest::Test
         assert Cronwatch::Environment.development?
         refute Cronwatch::Environment.stated_development?
       end
-      with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => nil, "RACK_ENV" => "test") do
+      with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => nil, "RACK_ENV" => "dev") do
         assert Cronwatch::Environment.stated_development?
+      end
+      with_env("CRONWATCH_ENV" => nil, "APP_ENV" => nil, "RAILS_ENV" => nil, "RACK_ENV" => "test") do
+        refute Cronwatch::Environment.stated_development?, "test is not development"
       end
       with_env("CRONWATCH_ENV" => " Dev", "APP_ENV" => nil, "RAILS_ENV" => nil, "RACK_ENV" => "development") do
         assert Cronwatch::Environment.stated_development?
