@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -382,30 +383,52 @@ public final class SchedulerBridge {
   /** How long a sync an integration starts itself may take before it is given up. */
   public static final Duration SYNC_TIMEOUT = Duration.ofSeconds(30);
 
+  /** A sync under way, by client and {@code where}: one at a time of each. */
+  private record SyncKey(Cronwatch cw, String where) {}
+
+  private static final Map<SyncKey, Thread> SYNCING = new ConcurrentHashMap<>();
+
   /**
    * Runs {@code sync} (an integration's declarations, {@link Watch#settle}, and {@link
    * Watch#unschedule}) on a thread of its own and waits at most {@code limit} for it, so a store
    * that hangs never holds the caller (a scheduler's thread) for good. A throw in it, or running
    * past the limit ({@code the sync took longer than 30 seconds; gave up}), is reported to the
-   * client's error handler as {@code where}. Says whether it finished without a throw.
+   * client's error handler as {@code where}; a sync given up is interrupted. While one of the same
+   * client and {@code where} is still under way, another is not started (so syncs given up on a
+   * store that hangs never pile up, nor an older one land after a newer), and that is reported.
+   * Says whether it finished without a throw.
    */
   public static boolean syncWithin(Cronwatch cw, Duration limit, String where, Runnable sync) {
+    SyncKey key = new SyncKey(cw, where);
     CompletableFuture<@Nullable Void> done = new CompletableFuture<>();
-    Thread.ofVirtual()
-        .name("cronwatch-sync")
-        .start(
-            () -> {
-              try {
-                sync.run();
-                done.complete(null);
-              } catch (Throwable t) {
-                done.completeExceptionally(t);
-              }
-            });
+    Thread thread =
+        Thread.ofVirtual()
+            .name("cronwatch-sync")
+            .unstarted(
+                () -> {
+                  try {
+                    sync.run();
+                    done.complete(null);
+                  } catch (Throwable t) {
+                    done.completeExceptionally(t);
+                  } finally {
+                    SYNCING.remove(key, Thread.currentThread());
+                  }
+                });
+    if (SYNCING.putIfAbsent(key, thread) != null) {
+      cw.reportError(
+          new CronwatchException(
+              CronwatchException.Kind.OTHER,
+              "the last sync has not ended yet; this one was skipped"),
+          where);
+      return false;
+    }
+    thread.start();
     try {
       done.get(limit.toMillis(), TimeUnit.MILLISECONDS);
       return true;
     } catch (TimeoutException e) {
+      thread.interrupt();
       cw.reportError(
           new CronwatchException(
               CronwatchException.Kind.OTHER,
