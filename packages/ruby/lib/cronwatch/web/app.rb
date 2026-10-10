@@ -3,6 +3,7 @@
 require "base64"
 require "digest"
 require "securerandom"
+require "stringio"
 require "uri"
 
 module Cronwatch
@@ -259,7 +260,9 @@ module Cronwatch
       # The sign-in form posts the token here, in the body, so it stays out of
       # the URL and every access log. Cross-site posts were refused above.
       if @token && method == "POST" && path == "/signin"
-        sent = read_body(request)["token"]
+        body = read_body(request)
+        # A body too large is no token at all.
+        sent = body.equal?(TOO_LARGE) ? nil : body["token"]
         return sign_in_page(base) if sent.nil? || !HTTP.constant_time_equal?(sent, @token)
 
         return redirect(sign_in_return(request.header("referer"), public_origin(request), base),
@@ -289,7 +292,10 @@ module Cronwatch
           # Move the token from the URL into a cookie, so it is not left in the
           # browser's history. The request line that carried it may still be in
           # an access log, which is why the sign-in form posts instead.
-          return redirect(request.pathname + request.search_without("token"), "set-cookie" => sign_in_cookie(request, base))
+          # One leading slash: "//host/..." would be a protocol-relative Location,
+          # off this site, and a browser reads a backslash there as a slash.
+          return redirect(request.pathname.sub(%r{\A[/\\]+}, "/") + request.search_without("token"),
+                          "set-cookie" => sign_in_cookie(request, base))
         end
       end
 
@@ -330,8 +336,11 @@ module Cronwatch
         return html(HTML.message_page("No such job", "#{name} is not in the store.", base), 404) unless cw.job_summary(name)
 
         if action == "silence"
+          body = read_body(request)
+          return html(HTML.message_page("Not silenced", "The request was too large.", base), 413) if body.equal?(TOO_LARGE)
+
           begin
-            duration = silence_duration(read_body(request)["for"])
+            duration = silence_duration(body["for"])
           rescue ArgumentError => e
             return html(HTML.message_page("Not silenced", e.message, base), 400)
           end
@@ -375,6 +384,8 @@ module Cronwatch
 
         if rest[2] == "silence"
           body = read_body(request)
+          return api({ ok: false, error: "Request body too large" }, 413) if body.equal?(TOO_LARGE)
+
           begin
             duration = silence_duration(body.key?("for") ? body["for"] : request.query("for"))
           rescue ArgumentError => e
@@ -507,17 +518,26 @@ module Cronwatch
       !site.nil? && site != "same-origin" && site != "none"
     end
 
+    # A request body past Request::MAX_BODY, which read_body answers with.
+    TOO_LARGE = Object.new.freeze
+    private_constant :TOO_LARGE
+
     # The form fields or JSON object of a request, each value as String(value)
-    # gives it in JavaScript. The body is read as the SDK's request.json()
-    # reads it: bytes that are not UTF-8 become U+FFFD, and a leading byte
-    # order mark is dropped.
+    # gives it in JavaScript, or TOO_LARGE for a body past Request::MAX_BODY.
+    # The body is read as the SDK's request.json() reads it: bytes that are
+    # not UTF-8 become U+FFFD, and a leading byte order mark is dropped.
     def read_body(request)
       type = request.header("content-type") || ""
-      if type.include?("application/json")
+      json = type.include?("application/json")
+      form = type.include?("application/x-www-form-urlencoded") || type.include?("multipart/form-data")
+      return {} unless json || form
+      return TOO_LARGE if request.too_large?
+
+      if json
         data = JSON.parse(Output.utf8(request.body).delete_prefix("﻿"))
         return data.to_h { |k, v| [k.to_s, js_string(v)] } if data.is_a?(Hash)
         return data.each_with_index.to_h { |v, i| [i.to_s, js_string(v)] } if data.is_a?(Array)
-      elsif type.include?("application/x-www-form-urlencoded") || type.include?("multipart/form-data")
+      else
         return request.form.transform_values { |v| form_value(v) }
       end
       {}
@@ -686,12 +706,24 @@ module Cronwatch
         pairs.empty? ? "" : "?#{URI.encode_www_form(pairs)}"
       end
 
+      # The most of a request body the routes read (1 MiB), as every port's.
+      MAX_BODY = 1 << 20
+
+      # Whether the body is past MAX_BODY: by its Content-Length when that
+      # says more, else by reading one byte past the cap at most, so a client
+      # cannot make the server hold a body of any size. The forms and JSON the
+      # routes take are a few bytes. What was read is left to be read again.
+      def too_large?
+        @too_large = measure_too_large if @too_large.nil?
+        @too_large
+      end
+
       def body
         input = @env["rack.input"]
         return "" unless input
 
         input.rewind if input.respond_to?(:rewind)
-        text = input.read.to_s
+        text = input.read(MAX_BODY + 1).to_s
         input.rewind if input.respond_to?(:rewind)
         text.force_encoding(Encoding::UTF_8)
       end
@@ -703,6 +735,30 @@ module Cronwatch
         fields = @rack.POST
         fields.each_with_object({}) { |(k, v), out| out[Output.utf8(k)] = v }
       end
+
+      private
+
+      def measure_too_large
+        length = @env["CONTENT_LENGTH"].to_s
+        return true if length.match?(/\A\d+\z/) && length.to_i > MAX_BODY
+
+        input = @env["rack.input"]
+        return false unless input
+
+        input.rewind if input.respond_to?(:rewind)
+        read = input.read(MAX_BODY + 1).to_s
+        return true if read.bytesize > MAX_BODY
+
+        # An input that cannot be rewound is handed on as what was read.
+        if input.respond_to?(:rewind)
+          input.rewind
+        else
+          @env["rack.input"] = StringIO.new(read)
+        end
+        false
+      end
+
+      public
 
       # application/x-www-form-urlencoded parsing as URLSearchParams does it:
       # "+" is a space, and a bad escape is kept as written rather than refused.
