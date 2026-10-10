@@ -256,11 +256,12 @@ class WebSecurityTest < Minitest::Test
       web = Cronwatch.new(alerts: [Capture.new], cron_secret: nil).routes(token: "  ", base_path: "/cronwatch")
       assert_equal 200, send_request(web, "GET", "/cronwatch/api/jobs", { "authorization" => "Bearer from-env" }).status
     end
-    # Anything else is used as it is, spaces and all.
-    with_env(PRODUCTION.merge("CRONWATCH_TOKEN" => " padded ")) do
+    # Anything else is trimmed, as a header's value is: a token read from a file keeps no newline.
+    with_env(PRODUCTION.merge("CRONWATCH_TOKEN" => " padded\n")) do
       web = Cronwatch.new(alerts: [Capture.new], cron_secret: nil).routes(base_path: "/cronwatch")
-      assert_equal 303, send_request(web, "GET", "/cronwatch/?token=%20padded%20").status
-      assert_equal 401, send_request(web, "GET", "/cronwatch/?token=padded").status
+      assert_equal 303, send_request(web, "GET", "/cronwatch/?token=padded").status
+      assert_equal 401, send_request(web, "GET", "/cronwatch/?token=%20padded%20").status
+      assert_equal 200, send_request(web, "GET", "/cronwatch/api/jobs", { "authorization" => "Bearer padded" }).status
     end
   end
 
@@ -313,10 +314,11 @@ class WebSecurityTest < Minitest::Test
       web = Cronwatch.new(alerts: [Capture.new]).routes(token: "tok", base_path: "/cronwatch")
       assert_equal 401, send_request(web, "POST", "/cronwatch/api/check", { "authorization" => "Bearer   " }).status
     end
-    # Anything else is used as it is.
-    with_env(PRODUCTION.merge("CRON_SECRET" => " s3cret ")) do
-      assert_equal " s3cret ", Cronwatch.new(alerts: [Capture.new]).cron_secret
+    # Anything else is trimmed, given in the environment or in code.
+    with_env(PRODUCTION.merge("CRON_SECRET" => " s3cret\n")) do
+      assert_equal "s3cret", Cronwatch.new(alerts: [Capture.new]).cron_secret
     end
+    assert_equal "s3cret", Cronwatch.new(alerts: [Capture.new], cron_secret: "\u{feff}s3cret ").cron_secret
   end
 
   def test_a_cron_secret_that_is_not_a_string_or_nil_raises_so_false_or_a_number_never_becomes_a_password

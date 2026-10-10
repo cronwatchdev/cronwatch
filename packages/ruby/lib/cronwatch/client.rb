@@ -81,8 +81,8 @@ module Cronwatch
     # alerts:      where alerts go: objects with #call(alert) and #name. Defaults to the console.
     # triage:      a callable taking a TriageContext and returning a short diagnosis, added to every alert but recoveries.
     # cron_secret: a second bearer Cronwatch::Web accepts for /api/check, for an outside cron. Defaults to
-    #              ENV["CRON_SECRET"]; an empty string or one of only whitespace, given here or in the
-    #              variable, counts as unset. Pass nil for none. Anything but a String or nil (false, a
+    #              ENV["CRON_SECRET"], trimmed of the whitespace around it; an empty string or one of
+    #              only whitespace, given here or in the variable, counts as unset. Pass nil for none. Anything but a String or nil (false, a
     #              number, a Symbol) raises TypeError.
     # retention:   how long finished runs are kept. Default "30d".
     # defaults:    grace, timeout, timezone, and failures_before_alert applied to every job unless it sets its own.

@@ -186,7 +186,7 @@ class WebRoutesTest < Minitest::Test
         end
         assert_empty lines, "no token in the log of what may be production"
       end
-      [{ "APP_ENV" => "development" }, { "RAILS_ENV" => "development" }, { "RACK_ENV" => "test" }].each do |stated|
+      [{ "APP_ENV" => "development" }, { "RAILS_ENV" => "development" }, { "RACK_ENV" => "dev" }].each do |stated|
         with_env({ "RAILS_ENV" => nil, "APP_ENV" => nil, "RACK_ENV" => "development", "CRONWATCH_TOKEN" => nil }.merge(stated)) do
           lines, response = printed { unconfigured(host: "localhost:3000").call("/cronwatch/api/jobs") }
           assert_equal 401, response.status, stated.inspect
@@ -202,7 +202,7 @@ class WebRoutesTest < Minitest::Test
   SIGN_IN = %r{\A\[cronwatch\] CRONWATCH_TOKEN is not set, so this development server made a token for the dashboard\. Sign in: http://localhost:3000/cronwatch/\?token=([A-Za-z0-9_-]{43})\z}
 
   def test_without_a_token_in_development_a_made_up_token_is_printed_once_and_required_from_everyone
-    %w[development test].each do |env|
+    %w[development dev local].each do |env|
       %w[RAILS_ENV RACK_ENV].each do |var|
         with_env("RAILS_ENV" => nil, "RACK_ENV" => nil, var => env, "CRONWATCH_TOKEN" => nil) do
           cw = Cronwatch.new(store: Cronwatch::Stores::Memory.new, alerts: [Capture.new], cron_secret: nil)

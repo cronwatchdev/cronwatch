@@ -24,11 +24,12 @@ module Cronwatch
   # token:     required to reach anything. Send it as `Authorization: Bearer <token>`,
   #            or open the dashboard once with `?token=<token>` (or sign in with the
   #            form, which posts it to <base>/signin) and a cookie is set.
-  #            Defaults to ENV["CRONWATCH_TOKEN"]; an empty string or one of only
+  #            Defaults to ENV["CRONWATCH_TOKEN"]. It is trimmed of the whitespace
+  #            around it; an empty string or one of only
   #            whitespace, given here or in the variable, counts as unset, and
   #            anything but a String or nil (false, a number, a Symbol) raises TypeError.
-  #            With no token while Cronwatch::Environment is development or
-  #            test (Environment.stated_development?: under Puma, Unicorn,
+  #            With no token while Cronwatch::Environment is development
+  #            (Environment.stated_development?: under Puma, Unicorn,
   #            Thin, or rackup, which set RACK_ENV=development by default,
   #            RACK_ENV alone does not count), the app makes a random one and
   #            prints a sign-in link to stdout on its first request; with no
