@@ -391,7 +391,7 @@ final class ScheduledTasks
 
     private function report(\Throwable $error, string $where): void
     {
-        $this->cw()->onError($error, $where);
+        Failsafe::report($this->app, $error, $where);
     }
 
     private function reportOnce(\Throwable $error, string $where): void

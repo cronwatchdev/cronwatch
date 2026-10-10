@@ -16,6 +16,7 @@ use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Auth\Access\Gate;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
@@ -58,7 +59,7 @@ final class CronwatchServiceProvider extends ServiceProvider
             $this->publishes($migrations, 'cronwatch-migrations');
         }
         $config = $this->app->make('config');
-        if ($config->get('cronwatch.store.migrations', true) && $config->get('cronwatch.store.driver', 'database') === 'database') {
+        if ($config->get('cronwatch.store.migrations', true) && $config->get('cronwatch.store.driver', 'database') === 'database' && self::storableConnection($config)) {
             $this->loadMigrationsFrom(__DIR__ . '/migrations');
         }
         if ($this->app->runningInConsole()) {
@@ -75,39 +76,65 @@ final class CronwatchServiceProvider extends ServiceProvider
             return;
         }
         $events = $this->app->make(Dispatcher::class);
+        // A listener never lets CronWatch's own failure reach the scheduler or the queue (Failsafe).
+        $guard = fn (string $watcher, string $method, string $where) => function ($event) use ($app, $watcher, $method, $where): void {
+            Failsafe::run($app, $where, fn () => $app->make($watcher)->{$method}($event));
+        };
         if ($config->get('cronwatch.schedule.watch', true)) {
-            $events->listen(ScheduledTaskStarting::class, fn ($event) => $app->make(ScheduleWatcher::class)->starting($event));
-            $events->listen(ScheduledTaskFinished::class, fn ($event) => $app->make(ScheduleWatcher::class)->finished($event));
-            $events->listen(ScheduledTaskFailed::class, fn ($event) => $app->make(ScheduleWatcher::class)->failed($event));
-            $events->listen(ScheduledBackgroundTaskFinished::class, fn ($event) => $app->make(ScheduleWatcher::class)->backgroundFinished($event));
+            $events->listen(ScheduledTaskStarting::class, $guard(ScheduleWatcher::class, 'starting', 'watching the schedule'));
+            $events->listen(ScheduledTaskFinished::class, $guard(ScheduleWatcher::class, 'finished', 'watching the schedule'));
+            $events->listen(ScheduledTaskFailed::class, $guard(ScheduleWatcher::class, 'failed', 'watching the schedule'));
+            $events->listen(ScheduledBackgroundTaskFinished::class, $guard(ScheduleWatcher::class, 'backgroundFinished', 'watching the schedule'));
             // The schedule's jobs are declared as schedule:run starts, so the
             // first task's run finds every name already worked out.
             $events->listen(CommandStarting::class, function (CommandStarting $event) use ($app): void {
                 if (in_array($event->command, ['schedule:run', 'schedule:finish'], true)) {
-                    try {
-                        $app->make(ScheduledTasks::class)->declare();
-                    } catch (\Throwable $error) {
-                        $app->make(Cronwatch::class)->onError($error, 'declaring the schedule');
-                    }
+                    Failsafe::run($app, 'declaring the schedule', fn () => $app->make(ScheduledTasks::class)->declare());
                 }
             });
         }
         if (Settings::scheduleCheck($config)) {
-            $this->callAfterResolving(Schedule::class, function (Schedule $schedule) use ($config): void {
-                $schedule->command(ScheduledTasks::CHECK_COMMAND)->cron(Settings::checkFrequency($config));
+            $this->callAfterResolving(Schedule::class, function (Schedule $schedule) use ($app, $config): void {
+                $check = $schedule->command(ScheduledTasks::CHECK_COMMAND)->cron(Settings::checkFrequency($config))->withoutOverlapping();
+                // On several servers sharing a cache that can lock, one of them checks.
+                if (self::cacheLocks($app)) {
+                    $check->onOneServer();
+                }
             });
         }
         if ($config->get('cronwatch.queue.watch', true)) {
-            $events->listen(JobProcessing::class, fn ($event) => $app->make(QueueWatcher::class)->processing($event));
-            $events->listen(JobProcessed::class, fn ($event) => $app->make(QueueWatcher::class)->processed($event));
-            $events->listen(JobExceptionOccurred::class, fn ($event) => $app->make(QueueWatcher::class)->failed($event));
-            $events->listen(JobFailed::class, fn ($event) => $app->make(QueueWatcher::class)->failed($event));
+            $events->listen(JobProcessing::class, $guard(QueueWatcher::class, 'processing', 'watching the queue'));
+            $events->listen(JobProcessed::class, $guard(QueueWatcher::class, 'processed', 'watching the queue'));
+            $events->listen(JobExceptionOccurred::class, $guard(QueueWatcher::class, 'failed', 'watching the queue'));
+            $events->listen(JobFailed::class, $guard(QueueWatcher::class, 'failed', 'watching the queue'));
             if (class_exists(JobTimedOut::class)) {
-                $events->listen(JobTimedOut::class, fn ($event) => $app->make(QueueWatcher::class)->timedOut($event));
+                $events->listen(JobTimedOut::class, $guard(QueueWatcher::class, 'timedOut', 'watching the queue'));
             }
         }
         if ($config->get('cronwatch.dashboard.enabled', true)) {
             $this->dashboard();
+        }
+    }
+
+    /**
+     * Whether the connection the store would use is one CronWatch keeps its
+     * tables in. The migration is left out otherwise, so `migrate` on an app
+     * whose default connection is SQL Server, say, is not stopped by it.
+     */
+    private static function storableConnection(object $config): bool
+    {
+        $name = $config->get('cronwatch.store.connection');
+        $name = is_string($name) && $name !== '' ? $name : $config->get('database.default');
+        return in_array($config->get("database.connections.{$name}.driver"), ['sqlite', 'mysql', 'mariadb', 'pgsql'], true);
+    }
+
+    /** Whether the default cache store takes the atomic locks onOneServer() needs. */
+    private static function cacheLocks(object $app): bool
+    {
+        try {
+            return $app->make('cache')->store()->getStore() instanceof LockProvider;
+        } catch (\Throwable) {
+            return false;
         }
     }
 
