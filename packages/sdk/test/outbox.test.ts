@@ -170,7 +170,7 @@ test("while a job is silenced a retry claims only recoveries; the rest wait in t
   down = false;
   c.advance(MIN);
   await cw.check();
-  assert.deepEqual(sent, []);
+  assert.equal(sent.length, 0);
   assert.deepEqual((await shared.getState("nightly"))!.undelivered!.map((x) => x.type), ["failed"]);
   await cw.unsilence("nightly");
   await cw.check();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { cronwatch } from "../src/index.js";
+import { constantTimeEqual } from "../src/http.js";
 import { capture, clock, HOUR } from "./helpers.js";
 
 function app(onError?: (error: unknown, where: string) => void) {
@@ -323,4 +324,54 @@ test("an Authorization header that is not a bearer (a proxy's Basic auth) leaves
   assert.equal((await send("GET", "/cronwatch/api/jobs", { authorization: "Bearer wrong", ...cookie })).status, 401);
   assert.equal((await send("GET", "/cronwatch/api/jobs", { authorization: "Bearer", ...cookie })).status, 200);
   assert.equal((await send("GET", "/cronwatch/api/jobs", { authorization: "Bearertok", ...cookie })).status, 200);
+});
+
+test("a request body past 1 MiB is answered 413, or read as no token on the sign-in form, and nothing is silenced", async () => {
+  const { cw, send, bearer } = app();
+  await cw.run("x", async () => {});
+  const json = { "content-type": "application/json" };
+  const form = { "content-type": "application/x-www-form-urlencoded" };
+  const pad = "x".repeat(1 << 20);
+  const api = await send("POST", "/cronwatch/api/jobs/x/silence", { ...bearer, ...json }, JSON.stringify({ for: "2h", pad }));
+  assert.equal(api.status, 413);
+  assert.deepEqual(await api.json(), { ok: false, error: "Request body too large" });
+  const page = await send("POST", "/cronwatch/jobs/x/silence", { ...bearer, ...form }, `for=2h&pad=${pad}`);
+  assert.equal(page.status, 413);
+  assert.match(await page.text(), /The request was too large\./);
+  // Without a Content-Length, read one chunk past the cap at most.
+  const chunks = [new TextEncoder().encode(`{"for":"2h","pad":"`), ...Array.from({ length: 10 }, () => new TextEncoder().encode(pad)), new TextEncoder().encode(`"}`)];
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({ pull(controller) { const next = chunks[pulled++]; if (next) controller.enqueue(next); else controller.close(); } });
+  const streamed = await cw.routes({ token: "tok", basePath: "/cronwatch" }).handler(new Request("http://app.test/cronwatch/api/jobs/x/silence", { method: "POST", headers: { ...bearer, ...json }, body: stream, duplex: "half" } as RequestInit));
+  assert.equal(streamed.status, 413);
+  assert.ok(pulled <= 4, `stopped reading past the cap (pulled ${pulled} of ${chunks.length})`);
+  assert.equal((await cw.jobSummary("x"))!.silencedUntil, null);
+  // The sign-in form: a body too large is no token at all.
+  const signIn = await send("POST", "/cronwatch/signin", form, `token=tok&pad=${pad}`);
+  assert.equal(signIn.status, 401);
+  assert.equal(signIn.headers.get("set-cookie"), null);
+  // A body just under the cap is read.
+  const fits = await send("POST", "/cronwatch/api/jobs/x/silence", { ...bearer, ...json }, JSON.stringify({ for: "2h", pad: "x".repeat((1 << 20) - 32) }));
+  assert.equal(fits.status, 200);
+});
+
+test("the secret compare matches only the secret itself, whatever is sent", () => {
+  for (const [sent, secret, equal] of [
+    ["tok", "tok", true], ["tok", "tok2", false], ["tok2", "tok", false], ["toktok", "tok", false], ["", "tok", false],
+    ["", "", true], ["x", "", false], ["\u{1F600}", "\u{1F600}", true], ["\u{1F600}", "\u{1F601}", false],
+  ] as [string, string, boolean][]) {
+    assert.equal(constantTimeEqual(sent, secret), equal, `${JSON.stringify(sent)} vs ${JSON.stringify(secret)}`);
+  }
+});
+
+test("the ?token= sign-in never redirects off the site, however many slashes lead the path", async () => {
+  const cw = cronwatch({ alerts: [capture()], cronSecret: null });
+  const routes = cw.routes({ token: "tok", basePath: "/" });
+  for (const path of ["//evil.example/x", "///evil.example", "/\\/evil.example"]) {
+    const res = await routes.handler(new Request(`http://app.test${path}?token=tok`));
+    assert.equal(res.status, 303, path);
+    const location = res.headers.get("location")!;
+    assert.ok(location.startsWith("/") && !location.startsWith("//"), `${path} -> ${location}`);
+    assert.ok(!new URL(location, "http://app.test").host.includes("evil"), `${path} -> ${location}`);
+  }
 });
