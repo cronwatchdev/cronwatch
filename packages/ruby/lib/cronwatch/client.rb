@@ -1493,12 +1493,16 @@ module Cronwatch
 
     # Sets the alert's triage to the diagnosis, or to nil (JSON null) when
     # there is none (it raised, timed out, or answered nil or ""), so it is
-    # tried once per alert. While a triage that timed out is still going,
-    # alerts go out without one rather than start another beside it.
+    # tried once per alert. While a triage that timed out on its full timeout
+    # is still going, alerts go out without one rather than start another
+    # beside it, and stay untried so a later retry can triage them. A timeout
+    # cut short by the retry budget says nothing about Claude, so it does not
+    # hold back the triages after it.
     def add_triage(alert, timeout_ms)
       signal = AbortSignal.new
       if @sending_lock.synchronize { @abandoned[:triage]&.alive? }
-        raise TimeoutError, "skipped: an earlier triage timed out and is still running"
+        report(TimeoutError.new("skipped: an earlier triage timed out and is still running"), "triage for #{alert.job}")
+        return
       end
 
       recent = @store.list_runs(alert.job, 5)
@@ -1512,7 +1516,7 @@ module Cronwatch
         outcome = [:error, e]
       end
       unless thread.join(timeout_ms / 1000.0)
-        @sending_lock.synchronize { @abandoned[:triage] = thread }
+        @sending_lock.synchronize { @abandoned[:triage] = thread } if timeout_ms >= @triage_timeout_ms
         raise TimeoutError, "timed out after #{timeout_ms}ms"
       end
       outcome ||= [:error, RuntimeError.new("the triage thread ended without an answer")]

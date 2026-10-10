@@ -157,6 +157,35 @@ class ClientEdgesTest < Minitest::Test
     20.times { gate&.push(nil) }
   end
 
+  # A triage cut short by the retry budget is not Claude being slow, so it
+  # holds back no later triage. One skipped while an earlier triage is still
+  # going stays untried, so a later retry can triage it.
+  def test_a_budget_shortened_triage_does_not_hold_back_the_ones_after_it
+    gate = Queue.new
+    errors = []
+    cw, = make(triage: ->(_context) { gate.pop }, on_error: ->(e, where) { errors << [where, e.message] })
+    cw.instance_variable_set(:@triage_timeout_ms, 1_000)
+    alert = ->(job) { Cronwatch::Alert.from_h("type" => "failed", "job" => job, "title" => "t", "message" => "m", "at" => T0) }
+
+    short = alert.call("a")
+    cw.send(:add_triage, short, 20)
+    assert short.triage_tried?, "a timed-out triage counts as tried, as in the SDK"
+    assert_nil cw.instance_variable_get(:@abandoned)[:triage], "the budget's cut, not Claude's"
+
+    cw.instance_variable_set(:@triage_timeout_ms, 20)
+    full = alert.call("b")
+    cw.send(:add_triage, full, 20)
+    assert full.triage_tried?
+    refute_nil cw.instance_variable_get(:@abandoned)[:triage]
+
+    skipped = alert.call("c")
+    cw.send(:add_triage, skipped, 20)
+    refute skipped.triage_tried?, "left for a later retry"
+    assert(errors.any? { |_, message| message.include?("skipped: an earlier triage timed out") })
+  ensure
+    5.times { gate&.push(nil) }
+  end
+
   # A schedule written by a Node process sharing the store that this port
   # does not read: that job is reported and shown as failing, the others are checked.
   def test_a_stored_schedule_this_port_cannot_read_does_not_stop_the_check
