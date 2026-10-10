@@ -39,18 +39,24 @@ module Cronwatch
   #            mount point (SCRIPT_NAME), which is right under Rails' `mount`.
   # origin:    the public origin the dashboard is served from, such as
   #            "https://app.example.com". By default the request's own origin
-  #            is used, as Rack reads it (Rack::Request#base_url, which follows
-  #            X-Forwarded-Proto and X-Forwarded-Host the way Rails does). Set
-  #            this to pin it, for an app behind a proxy that does not set
-  #            those headers or one that should not trust them. Used in place
-  #            of the request's origin for the cross-site check on writes, the
-  #            sign-in cookie's Secure flag, the Referer the redirect back after
-  #            a form follows, and the development sign-in line. Read as
+  #            is used: rack.url_scheme and the Host header, or the forwarded
+  #            ones under trust_proxy. Set this to pin it. Used in place of the
+  #            request's origin for the cross-site check on writes, the sign-in
+  #            cookie's Secure flag, the Referer the redirect back after a form
+  #            follows, and the development sign-in line. Read as
   #            `new URL(value).origin` reads it (Web::Origin) and normalised to
   #            scheme://host[:port]; anything that is not an absolute http or
   #            https URL, or has a port outside 1 to 65535, raises
-  #            ArgumentError here. "" counts as unset. Behind more than one
-  #            proxy set it: Rack takes the last of several forwarded values.
+  #            ArgumentError here. "" counts as unset. Takes precedence over
+  #            trust_proxy.
+  # trust_proxy: take the public origin from X-Forwarded-Proto and
+  #            X-Forwarded-Host (the first value of each, falling back to the
+  #            request's own scheme or host for whichever is missing) when a
+  #            request carries either, as the SDK's trustProxy does. Only for
+  #            an app whose proxy sets or overwrites both headers: a client can
+  #            send them too. Defaults to true when Rails is loaded, since Rails
+  #            itself trusts them (ActionDispatch::Request#base_url), and to
+  #            false otherwise, as in the SDK.
   class Web
     # Tells "token not given" (read CRONWATCH_TOKEN) from "token: nil" (open on purpose).
     UNSET = Object.new.freeze
@@ -103,9 +109,10 @@ module Cronwatch
       app
     end
 
-    def initialize(client = nil, token: UNSET, base_path: nil, origin: nil)
+    def initialize(client = nil, token: UNSET, base_path: nil, origin: nil, trust_proxy: UNSET)
       @client = client
       @origin = Web.configured_origin(origin)
+      @trust_proxy = trust_proxy.equal?(UNSET) ? Web.rails? : trust_proxy == true
       @opted_out = token.nil?
       # A blank token, given or read, counts as unset; one given that is not a String raises.
       given = token.equal?(UNSET) ? nil : Environment.secret_option(token, "routes: token")
@@ -166,6 +173,11 @@ module Cronwatch
     # Read as the SDK's `new URL(value).origin` reads it (Web::Origin).
     def self.configured_origin(value)
       Origin.parse(value)
+    end
+
+    # Whether the app runs under Rails, which trusts forwarded headers by default.
+    def self.rails?
+      defined?(::Rails::Railtie) ? true : false
     end
 
     # The client given, or Cronwatch.client when none was.
@@ -399,7 +411,8 @@ module Cronwatch
       end
       return unless first
 
-      shown = @origin || (Web.loopback_origin?(request.origin) ? request.origin : nil)
+      own = request_origin(request)
+      shown = @origin || (Web.loopback_origin?(own) ? own : nil)
       $stdout.puts(Web.development_sign_in_line(shown, base, @token))
       $stdout.flush
     end
@@ -547,7 +560,12 @@ module Cronwatch
 
     # The origin a browser sees: the `origin` option when set, otherwise the request's own.
     def public_origin(request)
-      @origin || request.origin
+      @origin || request_origin(request)
+    end
+
+    # The request's origin: the forwarded one under trust_proxy, else its own.
+    def request_origin(request)
+      @trust_proxy ? request.forwarded_origin : request.origin
     end
 
     def api(body, status = 200, headers = {})
@@ -607,11 +625,35 @@ module Cronwatch
         @env[key]
       end
 
-      # scheme://host[:port], the page's origin, lowercased as a browser
-      # writes it in Origin and Referer (Rack's base_url keeps the case of
-      # the Host or X-Forwarded-Host it read).
+      # scheme://host[:port], the page's origin as the request URL gives it
+      # (rack.url_scheme and the Host header, never a forwarded header),
+      # normalised as a browser writes it in Origin and Referer.
       def origin
-        @rack.base_url.downcase
+        scheme = @env["rack.url_scheme"].to_s.downcase
+        scheme = "http" unless %w[http https].include?(scheme)
+        host = @env["HTTP_HOST"].to_s
+        host = [@env["SERVER_NAME"], @env["SERVER_PORT"]].compact.join(":") if host.empty?
+        Origin.bare("#{scheme}://#{host}") || "#{scheme}://#{host.downcase}"
+      end
+
+      # With trust_proxy: the first X-Forwarded-Proto and X-Forwarded-Host,
+      # each falling back to the request's own, when either is present and
+      # well formed; otherwise the request's own origin. The SDK's forwardedOrigin.
+      def forwarded_origin
+        own = origin
+        proto = Request.first_value(header("x-forwarded-proto"))&.downcase
+        host = Request.first_value(header("x-forwarded-host"))
+        return own if proto.nil? && host.nil?
+        return own unless proto.nil? || %w[http https].include?(proto)
+
+        scheme, authority = own.split("://", 2)
+        Origin.bare("#{proto || scheme}://#{host || authority}") || own
+      end
+
+      # The first of a header's comma-separated values, trimmed, or nil.
+      def self.first_value(value)
+        first = value&.split(",", 2)&.first&.strip
+        first.nil? || first.empty? ? nil : first
       end
 
       # URLSearchParams#get: the first value, or nil.

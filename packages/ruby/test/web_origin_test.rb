@@ -4,9 +4,7 @@ require_relative "web/helpers"
 require "stringio"
 
 # The SDK's routes origin tests (routes-origin.test.ts), against
-# Cronwatch::Web's `origin:`. The SDK's trustProxy has no counterpart: Rack
-# already reads X-Forwarded-Proto and X-Forwarded-Host into the request's
-# origin, as Rails does, and `origin:` pins it.
+# Cronwatch::Web's `origin:` and `trust_proxy:`.
 class WebOriginTest < Minitest::Test
   include WebHelpers
 
@@ -65,15 +63,15 @@ class WebOriginTest < Minitest::Test
     refute_match(/Secure/, send.call("GET", "/cronwatch/?token=tok").headers["set-cookie"])
   end
 
-  # Rack follows X-Forwarded-Proto and X-Forwarded-Host by default; origin: pins the origin whatever they say.
-  def test_origin_takes_precedence_over_forwarded_headers
-    cw, _, send = app
+  # origin: pins the origin whatever the forwarded headers say, under trust_proxy too.
+  def test_origin_takes_precedence_over_trust_proxy_and_forwarded_headers
+    cw, _, send = app(trust_proxy: true)
     cw.run("x") { nil }
     forwarded = { "x-forwarded-proto" => "https", "x-forwarded-host" => "other.example" }
     assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded, "origin" => "https://other.example")).status,
-                 "without origin:, Rack's reading of the forwarded headers is the origin"
+                 "under trust_proxy without origin:, the forwarded headers are the origin"
 
-    cw, _, send = app(origin: "https://app.example.com")
+    cw, _, send = app(origin: "https://app.example.com", trust_proxy: true)
     cw.run("x") { nil }
     assert_equal 403, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded, "origin" => "https://other.example")).status
     assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded, "origin" => "https://app.example.com")).status
@@ -81,6 +79,73 @@ class WebOriginTest < Minitest::Test
     assert_equal "/cronwatch/", back.headers["location"], "a Referer on the forwarded origin is not followed"
     sign_in = send.call("GET", "/cronwatch/?token=tok", { "x-forwarded-proto" => "http" })
     assert_match(/; Secure\z/, sign_in.headers["set-cookie"])
+  end
+
+  def test_trust_proxy_takes_the_origin_from_the_first_forwarded_proto_and_host
+    cw, _, send = app(trust_proxy: true)
+    cw.run("x") { nil }
+    forwarded = { "x-forwarded-proto" => "https, http", "x-forwarded-host" => "app.example.com, 10.0.0.5:8080" }
+    assert_equal 403, send.call("POST", "/cronwatch/jobs/x/silence", COOKIE.merge(FORM, forwarded, "origin" => INTERNAL), "for=1h").status
+    ok = send.call("POST", "/cronwatch/jobs/x/silence", COOKIE.merge(FORM, forwarded, "origin" => "https://app.example.com"), "for=1h")
+    assert_equal 303, ok.status
+    assert_match(/; Secure\z/, send.call("GET", "/cronwatch/?token=tok", forwarded).headers["set-cookie"])
+    # Only the scheme forwarded: the host stays the request's.
+    assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge("x-forwarded-proto" => "https", "origin" => "https://10.0.0.5:8080")).status
+    # Neither forwarded: the request's own origin, as without trust_proxy.
+    assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge("origin" => INTERNAL)).status
+  end
+
+  def test_trust_proxy_ignores_forwarded_values_that_are_not_a_scheme_and_a_bare_host
+    cw, _, send = app(trust_proxy: true)
+    cw.run("x") { nil }
+    [
+      [{ "x-forwarded-proto" => "javascript", "x-forwarded-host" => "evil.example" }, "javascript://evil.example"],
+      [{ "x-forwarded-proto" => "https", "x-forwarded-host" => "evil.example/path" }, "https://evil.example"],
+      [{ "x-forwarded-proto" => "https", "x-forwarded-host" => "user@evil.example" }, "https://evil.example"],
+    ].each do |headers, origin|
+      assert_equal 403, send.call("POST", "/cronwatch/check", COOKIE.merge(headers, "origin" => origin)).status, headers.inspect
+      assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge(headers, "origin" => INTERNAL)).status, headers.inspect
+    end
+  end
+
+  def test_without_trust_proxy_a_spoofed_forwarded_host_or_proto_changes_nothing
+    cw, _, send = app("http://app.test", trust_proxy: false)
+    cw.run("x") { nil }
+    spoofed = { "x-forwarded-host" => "evil.example", "x-forwarded-proto" => "https" }
+    assert_equal 403, send.call("POST", "/cronwatch/jobs/x/silence", COOKIE.merge(FORM, spoofed, "origin" => "https://evil.example"), "for=1h").status
+    refute silenced?(cw)
+    back = send.call("POST", "/cronwatch/check", COOKIE.merge(spoofed, "origin" => "http://app.test", "referer" => "https://evil.example/cronwatch/jobs/x"))
+    assert_equal 303, back.status
+    assert_equal "/cronwatch/", back.headers["location"], "a Referer on the spoofed origin is not followed"
+    refute_match(/Secure/, send.call("GET", "/cronwatch/?token=tok", spoofed).headers["set-cookie"])
+  end
+
+  # Rails trusts forwarded headers itself, so under Rails trust_proxy defaults to true.
+  def test_trust_proxy_defaults_to_true_under_rails_and_false_otherwise
+    forwarded = { "x-forwarded-proto" => "https", "x-forwarded-host" => "app.example.com", "origin" => "https://app.example.com" }
+    with_rails(false) do
+      cw, _, send = app
+      cw.run("x") { nil }
+      assert_equal 403, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded)).status
+    end
+    with_rails(true) do
+      cw, _, send = app
+      cw.run("x") { nil }
+      assert_equal 303, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded)).status
+      cw, _, send = app(trust_proxy: false)
+      cw.run("x") { nil }
+      assert_equal 403, send.call("POST", "/cronwatch/check", COOKIE.merge(forwarded)).status
+    end
+  end
+
+  def with_rails(value)
+    original = Cronwatch::Web.method(:rails?)
+    Cronwatch::Web.singleton_class.send(:remove_method, :rails?)
+    Cronwatch::Web.define_singleton_method(:rails?) { value }
+    yield
+  ensure
+    Cronwatch::Web.singleton_class.send(:remove_method, :rails?)
+    Cronwatch::Web.define_singleton_method(:rails?, original)
   end
 
   def test_an_origin_that_is_not_an_http_or_https_url_raises_when_the_app_is_made
@@ -175,9 +240,9 @@ class WebOriginTest < Minitest::Test
     end
   end
 
-  # Rack's base_url keeps the Host header's case; browsers send Origin lowercased.
+  # The Host header keeps its case; browsers send Origin lowercased.
   def test_a_mixed_case_host_matches_the_browsers_lowercase_origin
-    cw, _, send = app("http://App.Example.com")
+    cw, _, send = app("http://App.Example.com", trust_proxy: true)
     cw.run("x") { nil }
     ok = send.call("POST", "/cronwatch/check", COOKIE.merge("origin" => "http://app.example.com", "host" => "App.Example.com"))
     assert_equal 303, ok.status
@@ -193,24 +258,24 @@ class WebOriginTest < Minitest::Test
       cw, = make
       [
         [{ origin: "https://app.example.com" }, "#{INTERNAL}/cronwatch/", {}],
-        [{ origin: "https://app.example.com" }, "#{INTERNAL}/cronwatch/", spoofed],
+        [{ origin: "https://app.example.com", trust_proxy: true }, "#{INTERNAL}/cronwatch/", spoofed],
         [{}, "http://localhost:3000/cronwatch/", {}],
         [{}, "http://app.localhost:3000/cronwatch/", {}],
         [{}, "http://127.0.0.1:3000/cronwatch/", {}],
         [{}, "http://127.8.9.10/cronwatch/", {}],
         [{}, "http://[::1]:3000/cronwatch/", {}],
-        [{}, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "localhost:5173" }],
+        [{ trust_proxy: true }, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "localhost:5173" }],
         [{}, "#{INTERNAL}/cronwatch/", {}],
         [{}, "https://app.example.com/cronwatch/", {}],
-        [{}, "http://localhost:3000/cronwatch/", spoofed],
+        [{ trust_proxy: true }, "http://localhost:3000/cronwatch/", spoofed],
         [{}, "http://localhost.example/cronwatch/", {}],
         [{}, "http://128.0.0.1/cronwatch/", {}],
         [{ base_path: "/" }, "http://attacker.example/", {}],
         # Rack passes a Host header through as sent: it is read as a URL.
         [{}, "#{INTERNAL}/cronwatch/", { "host" => "localhost:1@evil.example" }],
         [{}, "#{INTERNAL}/cronwatch/", { "host" => "evil.example/.localhost" }],
-        [{}, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "localhost:1@evil.example" }],
-        [{}, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "evil.example/.localhost" }],
+        [{ trust_proxy: true }, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "localhost:1@evil.example" }],
+        [{ trust_proxy: true }, "#{INTERNAL}/cronwatch/", { "x-forwarded-host" => "evil.example/.localhost" }],
       ].each do |options, url, headers|
         before = $stdout
         $stdout = StringIO.new
