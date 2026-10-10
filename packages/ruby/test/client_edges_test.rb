@@ -157,6 +157,19 @@ class ClientEdgesTest < Minitest::Test
     20.times { gate&.push(nil) }
   end
 
+  # A failure: callable that raises fails the run with its error, and the
+  # block's result still comes back; the run is never left running.
+  def test_a_failure_callable_that_raises_fails_the_run_instead_of_escaping
+    cw, = make
+    job = cw.job("handler")
+    outcome = cw.execute(job.definition, "http", failure: ->(r) { r.fetch(:status) }) { {} }
+    assert_equal({}, outcome.result)
+    refute outcome.threw
+    run = cw.runs("handler").first
+    assert_equal :failed, run.status
+    assert_match(/KeyError/, run.error)
+  end
+
   # A triage cut short by the retry budget is not Claude being slow, so it
   # holds back no later triage. One skipped while an earlier triage is still
   # going stays untried, so a later retry can triage it.
