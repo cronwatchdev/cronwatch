@@ -6,7 +6,6 @@ package cronwatch
 
 import (
 	"crypto/subtle"
-	"encoding/binary"
 	"math"
 	"math/big"
 	"strings"
@@ -116,17 +115,21 @@ func latin1(s string) string {
 	return s
 }
 
-// constantTimeEqual compares two secrets without stopping at the first
-// character that differs, over UTF-16 code units as the SDK compares them.
-func constantTimeEqual(a, b string) bool {
-	ua, ub := js.Units(a), js.Units(b)
-	if len(ua) != len(ub) {
-		return false
+// constantTimeEqual compares what a request sent with the secret without
+// stopping at the first character that differs, and in time that depends
+// only on the length of what was sent, so neither the secret's characters
+// nor its length can be timed (http.ts's constantTimeEqual). Every UTF-16
+// code unit of sent is compared, against the secret's unit at the same
+// place (repeating it past its end), and a length that differs counts as a
+// difference.
+func constantTimeEqual(sent, secret string) bool {
+	us, uk := js.Units(sent), js.Units(secret)
+	if len(uk) == 0 {
+		return len(us) == 0
 	}
-	ba, bb := make([]byte, 2*len(ua)), make([]byte, 2*len(ub))
-	for i := range ua {
-		binary.LittleEndian.PutUint16(ba[2*i:], ua[i])
-		binary.LittleEndian.PutUint16(bb[2*i:], ub[i])
+	diff := uint32(len(us) ^ len(uk))
+	for i, u := range us {
+		diff |= uint32(u ^ uk[i%len(uk)])
 	}
-	return subtle.ConstantTimeCompare(ba, bb) == 1
+	return subtle.ConstantTimeEq(int32(diff), 0) == 1
 }

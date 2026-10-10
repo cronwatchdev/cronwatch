@@ -101,7 +101,7 @@ func (j *Job) Resume(ctx context.Context, runID string) (*RunHandle, error) {
 
 // ResumeRun is Resume for a job declared in this process, by name.
 func (c *Client) ResumeRun(ctx context.Context, name, runID string) (*RunHandle, error) {
-	def, ok := c.declared(name)
+	def, ok := c.declaredAgain(name)
 	if !ok {
 		return nil, fmt.Errorf("resumeRun: job %s is not declared; call Job first", js.Quote(name))
 	}
