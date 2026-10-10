@@ -29,6 +29,8 @@ use crate::store::{BoxError, BoxFuture};
 pub use routes::{DEFAULT_BASE_PATH, Routes, RoutesOptions};
 
 #[cfg(feature = "tower")]
+pub use adapter::Tls;
+#[cfg(feature = "tower")]
 pub(crate) use adapter::tower_answer;
 pub(crate) use text::{constant_time_eq, latin1};
 
