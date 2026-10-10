@@ -30,7 +30,9 @@ module Cronwatch
   # "sidekiq"; `cronwatch` in the job is the run's context, for log and
   # metric. A perform that raises is recorded as failed and then raises as
   # before, so Sidekiq's retries, death handlers, and error handlers see it
-  # unchanged.
+  # unchanged. A perform stopped by Sidekiq::Shutdown is recorded but not
+  # judged: Sidekiq runs the job again after the restart, so a deploy opens
+  # no failed alert.
   #
   #   class NightlyReportJob
   #     include Sidekiq::Job

@@ -205,8 +205,14 @@ module Cronwatch
     # error message, or nil when the result is fine: an HTTP handler uses it to
     # count a 500 response as a failed run.
     #
+    # `requeued_on_shutdown` is for a queue that puts a job back when its
+    # worker shuts down (Sidekiq raises Sidekiq::Shutdown into the job and
+    # runs it again after the restart): a run stopped that way is recorded as
+    # failed but not judged, so a deploy opens no failed alert and does not
+    # count toward failures_before_alert.
+    #
     # @api private For integrations (JobHandle#run, ActiveJob, Sidekiq), not apps.
-    def execute(definition, trigger, failure: nil)
+    def execute(definition, trigger, failure: nil, requeued_on_shutdown: false)
       after_fork_check
       name = definition.name
       started_at = now
@@ -252,7 +258,8 @@ module Cronwatch
 
       conclude(definition, run, result, error, threw, recorder.expect_text || returned, failure: failure)
       begin
-        ignored = record_finish(definition, run, recorded, finished_at)
+        judge = !(requeued_on_shutdown && threw && Client.shutdown?(error))
+        ignored = record_finish(definition, run, recorded, finished_at, judge: judge)
         report(RuntimeError.new("run #{run.id} of #{name} #{ignored}; ignored"), "finishing #{name}") if ignored
       rescue StandardError => e
         report(e, "recording #{name}")
@@ -958,13 +965,13 @@ module Cronwatch
     # recorded (another process finished the run first, say), or nil. Raises
     # when the store does, so a handle can be finished again. Shared by
     # execute and RunHandle#finish.
-    def record_finish(definition, run, recorded, finished_at)
+    def record_finish(definition, run, recorded, finished_at, judge: true)
       unless recorded
         # The start was never written; the store may be back by now.
         sync(definition)
         begin
           @store.insert_run(run)
-          finish_run(Serialize.to_stored(definition), run, finished_at)
+          finish_run(Serialize.to_stored(definition), run, finished_at) if judge
           return nil
         rescue StandardError => e
           # Another process may have recorded a run with this id meanwhile.
@@ -980,8 +987,16 @@ module Cronwatch
       late, ignored = claim_finish(run)
       return ignored if ignored
 
-      finish_run(Serialize.to_stored(definition), run, finished_at) if !late || run.status == :ok
+      finish_run(Serialize.to_stored(definition), run, finished_at) if judge && (!late || run.status == :ok)
       nil
+    end
+
+    # A job's worker shutting down, which its queue answers by running the job
+    # again: Sidekiq::Shutdown, when Sidekiq is loaded.
+    #
+    # @api private
+    def self.shutdown?(error)
+      defined?(::Sidekiq::Shutdown) && error.is_a?(::Sidekiq::Shutdown) ? true : false
     end
 
     # The start of execute without the block: the run is inserted and missed
