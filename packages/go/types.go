@@ -1294,6 +1294,32 @@ type JobSummary struct {
 	Stats               Stats
 }
 
+// clone is a copy that shares nothing.
+func (s JobSummary) clone() JobSummary {
+	out := s
+	out.Definition = s.Definition.clone()
+	if s.Open != nil {
+		out.Open = append([]Condition(nil), s.Open...)
+	}
+	if s.LastRun != nil {
+		run := s.LastRun.clone()
+		out.LastRun = &run
+	}
+	out.NextExpectedAt = clonePtr(s.NextExpectedAt)
+	out.SilencedUntil = clonePtr(s.SilencedUntil)
+	out.Stats.P50Ms = clonePtr(s.Stats.P50Ms)
+	out.Stats.P95Ms = clonePtr(s.Stats.P95Ms)
+	return out
+}
+
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 // JSValue is the summary as the SDK writes it.
 //
 // Deprecated: JSValue is how this module writes the SDK's JSON, and goes in
@@ -1322,6 +1348,25 @@ type CheckResult struct {
 	Jobs      []JobSummary
 	Alerts    []Alert
 	Pruned    int
+}
+
+// clone is a copy that shares nothing, so callers sharing one check can
+// each change what they were given.
+func (c CheckResult) clone() *CheckResult {
+	out := c
+	if c.Jobs != nil {
+		out.Jobs = make([]JobSummary, len(c.Jobs))
+		for i, j := range c.Jobs {
+			out.Jobs[i] = j.clone()
+		}
+	}
+	if c.Alerts != nil {
+		out.Alerts = make([]Alert, len(c.Alerts))
+		for i, a := range c.Alerts {
+			out.Alerts[i] = a.clone()
+		}
+	}
+	return &out
 }
 
 // JSValue is the result as the SDK writes it.

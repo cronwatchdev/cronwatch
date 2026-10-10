@@ -113,7 +113,8 @@ func (c *Client) ResumeRun(ctx context.Context, name, runID string) (*RunHandle,
 // the handle inserts the finished run instead, as execute does.
 func (c *Client) recordStart(ctx context.Context, def *jobDef, trigger, id string, hasID bool) (*RunHandle, error) {
 	name := def.name
-	sctx := storeCtx(ctx)
+	sctx, cancel := boundedStoreCtx(ctx)
+	defer cancel()
 	if hasID {
 		var stored *Run
 		err := c.ensureReady(sctx)
@@ -161,7 +162,8 @@ func (c *Client) resumeHandle(ctx context.Context, def *jobDef, runID string) (*
 	if err := checkRunID(def.name, runID, "resume"); err != nil {
 		return nil, err
 	}
-	sctx := storeCtx(ctx)
+	sctx, cancel := boundedStoreCtx(ctx)
+	defer cancel()
 	var stored *Run
 	err := c.ensureReady(sctx)
 	if err == nil {
@@ -275,7 +277,8 @@ func (h *RunHandle) Flush(ctx context.Context) {
 	h.turn.Lock()
 	defer h.turn.Unlock()
 	c, name := h.c, h.def.name
-	sctx := storeCtx(ctx)
+	sctx, cancel := boundedStoreCtx(ctx)
+	defer cancel()
 	h.mu.Lock()
 	if h.finished || !h.recorded {
 		h.mu.Unlock()
@@ -396,7 +399,8 @@ func (h *RunHandle) finish(ctx context.Context, result any, failure error) *Run 
 	h.turn.Lock()
 	defer h.turn.Unlock()
 	c, name := h.c, h.def.name
-	sctx := storeCtx(ctx)
+	sctx, cancel := boundedStoreCtx(ctx)
+	defer cancel()
 	if wasInactive {
 		h.ignored(h.inactive)
 		return nil
