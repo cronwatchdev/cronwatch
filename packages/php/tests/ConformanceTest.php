@@ -416,8 +416,17 @@ final class ConformanceTest extends TestCase
     public function testDelivery(): void
     {
         $d = self::fixture('health.json')->delivery;
+        $this->assertSame(
+            ['maxUndelivered', 'sendLeaseMs', 'maxPendingRuns', 'alertKey', 'normalizeState', 'queueUndelivered', 'holdAlerts', 'releaseSending', 'recordSent', 'claimUndelivered', 'holdRun', 'releaseRun'],
+            array_keys(get_object_vars($d)),
+            'every delivery section is replayed here',
+        );
         $this->assertSame($d->maxUndelivered, Evaluate::MAX_UNDELIVERED);
         $this->assertSame($d->sendLeaseMs, Evaluate::SEND_LEASE_MS);
+        $this->assertSame($d->maxPendingRuns, Evaluate::MAX_PENDING_RUNS);
+        $this->eachCase($d->claimUndelivered, fn (\stdClass $c) => self::same($c->result, Evaluate::claimUndelivered(self::state($c->state), $c->now, $c->until)));
+        $this->eachCase($d->holdRun, fn (\stdClass $c) => self::same($c->result, Evaluate::holdRun(self::state($c->state), $c->runId)));
+        $this->eachCase($d->releaseRun, fn (\stdClass $c) => self::same($c->result, Evaluate::releaseRun(self::state($c->state), $c->runId)));
         $this->eachCase($d->alertKey, fn (\stdClass $c) => self::same($c->key, Evaluate::alertKey(Alert::fromJson($c->alert))));
         $this->eachCase($d->normalizeState, fn (\stdClass $c) => self::same($c->normalized, Evaluate::normalizeState(self::state($c->state), 'j')));
         $this->eachCase($d->queueUndelivered, fn (\stdClass $c) => self::same($c->result, Evaluate::queueUndelivered(self::state($c->state), self::alerts($c->alerts))));

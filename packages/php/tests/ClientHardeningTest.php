@@ -525,7 +525,8 @@ final class ClientHardeningTest extends TestCase
         $store->hooks['compareAndSetState'] = fn () => false;
         $cw = $this->make(['store' => $store]);
         $this->failing(fn () => $cw->run('busy', self::thrower()));
-        $this->assertSame(['evaluating busy'], $this->wheres());
+        // The start's write (it holds the run as pending) loses too, and is reported the same way.
+        $this->assertSame(['starting busy', 'evaluating busy'], $this->wheres());
         $this->assertSame('failed', $cw->runs('busy')[0]->status);
     }
 
@@ -645,22 +646,27 @@ final class ClientHardeningTest extends TestCase
         $store = new \Cronwatch\Tests\Support\ResendingStore();
         $cw = $this->make(['store' => $store]);
         $job = $cw->job('flaky', ['failuresBeforeAlert' => 1]);
-        $job->run(fn () => 'warm up');
+        // The first state write, the warm-up's start, inserts the row.
         $store->breakAfter = ['casInsert'];
+        $job->run(fn () => 'warm up');
+        $this->assertSame(1, $store->resends);
+        $this->assertSame([], $store->getState('flaky')->pendingRuns ?? [], 'the warm-up held and let go of once');
+        // The run's start (which holds it as pending) and its finish each write the state.
+        $store->breakAfter = ['casUpdate', 'casUpdate'];
         try {
             $job->run(function (): void {
                 throw new \RuntimeException('down');
             });
         } catch (\RuntimeException) {
         }
-        $this->assertSame(1, $store->resends);
+        $this->assertSame(3, $store->resends);
         $this->assertSame(['failed'], $this->capture->types(), 'alerted once');
         $this->assertSame(1, $store->getState('flaky')->consecutiveFailures, 'counted once');
 
         $store->breakAfter = ['updateRunIf'];
         $handle = $job->start(id: 'batch-1');
         $this->assertSame('ok', $handle->finish()->status);
-        $this->assertSame(2, $store->resends);
+        $this->assertSame(4, $store->resends);
         $this->assertSame(['failed', 'recovered'], $this->capture->types(), 'the finish was judged, not taken for another process\'s');
 
         $store->breakAfter = ['deleteRunIf'];

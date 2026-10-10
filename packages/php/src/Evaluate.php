@@ -123,6 +123,8 @@ final class Evaluate
         $next->sending = $state->sending === null || $state->sending === [] ? null : array_values($state->sending);
         $underFloor = array_values(array_filter($state->underFloor ?? [], 'is_string'));
         $next->underFloor = $underFloor === [] ? null : $underFloor;
+        $pendingRuns = array_values(array_filter($state->pendingRuns ?? [], 'is_string'));
+        $next->pendingRuns = $pendingRuns === [] ? null : $pendingRuns;
         return $next;
     }
 
@@ -264,6 +266,74 @@ final class Evaluate
             $next->lastAlertAt = $now;
         }
         return self::queueUndelivered($next, $failed);
+    }
+
+    /**
+     * A check's claim on the undelivered queue, written before it sends, so
+     * two processes checking at once never retry the same alert: the queued
+     * alerts that still describe the job move into `sending`, oldest first,
+     * each with its lease ending at `until`, as many as `sending` has room
+     * for under MAX_UNDELIVERED (the rest wait for the next check); stale ones
+     * (staleAlert) leave the queue. While the job is silenced only recoveries
+     * are claimed. The process whose write lands sends `claimed`.
+     *
+     * @return array{state: JobState, claimed: list<Alert>, stale: list<Alert>}
+     */
+    public static function claimUndelivered(JobState $state, int|float $now, int|float $until): array
+    {
+        $next = self::cloneState($state);
+        $stale = [];
+        $fresh = [];
+        foreach ($next->undelivered ?? [] as $alert) {
+            if (self::staleAlert($alert, $next)) {
+                $stale[] = $alert;
+            } else {
+                $fresh[] = $alert;
+            }
+        }
+        $silenced = self::isSilenced($next, $now);
+        $room = max(0, self::MAX_UNDELIVERED - count($next->sending ?? []));
+        $claimable = array_values(array_filter($fresh, fn (Alert $alert) => !$silenced || $alert->type === AlertType::RECOVERED));
+        $claimed = array_slice($claimable, 0, $room);
+        if ($stale === [] && $claimed === []) {
+            return ['state' => $state, 'claimed' => [], 'stale' => []];
+        }
+        $next->undelivered = array_values(array_filter($fresh, fn (Alert $alert) => !in_array($alert, $claimed, true)));
+        if ($claimed !== []) {
+            $next->sending = [...($next->sending ?? []), ...array_map(fn (Alert $alert) => new SendingAlert($until, $alert), $claimed)];
+        }
+        return ['state' => $next, 'claimed' => $claimed, 'stale' => $stale];
+    }
+
+    /** Runs held in `pendingRuns` per job; past it the oldest go. */
+    public const MAX_PENDING_RUNS = 100;
+
+    /**
+     * A run just started, held in `pendingRuns` until its finish is
+     * evaluated (releaseRun), so a check can evaluate it if the process that
+     * finished it stops before writing the evaluation. Written with
+     * onRunStart's state. Only the newest MAX_PENDING_RUNS are kept.
+     */
+    public static function holdRun(JobState $state, string $runId): JobState
+    {
+        $next = self::cloneState($state);
+        $held = array_values(array_filter($next->pendingRuns ?? [], fn (string $id) => $id !== $runId));
+        $held[] = $runId;
+        $next->pendingRuns = array_slice($held, -self::MAX_PENDING_RUNS);
+        return $next;
+    }
+
+    /** A run taken out of `pendingRuns`, as its evaluation is written or once it is gone from the store. */
+    public static function releaseRun(JobState $state, string $runId): JobState
+    {
+        $held = $state->pendingRuns ?? [];
+        if (!in_array($runId, $held, true)) {
+            return $state;
+        }
+        $next = self::cloneState($state);
+        $left = array_values(array_filter($held, fn (string $id) => $id !== $runId));
+        $next->pendingRuns = $left === [] ? null : $left;
+        return $next;
     }
 
     /**
@@ -689,13 +759,19 @@ final class Evaluate
         return $state->silencedUntil !== null && $state->silencedUntil > $now;
     }
 
-    /** An evaluation as it is saved and sent: while the job was silenced when it began, nothing opens and nothing is sent. */
+    /**
+     * An evaluation as it is saved and sent: while the job was silenced when
+     * it began, nothing opens and no new alert is sent, but a recovery is. A
+     * condition can only close during a silence if it opened (and alerted)
+     * before it, so its recovery closes an incident someone was told about.
+     */
     public static function applySilence(JobState $previous, Evaluation $evaluation, int|float $now): Evaluation
     {
         if (!self::isSilenced($previous, $now)) {
             return $evaluation;
         }
-        return new Evaluation(self::muteOpens($previous, $evaluation->state), []);
+        $recoveries = array_values(array_filter($evaluation->alerts, fn (AlertDraft $alert) => $alert->type === AlertType::RECOVERED));
+        return new Evaluation(self::muteOpens($previous, $evaluation->state), $recoveries);
     }
 
     /**

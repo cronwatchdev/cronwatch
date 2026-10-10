@@ -15,7 +15,7 @@ namespace Cronwatch;
  */
 final class JobState
 {
-    private const KNOWN = ['job', 'open', 'consecutiveFailures', 'silencedUntil', 'lastAlertAt', 'pendingRecovery', 'undelivered', 'version', 'sending', 'underFloor'];
+    private const KNOWN = ['job', 'open', 'consecutiveFailures', 'silencedUntil', 'lastAlertAt', 'pendingRecovery', 'undelivered', 'version', 'sending', 'underFloor', 'pendingRuns'];
 
     /** @var array<string, mixed> the stored fields this release does not know, as decoded JSON */
     private array $extra = [];
@@ -29,6 +29,8 @@ final class JobState
      *        condition, while the process that wrote them sends them (see Evaluate::holdAlerts); null when empty
      * @param list<string>|null $underFloor the metrics under their floor at the job's last successful run (see
      *        Evaluate::floorBreaches); null when none
+     * @param list<string>|null $pendingRuns the ids of runs started and not yet judged, oldest first (see
+     *        Evaluate::holdRun); null when none
      */
     public function __construct(
         public string $job,
@@ -41,6 +43,7 @@ final class JobState
         public int|float|null $version = null,
         public ?array $sending = null,
         public ?array $underFloor = null,
+        public ?array $pendingRuns = null,
     ) {
     }
 
@@ -61,6 +64,7 @@ final class JobState
         $undelivered = $f['undelivered'] ?? null;
         $sending = $f['sending'] ?? null;
         $underFloor = is_array($f['underFloor'] ?? null) ? array_values(array_filter($f['underFloor'], 'is_string')) : [];
+        $pendingRuns = is_array($f['pendingRuns'] ?? null) ? array_values(array_filter($f['pendingRuns'], 'is_string')) : [];
         $state = new self(
             job: is_scalar($f['job'] ?? null) ? (string) $f['job'] : '',
             open: self::open($f['open'] ?? null),
@@ -77,6 +81,7 @@ final class JobState
             // Kept only when it is a list holding something; each entry is read leniently (see SendingAlert).
             sending: is_array($sending) && $sending !== [] && array_is_list($sending) ? array_map(SendingAlert::fromJson(...), $sending) : null,
             underFloor: $underFloor === [] ? null : $underFloor,
+            pendingRuns: $pendingRuns === [] ? null : $pendingRuns,
         );
         $state->extra = array_diff_key($f, array_flip(self::KNOWN));
         return $state;
@@ -110,10 +115,11 @@ final class JobState
 
     /**
      * pendingRecovery, undelivered, and version are left out when unset, as in
-     * state written before they existed, and sending and underFloor when they
-     * hold nothing. The version comes after the others, then sending and
-     * underFloor, where the SDK's spread of a normalized state puts them. Fields this release does not
-     * know follow, as they were read.
+     * state written before they existed, and sending, underFloor, and
+     * pendingRuns when they hold nothing. The version comes after the others,
+     * then sending, underFloor, and pendingRuns, where the SDK's spread of a
+     * normalized state puts them. Fields this release does not know follow,
+     * as they were read.
      */
     public function toJson(): array
     {
@@ -138,6 +144,9 @@ final class JobState
         }
         if ($this->underFloor !== null && $this->underFloor !== []) {
             $out['underFloor'] = array_values($this->underFloor);
+        }
+        if ($this->pendingRuns !== null && $this->pendingRuns !== []) {
+            $out['pendingRuns'] = array_values($this->pendingRuns);
         }
         foreach ($this->extra as $key => $value) {
             $out[$key] = $value;
