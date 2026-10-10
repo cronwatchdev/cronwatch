@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Cronwatch\Tests\WordPress;
 
 use Cronwatch\WordPress\Jobs;
+use Cronwatch\WordPress\Library;
 use Cronwatch\WordPress\WpdbStore;
 use PHPUnit\Framework\TestCase;
 
@@ -21,8 +22,31 @@ final class PluginTest extends TestCase
         if (!defined('ABSPATH')) {
             define('ABSPATH', sys_get_temp_dir() . '/');
         }
-        foreach (['Jobs', 'WpdbStore'] as $class) {
+        foreach (['Jobs', 'WpdbStore', 'Library'] as $class) {
             require_once dirname(__DIR__, 2) . "/wordpress/includes/{$class}.php";
+        }
+    }
+
+    public function testTheBundledLibrarysVersionAgainstTheOneLoaded(): void
+    {
+        $plugin = dirname(__DIR__, 2) . '/wordpress';
+        // Run from the monorepo, the bundled library is ../src: the copy loaded here.
+        $this->assertSame(\Cronwatch\Cronwatch::VERSION, Library::bundled($plugin));
+        $this->assertNull(Library::mismatch($plugin), 'the same version: the plugin runs');
+
+        $dir = sys_get_temp_dir() . '/cronwatch-lib-' . getmypid() . '-' . bin2hex(random_bytes(4));
+        mkdir("{$dir}/plugin/lib/src", 0777, true);
+        file_put_contents("{$dir}/plugin/lib/src/Cronwatch.php", "<?php\nfinal class Cronwatch\n{\n    public const VERSION = '99.0.0';\n}\n");
+        try {
+            $this->assertSame('99.0.0', Library::bundled("{$dir}/plugin"));
+            $this->assertSame(\Cronwatch\Cronwatch::VERSION, Library::mismatch("{$dir}/plugin"), 'another version loaded first: the plugin stays off');
+            $this->assertNull(Library::mismatch("{$dir}/nothing"), 'no bundled copy to tell by');
+        } finally {
+            @unlink("{$dir}/plugin/lib/src/Cronwatch.php");
+            @rmdir("{$dir}/plugin/lib/src");
+            @rmdir("{$dir}/plugin/lib");
+            @rmdir("{$dir}/plugin");
+            @rmdir($dir);
         }
     }
 

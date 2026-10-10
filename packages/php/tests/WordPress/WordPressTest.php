@@ -962,6 +962,12 @@ final class WordPressTest extends TestCase
         $this->assertCount(3, $tables('3_'), 'and its tables');
         $this->assertMatchesRegularExpression('/^cronwatch: checked \d+ jobs?, sent \d+ alerts?$/', trim(self::must(['cronwatch', 'check', '--url=cwms.test/later/'], '', $dir)));
 
+        // A site deleted from the network takes its CronWatch tables with it.
+        self::must(['site', 'create', '--slug=gone'], '', $dir);
+        $this->assertCount(3, $tables('4_'));
+        self::must(['site', 'delete', '4', '--yes'], '', $dir);
+        $this->assertSame([], $tables('4_'), 'deleting a site drops its tables');
+
         self::must(['plugin', 'deactivate', 'cronwatch', '--network'], '', $dir);
         foreach (['cwms.test', 'cwms.test/early/', 'cwms.test/later/'] as $url) {
             $this->assertNotContains('cronwatch_check', $hooks($url), "{$url} keeps no check once the network deactivates it");

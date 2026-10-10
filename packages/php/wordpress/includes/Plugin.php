@@ -58,6 +58,7 @@ final class Plugin
         add_filter('cron_schedules', [self::class, 'schedules']);
         add_action(self::CHECK_HOOK, [self::class, 'runCheck']);
         add_action('wp_initialize_site', [self::class, 'newSite'], 20);
+        add_filter('wpmu_drop_tables', [self::class, 'siteTables'], 10, 2);
         add_action('rest_api_init', [Api::class, 'register']);
         add_filter('rest_pre_serve_request', [Api::class, 'serve'], 10, 1);
         if (is_admin()) {
@@ -151,6 +152,31 @@ final class Plugin
         } finally {
             restore_current_blog();
         }
+    }
+
+    /**
+     * wpmu_drop_tables: a site deleted from a network takes its CronWatch
+     * tables with it, as it does its own (uninstall reaches only the sites
+     * still there). Whether or not the plugin is active there: the tables
+     * stay after deactivation, and a site id may be used again.
+     *
+     * @param array<array-key, string> $tables
+     * @return array<array-key, string>
+     */
+    public static function siteTables(array $tables, int $siteId = 0): array
+    {
+        global $wpdb;
+        if ($siteId <= 0 || !is_object($wpdb) || !method_exists($wpdb, 'get_blog_prefix')) {
+            return $tables;
+        }
+        $prefix = $wpdb->get_blog_prefix($siteId) . 'cronwatch_';
+        if (preg_match('/^[A-Za-z0-9_]+$/D', $prefix) !== 1) {
+            return $tables;
+        }
+        foreach (['runs', 'state', 'jobs'] as $table) {
+            $tables["cronwatch_{$table}"] = $prefix . $table;
+        }
+        return $tables;
     }
 
     /** @return array<string, string> */
