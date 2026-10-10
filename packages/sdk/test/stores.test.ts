@@ -377,3 +377,24 @@ await test("sqlite: a check, a silence, and every page over foreign rows (store.
   await cw.close();
   db.close();
 });
+
+test("postgres: a connection whose rollback fails is destroyed, and the work's own error is thrown", async () => {
+  const released: unknown[] = [];
+  const client = {
+    async query(text: string) {
+      if (text === "BEGIN") return {};
+      if (text === "ROLLBACK") throw new Error("Connection terminated");
+      throw new Error("the work failed");
+    },
+    release(error?: unknown) { released.push(error); },
+  };
+  const pool = { connect: async () => client, query: async () => ({ rows: [] }), end: async () => {} } as unknown as pg.Pool;
+  const store = postgres({ pool });
+  await assert.rejects(store.init!(), /^Error: the work failed$/);
+  assert.equal(released.length, 1);
+  assert.match(String(released[0]), /Connection terminated/, "released with the error, so pg destroys it");
+  // A rollback that works hands the connection back as usual.
+  client.query = async (text: string) => { if (text === "BEGIN" || text === "ROLLBACK") return {}; throw new Error("the work failed"); };
+  await assert.rejects(store.init!(), /the work failed/);
+  assert.equal(released[1], undefined);
+});

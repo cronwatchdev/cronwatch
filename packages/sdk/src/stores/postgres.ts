@@ -22,17 +22,24 @@ export function postgres(options: PostgresOptions = {}): Store {
   const owned = !options.pool;
   const pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? process.env.DATABASE_URL });
 
+  // A connection whose ROLLBACK fails (it died part way) is destroyed, not
+  // handed back to the pool, and the error that stopped the work is the one thrown.
   const transaction = async (work: (client: pg.PoolClient) => Promise<void>) => {
     const client = await pool.connect();
+    let broken: Error | undefined;
     try {
       await client.query("BEGIN");
       await work(client);
       await client.query("COMMIT");
     } catch (e) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollback) {
+        broken = rollback instanceof Error ? rollback : new Error(String(rollback));
+      }
       throw e;
     } finally {
-      client.release();
+      client.release(broken);
     }
   };
 
