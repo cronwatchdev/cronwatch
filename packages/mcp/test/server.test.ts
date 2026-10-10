@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { cronwatch, custom, memory } from "@cronwatch/sdk";
 import { createServer } from "../src/server.js";
+import { ApiClient } from "../src/client.js";
 
 /**
  * A fake of the JSON API @cronwatch/sdk mounts, enough to exercise every
@@ -41,6 +42,25 @@ async function connected(api: { fetchFn: typeof fetch; calls: string[] } = fakeA
   await client.connect(clientTransport);
   return { client, api, close: async () => { await client.close(); await server.close(); } };
 }
+
+test("a dashboard that never answers is given up on, with a check given longer", async () => {
+  const waits: (AbortSignal | null | undefined)[] = [];
+  const hanging: typeof fetch = (_input, init) => {
+    waits.push(init?.signal);
+    return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+  };
+  const api = new ApiClient({ baseUrl: "https://app.test/cronwatch", token: "tok", fetch: hanging, timeoutMs: 20 });
+  await assert.rejects(api.call("GET", "/jobs"), (error: Error) => {
+    assert.equal(error.name, "ApiError");
+    assert.match(error.message, /^GET \/jobs got no answer within 0\.02 seconds$/);
+    return true;
+  });
+  // Without a timeout of its own, every request still carries one.
+  const defaults = new ApiClient({ baseUrl: "https://app.test/cronwatch", token: "tok", fetch: async (_input, init) => { waits.push(init?.signal); return new Response("{}"); } });
+  await defaults.call("GET", "/jobs");
+  await defaults.call("POST", "/check");
+  assert.ok(waits.every((signal) => signal instanceof AbortSignal));
+});
 
 test("lists its tools", async () => {
   const { client, close } = await connected();

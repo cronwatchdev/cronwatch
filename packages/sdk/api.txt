@@ -129,6 +129,7 @@ interface JobState
   undelivered?: Alert[]
   sending?: SendingAlert[]
   underFloor?: string[]
+  pendingRuns?: string[]
   version?: number
 interface JobSummary
   name: string
