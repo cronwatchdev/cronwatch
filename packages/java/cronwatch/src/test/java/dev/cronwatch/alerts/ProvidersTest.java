@@ -520,4 +520,50 @@ class ProvidersTest {
     JsObject parsed = (JsObject) dev.cronwatch.json.Json.parse(Recorder.body(rec.taken().get(0)));
     assertTrue(parsed.has("blocks"));
   }
+
+  @Test
+  void aWebhookWithAnEmptySecretSendsUnsignedAndSaysSoThroughTheErrorHandler() throws Exception {
+    Recorder rec = new Recorder(200, "");
+    List<String> reported = new CopyOnWriteArrayList<>();
+    ChannelContext context = new ChannelContext(e -> reported.add(String.valueOf(e.getMessage())));
+    Webhook.channel(
+            WebhookOptions.builder()
+                .url("https://hooks.example.com/in")
+                .secret("")
+                .transport(rec)
+                .build())
+        .send(ChannelsConformanceTest.sample(), context);
+    assertEquals("", rec.header(0, "x-cronwatch-signature"));
+    assertEquals(1, reported.size());
+    assertTrue(
+        reported.get(0).contains("secret is an empty string, so this request is sent unsigned"),
+        reported.get(0));
+    // Left out, it sends unsigned on purpose, and says nothing.
+    Webhook.channel(
+            WebhookOptions.builder().url("https://hooks.example.com/in").transport(rec).build())
+        .send(ChannelsConformanceTest.sample(), context);
+    assertEquals(1, reported.size());
+  }
+
+  @Test
+  void slackAndDiscordCutTheWebhookUrlsCredentialOutOfAnAnswerThatEchoesIt() {
+    String slackUrl = "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX";
+    String discordUrl = "https://discord.com/api/webhooks/123456/tokenTOKENtoken";
+    for (String url : List.of(slackUrl, discordUrl)) {
+      String path = url.substring(url.indexOf('/', "https://".length()));
+      String last = path.substring(path.lastIndexOf('/') + 1);
+      Recorder rec = new Recorder(502, "<html>bad gateway for POST " + path + " HTTP/1.1</html>");
+      Channel channel =
+          url.equals(slackUrl)
+              ? Slack.channel(SlackOptions.builder().webhookUrl(url).transport(rec).build())
+              : Discord.channel(DiscordOptions.builder().webhookUrl(url).transport(rec).build());
+      Exception e =
+          assertThrows(
+              Exception.class, () -> channel.send(ChannelsConformanceTest.sample(), QUIET));
+      String message = String.valueOf(e.getMessage());
+      assertFalse(message.contains(path), message);
+      assertFalse(message.contains(last), message);
+      assertTrue(message.contains("[redacted]"), message);
+    }
+  }
 }

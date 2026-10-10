@@ -376,4 +376,162 @@ class OutboxTest {
       assertNull(state.pendingRuns(), "the run is no longer pending once judged");
     }
   }
+
+  /** A channel that refuses every alert while {@code down}, and keeps the ones it accepts. */
+  private static Channel flaky(AtomicBoolean down, List<Alert> sent) {
+    return new Channel() {
+      @Override
+      public String name() {
+        return "flaky";
+      }
+
+      @Override
+      public void send(Alert alert, ChannelContext context) {
+        if (down.get()) {
+          throw new IllegalStateException("down");
+        }
+        sent.add(alert);
+      }
+    };
+  }
+
+  private static Cronwatch client(Store store, Clock clock, Channel channel) {
+    return Cronwatch.builder()
+        .store(store)
+        .clock(clock::now)
+        .alerts(List.of(channel))
+        .noCronSecret()
+        .onError((where, e) -> {})
+        .noShutdownHook()
+        .build();
+  }
+
+  private static List<String> types(List<Alert> alerts) {
+    return alerts.stream().map(a -> a.type().value()).toList();
+  }
+
+  @Test
+  void twoProcessesCheckingAtOnceRetryAQueuedAlertOnceTheOneWhoseClaimLandsSendsIt()
+      throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    AtomicBoolean down = new AtomicBoolean(true);
+    List<Alert> sent = new CopyOnWriteArrayList<>();
+    try (Cronwatch a = client(shared, clock, flaky(down, sent));
+        Cronwatch b = client(shared, clock, flaky(down, sent))) {
+      assertThrows(IllegalStateException.class, () -> a.run("nightly", j -> fail()));
+      assertEquals(List.of("failed"), types(shared.getState("nightly").undelivered()));
+      down.set(false);
+      clock.advance(MIN);
+      Thread one = Support.background(a::check);
+      Thread two = Support.background(b::check);
+      one.join();
+      two.join();
+      assertEquals(List.of("failed"), types(sent));
+      JobState state = shared.getState("nightly");
+      assertEquals(List.of(), state.undelivered());
+      assertNull(state.sending());
+    }
+  }
+
+  @Test
+  void whileAJobIsSilencedARetryClaimsOnlyRecoveriesTheRestWaitInTheQueue() throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    AtomicBoolean down = new AtomicBoolean(true);
+    List<Alert> sent = new CopyOnWriteArrayList<>();
+    try (Cronwatch cw = client(shared, clock, flaky(down, sent))) {
+      assertThrows(IllegalStateException.class, () -> cw.run("nightly", j -> fail()));
+      cw.silence("nightly", "1h");
+      down.set(false);
+      clock.advance(MIN);
+      cw.check();
+      assertEquals(List.of(), sent);
+      assertEquals(List.of("failed"), types(shared.getState("nightly").undelivered()));
+      cw.unsilence("nightly");
+      cw.check();
+      assertEquals(List.of("failed"), types(sent));
+    }
+  }
+
+  @Test
+  void aFinishedRunWhoseEvaluationWasNeverWrittenIsEvaluatedByALaterCheckOnce() throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    // The finish's state write keeps losing, as if the process stopped between the run's write and
+    // its evaluation.
+    AtomicBoolean refuse = new AtomicBoolean();
+    Store contested =
+        (Store)
+            Proxy.newProxyInstance(
+                Store.class.getClassLoader(),
+                new Class<?>[] {Store.class},
+                (proxy, method, args) -> {
+                  if (refuse.get() && method.getName().equals("compareAndSetState")) {
+                    return false;
+                  }
+                  try {
+                    return method.invoke(shared, args);
+                  } catch (InvocationTargetException e) {
+                    throw e.getCause();
+                  }
+                });
+    Capture capture = new Capture();
+    try (Cronwatch cw = Support.builder(clock, capture, new Errors()).store(contested).build()) {
+      RunHandle handle = cw.job("nightly").start();
+      refuse.set(true);
+      handle.fail(new IllegalStateException("disk full"));
+      refuse.set(false);
+      assertEquals(RunStatus.FAILED, Objects.requireNonNull(shared.getRun(handle.id())).status());
+      assertEquals(List.of(), capture.types());
+      assertEquals(List.of(handle.id()), shared.getState("nightly").pendingRuns());
+      // Left alone at first, in case its finish is still being written elsewhere.
+      clock.advance(MIN);
+      cw.check();
+      assertEquals(List.of(), capture.types());
+      clock.advance(Evaluate.SEND_LEASE_MS);
+      cw.check();
+      assertEquals(List.of("failed"), capture.types());
+      assertNull(shared.getState("nightly").pendingRuns());
+      cw.check();
+      assertEquals(List.of("failed"), capture.types());
+    }
+  }
+
+  @Test
+  void aPendingRunTheStoreNoLongerHasIsLetGoAndARunStoredUnjudgedOnPurposeIsNotEvaluated()
+      throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    Capture capture = new Capture();
+    try (Cronwatch cw = Support.builder(clock, capture, new Errors()).store(shared).build()) {
+      cw.job("nightly");
+      shared.setState(
+          JobState.fromJson(
+              "{\"job\":\"nightly\",\"open\":{},\"consecutiveFailures\":0,"
+                  + "\"silencedUntil\":null,\"lastAlertAt\":null,\"pendingRuns\":[\"gone\"]}"));
+      cw.check();
+      assertNull(shared.getState("nightly").pendingRuns());
+      Run run = Run.running("imported", "nightly", clock.now(), "x");
+      cw.recordRun(run);
+      assertEquals(List.of("imported"), shared.getState("nightly").pendingRuns());
+      cw.recordRun(
+          Run.of(
+              "imported",
+              "nightly",
+              RunStatus.FAILED,
+              run.startedAt(),
+              clock.now(),
+              0L,
+              "x",
+              null,
+              Metrics.empty(),
+              "x"),
+          false);
+      assertNull(shared.getState("nightly").pendingRuns());
+      clock.advance(Evaluate.SEND_LEASE_MS + MIN);
+      cw.check();
+      assertEquals(List.of(), capture.types());
+    }
+  }
 }
