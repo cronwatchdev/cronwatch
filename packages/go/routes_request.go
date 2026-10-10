@@ -19,8 +19,8 @@ import (
 )
 
 // maxBody is the most of a request body the dashboard reads: its forms and
-// JSON are a few bytes. A body past it is answered 413; the SDK leaves this
-// to the server in front of it.
+// JSON are a few bytes. A body past it is answered 413, as the SDK and every
+// other port answer it.
 const maxBody = 1 << 20
 
 // MaxBody is the most of a request body the dashboard reads (1 MiB); a body

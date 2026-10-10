@@ -87,7 +87,10 @@ type Client struct {
 	mu          sync.Mutex
 	order       []string // declared names, in the order first declared
 	definitions map[string]*jobDef
-	synced      map[string]bool
+	// forgotten are declarations Forget removed, kept so that Run or
+	// ResumeRun by name declares the job again as it was written, not bare.
+	forgotten map[string]*jobDef
+	synced    map[string]bool
 	syncTurns   map[string]*syncTurnOf // see syncTurn
 	jobLocks    map[string]*jobLockOf
 	starting    map[string]*startCall
@@ -159,6 +162,7 @@ func New(options ...Option) (*Client, error) {
 		retention:   "30d",
 		now:         func() int64 { return time.Now().UnixMilli() },
 		definitions: map[string]*jobDef{},
+		forgotten:   map[string]*jobDef{},
 		synced:      map[string]bool{},
 		syncTurns:   map[string]*syncTurnOf{},
 		jobLocks:    map[string]*jobLockOf{},
@@ -264,6 +268,7 @@ func (c *Client) Job(name string, options ...JobOption) (*Job, error) {
 		c.order = append(c.order, name)
 	}
 	c.definitions[name] = def
+	delete(c.forgotten, name)
 	delete(c.synced, name)
 	c.mu.Unlock()
 	return &Job{c: c, def: def}, nil
@@ -300,10 +305,12 @@ func (c *Client) MustJob(name string, options ...JobOption) *Job {
 // Run runs a job by name without keeping a handle, declaring it on first
 // use (or again, when options are given).
 func (c *Client) Run(ctx context.Context, name string, fn JobFunc, options ...JobOption) error {
-	c.mu.Lock()
-	def, ok := c.definitions[name]
-	c.mu.Unlock()
-	if len(options) > 0 || !ok {
+	var def *jobDef
+	ok := false
+	if len(options) == 0 {
+		def, ok = c.declaredAgain(name)
+	}
+	if !ok {
 		j, err := c.Job(name, options...)
 		if err != nil {
 			return err
@@ -339,6 +346,25 @@ func (c *Client) declared(name string) (*jobDef, bool) {
 	defer c.mu.Unlock()
 	d, ok := c.definitions[name]
 	return d, ok
+}
+
+// declaredAgain is the declaration of name: the standing one, else one
+// Forget removed here, declared again as it was written.
+func (c *Client) declaredAgain(name string) (*jobDef, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d, ok := c.definitions[name]; ok {
+		return d, true
+	}
+	d, ok := c.forgotten[name]
+	if !ok {
+		return nil, false
+	}
+	delete(c.forgotten, name)
+	c.definitions[name] = d
+	c.order = append(c.order, name)
+	delete(c.synced, name)
+	return d, true
 }
 
 func (c *Client) declaredAll() []*jobDef {

@@ -424,15 +424,17 @@ func (c *Client) patchState(ctx context.Context, name string, change func(*JobSt
 }
 
 // Forget removes a job and its runs from the store. A job still declared
-// in code comes back: here on its next run, and in any other process that
-// declares it on its next run there, or at that process's next check or
-// dashboard read.
+// in code comes back, with no history: here on its next run, declared as it
+// was written (Run and ResumeRun by name included), and in any other
+// process that declares it on its next run there, or at that process's
+// next check or dashboard read.
 func (c *Client) Forget(ctx context.Context, name string) error {
 	if err := c.ensureReady(ctx); err != nil {
 		return err
 	}
 	c.mu.Lock()
-	if _, ok := c.definitions[name]; ok {
+	if def, ok := c.definitions[name]; ok {
+		c.forgotten[name] = def
 		delete(c.definitions, name)
 		for i, n := range c.order {
 			if n == name {

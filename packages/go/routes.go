@@ -713,7 +713,8 @@ func (rt *Routes) serve(r *http.Request, pathname, path, rawQuery, base string, 
 			if len(rest) > 0 {
 				search = "?" + strings.Join(rest, "&")
 			}
-			return redirectAnswer(pathname+search, signInCookie()), nil
+			// One leading slash: "//host/..." would be a protocol-relative Location, off this site.
+			return redirectAnswer("/"+strings.TrimLeft(pathname, "/")+search, signInCookie()), nil
 		}
 	}
 

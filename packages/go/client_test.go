@@ -267,6 +267,33 @@ func TestForgetRemovesTheJobAndItsRuns(t *testing.T) {
 	}
 }
 
+func TestAfterAForgetRunAndResumeRunByNameDeclareTheJobAsItWasWritten(t *testing.T) {
+	k := newKit(t)
+	options := []cronwatch.JobOption{cronwatch.Schedule("0 2 * * *"), cronwatch.Description("Nightly export")}
+	k.cw.MustJob("nightly", options...)
+	check(t, k.cw.Run(bg, "nightly", ok))
+	handle := must[*cronwatch.RunHandle](t)(k.cw.MustJob("nightly", options...).Start(bg))
+	check(t, k.cw.Forget(bg, "nightly"))
+	if summary(t, k.cw, "nightly") != nil {
+		t.Fatal("still stored")
+	}
+	check(t, k.cw.Run(bg, "nightly", ok))
+	s := summary(t, k.cw, "nightly")
+	eq(t, "schedule", s.Definition.Schedule(), "0 2 * * *")
+	eq(t, "description", s.Definition.Description(), "Nightly export")
+	check(t, k.cw.Forget(bg, "nightly"))
+	resumed := must[*cronwatch.RunHandle](t)(k.cw.ResumeRun(bg, "nightly", handle.ID()))
+	eq(t, "resumed", resumed.ID(), handle.ID())
+	k.c.Advance(HOUR)
+	checkNow(t, k.cw)
+	eq(t, "schedule after a check", summary(t, k.cw, "nightly").Definition.Schedule(), "0 2 * * *")
+	for _, kind := range k.alerts.Types() {
+		if kind == "recovered" {
+			t.Error("a 'no longer scheduled' recovery")
+		}
+	}
+}
+
 func TestAFailingChannelDoesNotBreakTheRun(t *testing.T) {
 	k := newKit(t, cronwatch.WithAlerts(channel("broken", func(cronwatch.Alert) error { return errors.New("no network") })))
 	err := k.cw.Run(bg, "x", fails("job"))

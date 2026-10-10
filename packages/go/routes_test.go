@@ -1011,3 +1011,22 @@ func TestATestEnvironmentIsNotDevelopment(t *testing.T) {
 		status(t, jsonOf(values)+" handler", serve(h, "GET", "http://localhost:3000/api/cron/nightly", nil, ""), 503)
 	}
 }
+
+// The ?token= sign-in never redirects off the site, however many slashes
+// lead the path.
+func TestRoutesTokenSignInNeverRedirectsOffTheSite(t *testing.T) {
+	k := newKit(t)
+	routes := must[*cronwatch.Routes](t)(k.cw.Routes(cronwatch.WithToken("tok"), cronwatch.WithBasePath("/")))
+	base := must[*url.URL](t)(url.Parse("http://app.test/"))
+	for _, path := range []string{"//evil.example/x", "///evil.example", "/\\/evil.example"} {
+		rec := serve(routes, "GET", "http://app.test"+path+"?token=tok", hdr{"accept": "text/html"}, "")
+		status(t, path, rec, http.StatusSeeOther)
+		location := rec.Header().Get("Location")
+		if !strings.HasPrefix(location, "/") || strings.HasPrefix(location, "//") {
+			t.Errorf("%s -> %s", path, location)
+		}
+		if host := base.ResolveReference(must[*url.URL](t)(url.Parse(location))).Host; strings.Contains(host, "evil") {
+			t.Errorf("%s -> %s (host %s)", path, location, host)
+		}
+	}
+}
