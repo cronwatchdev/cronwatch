@@ -50,11 +50,14 @@ test("a dashboard that never answers is given up on, with a check given longer",
     return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
   };
   const api = new ApiClient({ baseUrl: "https://app.test/cronwatch", token: "tok", fetch: hanging, timeoutMs: 20 });
+  // AbortSignal.timeout's timer does not keep the process alive (a real
+  // fetch's socket does), so on Node 22 the test would end before it fires.
+  const awake = setTimeout(() => {}, 5000);
   await assert.rejects(api.call("GET", "/jobs"), (error: Error) => {
     assert.equal(error.name, "ApiError");
     assert.match(error.message, /^GET \/jobs got no answer within 0\.02 seconds$/);
     return true;
-  });
+  }).finally(() => clearTimeout(awake));
   // Without a timeout of its own, every request still carries one.
   const defaults = new ApiClient({ baseUrl: "https://app.test/cronwatch", token: "tok", fetch: async (_input, init) => { waits.push(init?.signal); return new Response("{}"); } });
   await defaults.call("GET", "/jobs");
