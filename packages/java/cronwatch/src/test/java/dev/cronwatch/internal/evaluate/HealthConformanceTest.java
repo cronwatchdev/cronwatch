@@ -1,5 +1,6 @@
 package dev.cronwatch.internal.evaluate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.cronwatch.Alert;
@@ -73,6 +74,27 @@ class HealthConformanceTest {
   @Test
   void everyCaseAnswersAsTheSdkAnswers() {
     JsObject f = Fixtures.load("health");
+    // A section the SDK adds fails here until it is replayed.
+    assertEquals(
+        List.of(
+            "generatedBy",
+            "sdkVersion",
+            "jobHealth",
+            "summarize",
+            "percentile",
+            "median",
+            "normalizeState",
+            "muteOpens",
+            "isStuck",
+            "unevaluableSummary",
+            "applySilence",
+            "staleAlert",
+            "runDuration",
+            "stateVersion",
+            "failureCount",
+            "silenceEnd",
+            "delivery"),
+        f.keys());
     Fixtures.Failures fails = new Fixtures.Failures();
     int cases = 0;
     int i = 0;
@@ -300,6 +322,22 @@ class HealthConformanceTest {
   @Test
   void theOutboxAnswersAsTheSdkAnswers() {
     JsObject d = Fixtures.object(Fixtures.load("health"), "delivery");
+    // A section the SDK adds fails here until it is replayed below.
+    assertEquals(
+        List.of(
+            "maxUndelivered",
+            "sendLeaseMs",
+            "maxPendingRuns",
+            "alertKey",
+            "normalizeState",
+            "queueUndelivered",
+            "holdAlerts",
+            "releaseSending",
+            "recordSent",
+            "claimUndelivered",
+            "holdRun",
+            "releaseRun"),
+        d.keys());
     Fixtures.Failures fails = new Fixtures.Failures();
     fails.same("maxUndelivered", Evaluate.MAX_UNDELIVERED, d.get("maxUndelivered"));
     fails.same("sendLeaseMs", Evaluate.SEND_LEASE_MS, d.get("sendLeaseMs"));

@@ -36,6 +36,26 @@ class ForeignRowsConformanceTest {
 
   private static final JsObject FIXTURE = Fixtures.object(Fixtures.load("store"), "foreignRows");
 
+  /**
+   * Every section of {@code store.json} is replayed: {@code foreignRows} here, the rest by the
+   * store replay. One the SDK adds fails here until it is replayed too.
+   */
+  @Test
+  void everySectionIsReplayed() {
+    assertEquals(
+        List.of(
+            "generatedBy",
+            "sdkVersion",
+            "prune",
+            "compareAndSetState",
+            "updateRunIf",
+            "foreignVersion",
+            "nul",
+            "foreignRows"),
+        Fixtures.load("store").keys());
+    assertEquals(List.of("rows", "check"), FIXTURE.keys());
+  }
+
   private static SQLiteDataSource source(Path file) {
     SQLiteDataSource ds = new SQLiteDataSource();
     ds.setUrl("jdbc:sqlite:" + file);
