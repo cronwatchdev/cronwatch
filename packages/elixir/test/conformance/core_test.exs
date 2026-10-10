@@ -250,7 +250,8 @@ defmodule Cronwatch.Conformance.CoreTest do
       end)
 
     assert length(list(f, "runDuration")) >= 8 and length(list(f, "stateVersion")) >= 17 and
-             length(list(f, "failureCount")) >= 19 and length(list(f, "silenceEnd")) == 15
+             length(list(f, "failureCount")) >= 19 and length(list(f, "silenceEnd")) == 15 and
+             length(list(f, "applySilence")) == 6
 
     check!(fails, "health")
   end
