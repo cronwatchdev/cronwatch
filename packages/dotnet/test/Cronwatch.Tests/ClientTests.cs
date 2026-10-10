@@ -339,6 +339,29 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task After_a_forget_run_and_resume_by_name_declare_the_job_again_as_it_was_written()
+    {
+        await using var m = Make();
+        var options = new JobOptions { Schedule = "0 2 * * *", Description = "Nightly export" };
+        m.Cw.Job("nightly", options);
+        await m.Cw.RunAsync("nightly", (j, ct) => Task.CompletedTask);
+        RunHandle handle = await m.Cw.Job("nightly", options).StartAsync();
+        await m.Cw.ForgetAsync("nightly");
+        Assert.Null(await m.Cw.JobSummaryAsync("nightly"));
+        await m.Cw.RunAsync("nightly", (j, ct) => Task.CompletedTask);
+        JobSummary summary = (await m.Cw.JobSummaryAsync("nightly"))!;
+        Assert.Equal("0 2 * * *", summary.Definition.Schedule);
+        Assert.Equal("Nightly export", summary.Definition.Description);
+        await m.Cw.ForgetAsync("nightly");
+        RunHandle resumed = await m.Cw.ResumeRunAsync("nightly", handle.Id);
+        Assert.Equal(handle.Id, resumed.Id);
+        m.Clock.Advance(Hour);
+        await m.Cw.CheckAsync();
+        Assert.Equal("0 2 * * *", (await m.Cw.JobSummaryAsync("nightly"))!.Definition.Schedule);
+        Assert.DoesNotContain("recovered", m.Alerts.Types());
+    }
+
+    [Fact]
     public async Task A_recovery_for_an_alert_sent_before_the_silence_goes_out_during_it()
     {
         await using var m = Make();

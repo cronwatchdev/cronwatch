@@ -44,6 +44,12 @@ public sealed partial class CronwatchClient
 
     private readonly Lock _declaredLock = new();
     private readonly Dictionary<string, JobDef> _definitions = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Declarations forgotten here (<c>ForgetAsync</c>), kept so that a run or a resume by name
+    /// declares the job again as it was written, not bare.
+    /// </summary>
+    private readonly Dictionary<string, JobDef> _forgotten = new(StringComparer.Ordinal);
     private readonly List<string> _declarationOrder = [];
     private readonly HashSet<string> _synced = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _syncTurns = new(StringComparer.Ordinal);
@@ -180,7 +186,28 @@ public sealed partial class CronwatchClient
                 _declarationOrder.Add(def.Name);
             }
             _definitions[def.Name] = def;
+            _forgotten.Remove(def.Name);
             _synced.Remove(def.Name);
+        }
+    }
+
+    /// <summary>The declaration of <paramref name="name"/>: the standing one, else one forgotten here, declared again as it was.</summary>
+    internal JobDef? DeclaredOrForgotten(string name)
+    {
+        lock (_declaredLock)
+        {
+            if (_definitions.TryGetValue(name, out var standing))
+            {
+                return standing;
+            }
+            if (!_forgotten.Remove(name, out var forgotten))
+            {
+                return null;
+            }
+            _declarationOrder.Add(name);
+            _definitions[name] = forgotten;
+            _synced.Remove(name);
+            return forgotten;
         }
     }
 
@@ -204,9 +231,10 @@ public sealed partial class CronwatchClient
     {
         lock (_declaredLock)
         {
-            if (_definitions.Remove(name))
+            if (_definitions.Remove(name, out var def))
             {
                 _declarationOrder.Remove(name);
+                _forgotten[name] = def;
             }
             _synced.Remove(name);
         }
