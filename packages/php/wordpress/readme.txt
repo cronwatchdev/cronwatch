@@ -137,6 +137,12 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 
 == Changelog ==
 
+= Unreleased =
+
+* A site deleted from a network takes its CronWatch tables with it.
+* The plugin stays off with a notice when another plugin loads a different version of the CronWatch library.
+* From the library: see the CronWatch changelog for this release's changes.
+
 = 0.12.5 =
 
 * From the library: alert text, the dashboard, and messages use the serial (Oxford) comma in lists of three or more, and a recovery alert names what closed as a list ("succeeded after: missed, failed, and over budget"). A filter that matches alert text word for word may need updating.
