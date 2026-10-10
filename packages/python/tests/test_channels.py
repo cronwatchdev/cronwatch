@@ -530,6 +530,22 @@ def test_the_default_http_posts_to_a_real_server() -> None:
         server.close()
 
 
+def test_the_default_http_ignores_proxy_settings_as_the_sdk_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy = LocalServer(204)
+    target = LocalServer(204)
+    try:
+        for name in ("no_proxy", "NO_PROXY"):
+            monkeypatch.delenv(name, raising=False)
+        for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+            monkeypatch.setenv(name, proxy.url)
+        A.Webhook(f"{target.url}/hook", headers={"authorization": "Bearer wh-secret"}, secret="k").send(alert_j())
+        assert len(target.seen) == 1
+        assert proxy.seen == [], "the alert went through the proxy"
+    finally:
+        proxy.close()
+        target.close()
+
+
 def test_no_channel_follows_a_redirect_so_its_credentials_never_reach_another_origin() -> None:
     evil = LocalServer(202)
     provider = LocalServer(307, {"Location": f"{evil.url}/steal"})

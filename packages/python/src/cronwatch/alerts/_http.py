@@ -215,7 +215,9 @@ class UrllibHTTP:
                 raise ValueError(f"the {name!r} header has a line break or control character in it")
             request.add_header(name, text)
         watch = _Deadline(deadline - time.monotonic())
-        opener = urllib.request.build_opener(_NoRedirect(), _HTTPHandler(watch), _HTTPSHandler(watch))
+        # An empty ProxyHandler: the alert goes straight to its host, as the SDK's
+        # fetch sends it, never through HTTP(S)_PROXY or the system's proxy.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(), _HTTPHandler(watch), _HTTPSHandler(watch))
         try:
             try:
                 response = opener.open(request, timeout=_remaining(deadline))

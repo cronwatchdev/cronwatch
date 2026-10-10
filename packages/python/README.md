@@ -96,7 +96,7 @@ alerts = [
 ]
 ```
 
-`Slack`, `Discord`, and `Webhook` (the alert as JSON, signed with `secret=`, with extra headers from `headers=`), the email providers `Resend`, `Postmark`, `Sendgrid`, `Mailgun`, and `Ses` (signed with SigV4, no AWS SDK), `Twilio` for SMS, and the trackers `Sentry`, `Honeybadger`, `Datadog`, `Rollbar`, `Bugsnag`, and `NewRelic` (`environment=` for Sentry, Honeybadger, and Rollbar; `site=` and `tags=` for Datadog). Requests time out after ten seconds, redirects are refused rather than followed, and a provider's error never quotes a key.
+`Slack`, `Discord`, and `Webhook` (the alert as JSON, signed with `secret=`, with extra headers from `headers=`), the email providers `Resend`, `Postmark`, `Sendgrid`, `Mailgun`, and `Ses` (signed with SigV4, no AWS SDK), `Twilio` for SMS, and the trackers `Sentry`, `Honeybadger`, `Datadog`, `Rollbar`, `Bugsnag`, and `NewRelic` (`environment=` for Sentry, Honeybadger, and Rollbar; `site=` and `tags=` for Datadog). Requests time out after ten seconds and go straight to their host whatever the proxy settings, redirects are refused rather than followed, and a provider's error never quotes a key.
 
 ### Triage and pg_cron
 
