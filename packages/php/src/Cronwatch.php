@@ -113,6 +113,13 @@ final class Cronwatch
     private readonly bool $usingDefaultStore;
     /** @var array<string, JobDefinition> */
     private array $definitions = [];
+    /**
+     * Declarations forgotten here (forget()), kept so that run() or
+     * resumeRun() by name declares the job again as it was written, not bare.
+     *
+     * @var array<string, JobDefinition>
+     */
+    private array $forgotten = [];
     /** @var array<string, true> */
     private array $synced = [];
     private bool $ready = false;
@@ -252,8 +259,23 @@ final class Cronwatch
         $definition = $this->buildDefinition($name, $options);
         self::validateDefinition($definition);
         $this->definitions[$name] = $definition;
-        unset($this->synced[$name]);
+        unset($this->forgotten[$name], $this->synced[$name]);
         return new JobHandle($this, $definition);
+    }
+
+    /** The declaration of `name`: the standing one, else one forgotten here, declared again as it was. */
+    private function declared(string $name): ?JobDefinition
+    {
+        if (isset($this->definitions[$name])) {
+            return $this->definitions[$name];
+        }
+        $forgotten = $this->forgotten[$name] ?? null;
+        if ($forgotten === null) {
+            return null;
+        }
+        unset($this->forgotten[$name], $this->synced[$name]);
+        $this->definitions[$name] = $forgotten;
+        return $forgotten;
     }
 
     /**
@@ -264,8 +286,8 @@ final class Cronwatch
      */
     public function run(string $name, callable $fn, ?array $options = null): mixed
     {
-        $declared = $this->definitions[$name] ?? null;
-        $handle = $options !== null || $declared === null ? $this->job($name, $options ?? []) : new JobHandle($this, $declared);
+        $declared = $options === null ? $this->declared($name) : null;
+        $handle = $declared === null ? $this->job($name, $options ?? []) : new JobHandle($this, $declared);
         return $handle->run($fn);
     }
 
@@ -278,7 +300,7 @@ final class Cronwatch
     /** A handle on a run started elsewhere, as job(name)->resume(runId). The job must be declared in this process. */
     public function resumeRun(string $name, string $runId): RunHandle
     {
-        $definition = $this->definitions[$name] ?? throw new \InvalidArgumentException("resumeRun: job \"{$name}\" is not declared; call job() first");
+        $definition = $this->declared($name) ?? throw new \InvalidArgumentException("resumeRun: job \"{$name}\" is not declared; call job() first");
         return $this->resumeHandle($definition, $runId);
     }
 
@@ -349,7 +371,7 @@ final class Cronwatch
         if (!$evaluate) {
             return [];
         }
-        $this->updateState($run->job, fn (JobState $before) => [Evaluate::onRunStart($before), null]);
+        $this->updateState($run->job, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
         if ($run->status === RunStatus::RUNNING) {
             return [];
         }
@@ -471,13 +493,17 @@ final class Cronwatch
 
     /**
      * Remove a job and its runs from the store. A job still declared in code
-     * comes back: here on its next run, and in any other process that
-     * declares it on its next run there, or at that process's next check or
-     * dashboard read.
+     * comes back, with no history: here on its next run, declared as it was
+     * written (run() and resumeRun() by name included), and in any other
+     * process that declares it on its next run there, or at that process's
+     * next check or dashboard read.
      */
     public function forget(string $name): void
     {
         $this->ensureReady();
+        if (isset($this->definitions[$name])) {
+            $this->forgotten[$name] = $this->definitions[$name];
+        }
         unset($this->definitions[$name], $this->synced[$name]);
         $this->store->deleteJob($name);
     }
@@ -847,7 +873,7 @@ final class Cronwatch
         // done just before the job runs. The result is the same.
         if ($recorded && !$mayDiscard) {
             try {
-                $this->updateState($name, fn (JobState $before) => [Evaluate::onRunStart($before), null]);
+                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
             } catch (\Throwable $error) {
                 $this->report($error, "starting {$name}");
             }
@@ -1180,7 +1206,7 @@ final class Cronwatch
         }
         if ($recorded) {
             try {
-                $this->updateState($name, fn (JobState $before) => [Evaluate::onRunStart($before), null]);
+                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
             } catch (\Throwable $error) {
                 $this->report($error, "starting {$name}");
             }
@@ -1343,7 +1369,16 @@ final class Cronwatch
             $this->report(new \RuntimeException("run {$run->id} of {$run->job} {$ignored}; ignored"), "recording {$run->job}");
             return [];
         }
-        if (!$evaluate || ($late && $run->status !== RunStatus::OK)) {
+        if (!$evaluate) {
+            // Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+            try {
+                $this->updateState($run->job, fn (JobState $current) => [Evaluate::releaseRun($current, $run->id), null]);
+            } catch (\Throwable $error) {
+                $this->report($error, "recording {$run->job}");
+            }
+            return [];
+        }
+        if ($late && $run->status !== RunStatus::OK) {
             return [];
         }
         return $this->finishRun($definition, $run, $this->now());
@@ -1362,8 +1397,9 @@ final class Cronwatch
         try {
             [, $held] = $this->updateState($run->job, function (JobState $previous) use ($definition, $run, $at, $startPending, &$history): array {
                 $history ??= $this->history($run);
-                $started = $startPending ? Evaluate::onRunStart($previous) : $previous;
-                $settled = Evaluate::applySilence($previous, Evaluate::onRunFinish($definition, $run, $started, $history, $at), $at);
+                $before = Evaluate::releaseRun($previous, $run->id);
+                $started = $startPending ? Evaluate::onRunStart($before) : $before;
+                $settled = Evaluate::applySilence($before, Evaluate::onRunFinish($definition, $run, $started, $history, $at), $at);
                 return $this->outbox($settled, $definition, $at);
             });
         } catch (\Throwable $error) {
@@ -1497,6 +1533,7 @@ final class Cronwatch
                     $this->report($error, "retrying alerts for {$stored->name}");
                 }
                 array_push($alerts, ...$this->dispatch($stored->name, $held['alerts'], $at));
+                array_push($alerts, ...$this->evaluatePending($stored, $recent, $state, $at));
                 $jobs[] = Evaluate::summarize($stored, $recent, $state, $nextExpectedAt, $at);
             } catch (\Throwable $error) {
                 $this->report($error, "checking {$stored->name}");
@@ -1623,29 +1660,42 @@ final class Cronwatch
 
     /**
      * Send the alerts that no channel accepted last time, once each, oldest
-     * first. An alert that no longer describes the job (Evaluate::staleAlert)
-     * is dropped instead. Retries across a check share RETRY_BUDGET_MS of
-     * wall-clock time; once it is spent the rest stay queued for the next check.
+     * first. They are claimed first (Evaluate::claimUndelivered): moved into
+     * `sending` with a lease, in one conditional write, so when several
+     * processes check at once only the one whose write lands sends them. An
+     * alert that no longer describes the job (Evaluate::staleAlert) is
+     * dropped instead. Retries across a check share RETRY_BUDGET_MS of
+     * wall-clock time; claimed alerts it has no time left for go back to the
+     * queue for the next check.
      *
      * @return list<Alert>
      */
     private function retryUndelivered(string $name, JobState $state, int|float $at, float &$spent): array
     {
-        $pending = $state->undelivered ?? [];
-        if ($pending === [] || Evaluate::isSilenced($state, $at) || $this->deferDelivery) {
+        if (($state->undelivered ?? []) === [] || $this->deferDelivery) {
+            return [];
+        }
+        try {
+            [, $claimed] = $this->updateState($name, function (JobState $previous) use ($at): array {
+                $claim = Evaluate::claimUndelivered($previous, $at, $this->now() + Evaluate::SEND_LEASE_MS);
+                return [$claim['state'], $claim['claimed']];
+            });
+        } catch (\Throwable $error) {
+            $this->report($error, "claiming undelivered alerts for {$name}");
+            return [];
+        }
+        if ($claimed === []) {
             return [];
         }
         self::holdOn();
         $delivered = [];
         $failed = [];
-        $dropped = array_values(array_filter($pending, fn (Alert $alert) => Evaluate::staleAlert($alert, $state)));
-        foreach ($pending as $alert) {
-            if (in_array($alert, $dropped, true)) {
-                continue;
-            }
+        foreach ($claimed as $alert) {
             $left = self::RETRY_BUDGET_MS - $spent;
             if ($left <= 0) {
-                break;
+                // Not tried: back to the queue as it was.
+                $failed[] = $alert;
+                continue;
             }
             $started = ($this->wall)();
             // An alert queued by a process that delivers at check time was never
@@ -1660,8 +1710,49 @@ final class Cronwatch
             }
             $spent += max(0.0, ($this->wall)() - $started);
         }
-        $this->recordDelivery($name, $delivered, $failed, $dropped, $at);
+        $this->recordDelivery($name, $delivered, $failed, [], $at);
         return $delivered;
+    }
+
+    /**
+     * Runs the job's state still holds as pending (Evaluate::holdRun) whose
+     * finish was written but never evaluated: the process that finished them
+     * stopped, or its state write failed, between the two writes. Each one
+     * finished more than SEND_LEASE_MS ago is evaluated now, as its finish
+     * would have been; one still running is left to the stuck check, and one
+     * the store no longer has (given back, or pruned) is let go. The wait
+     * leaves a finish under way in another process to write its own
+     * evaluation.
+     *
+     * @param list<Run> $recent
+     * @return list<Alert>
+     */
+    private function evaluatePending(StoredJob $stored, array $recent, JobState $state, int|float $at): array
+    {
+        $alerts = [];
+        foreach ($state->pendingRuns ?? [] as $id) {
+            try {
+                $run = null;
+                foreach ($recent as $candidate) {
+                    if ($candidate->id === $id) {
+                        $run = $candidate;
+                        break;
+                    }
+                }
+                $run ??= $this->store->getRun($id);
+                if ($run === null || $run->job !== $stored->name) {
+                    $this->updateState($stored->name, fn (JobState $current) => [Evaluate::releaseRun($current, $id), null]);
+                    continue;
+                }
+                if ($run->status === RunStatus::RUNNING || !Js::isNumber($run->finishedAt) || $run->finishedAt > $at - Evaluate::SEND_LEASE_MS) {
+                    continue;
+                }
+                array_push($alerts, ...$this->finishRun($stored->definition, $run, $at));
+            } catch (\Throwable $error) {
+                $this->report($error, "evaluating run {$id} of {$stored->name}");
+            }
+        }
+        return $alerts;
     }
 
     /**

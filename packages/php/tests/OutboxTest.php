@@ -191,7 +191,8 @@ final class OutboxTest extends TestCase
         $state = $shared->getState('backup');
         $this->assertSame(['failed'], array_map(fn (Alert $a) => $a->type, $state->undelivered));
         $this->assertNull($state->sending);
-        $this->assertSame(1, $writes, 'one write: the failure and its alert together');
+        $this->assertNull($state->pendingRuns);
+        $this->assertSame(2, $writes, "the start holds the run; then one write: the failure, its alert, and the run's release together");
     }
 
     public function testAStateWithOddValuesInItsOutboxIsStillRead(): void
@@ -201,5 +202,124 @@ final class OutboxTest extends TestCase
         $released = Evaluate::releaseSending($state, self::T0);
         $this->assertNull($released['state']->sending);
         $this->assertSame([], $released['state']->undelivered);
+    }
+
+    public function testTwoProcessesCheckingAtOnceRetryAQueuedAlertOnceTheOneWhoseClaimLandsSendsIt(): void
+    {
+        $shared = new MemoryStore();
+        $clock = new Clock();
+        $down = true;
+        $sent = [];
+        $other = null;
+        // The second process checks while the first is sending, as two checks at once would.
+        $channel = new Custom('flaky', function (Alert $alert) use (&$down, &$sent, &$other): void {
+            if ($down) {
+                throw new \RuntimeException('down');
+            }
+            $sent[] = $alert->type;
+            if ($other !== null) {
+                [$check, $other] = [$other, null];
+                $check->check();
+            }
+        });
+        $a = new Cronwatch(store: $shared, now: $clock, alerts: [$channel], cronSecret: null, onError: fn () => null);
+        $b = new Cronwatch(store: $shared, now: $clock, alerts: [$channel], cronSecret: null, onError: fn () => null);
+        try {
+            $a->run('nightly', function (): never {
+                throw new \RuntimeException('disk full');
+            });
+        } catch (\RuntimeException) {
+        }
+        $this->assertSame(['failed'], array_map(fn (Alert $x) => $x->type, $shared->getState('nightly')->undelivered));
+        $down = false;
+        $clock->advance(self::MIN);
+        $other = $b;
+        $a->check();
+        $this->assertNull($other, 'the second check ran');
+        $this->assertSame(['failed'], $sent);
+        $state = $shared->getState('nightly');
+        $this->assertSame([], $state->undelivered);
+        $this->assertNull($state->sending);
+    }
+
+    public function testWhileAJobIsSilencedARetryClaimsOnlyRecoveriesTheRestWaitInTheQueue(): void
+    {
+        $shared = new MemoryStore();
+        $clock = new Clock();
+        $down = true;
+        $sent = [];
+        $channel = new Custom('flaky', function (Alert $alert) use (&$down, &$sent): void {
+            if ($down) {
+                throw new \RuntimeException('down');
+            }
+            $sent[] = $alert->type;
+        });
+        $cw = new Cronwatch(store: $shared, now: $clock, alerts: [$channel], cronSecret: null, onError: fn () => null);
+        try {
+            $cw->run('nightly', function (): never {
+                throw new \RuntimeException('disk full');
+            });
+        } catch (\RuntimeException) {
+        }
+        $cw->silence('nightly', '1h');
+        $down = false;
+        $clock->advance(self::MIN);
+        $cw->check();
+        $this->assertSame([], $sent);
+        $this->assertSame(['failed'], array_map(fn (Alert $x) => $x->type, $shared->getState('nightly')->undelivered));
+        $cw->unsilence('nightly');
+        $cw->check();
+        $this->assertSame(['failed'], $sent);
+    }
+
+    public function testAFinishedRunWhoseEvaluationWasNeverWrittenIsEvaluatedByALaterCheckOnce(): void
+    {
+        $shared = new MemoryStore();
+        $contested = new FlakyStore($shared);
+        // The finish's state write keeps losing, as if the process stopped between the run's write and its evaluation.
+        $refuse = false;
+        $contested->hooks['compareAndSetState'] = function (\Closure $next, array $args) use (&$refuse): bool {
+            return $refuse ? false : $next(...$args);
+        };
+        $clock = new Clock();
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $contested, now: $clock, alerts: [$sent], cronSecret: null, onError: fn () => null);
+        $handle = $cw->job('nightly')->start();
+        $refuse = true;
+        $handle->finish(['error' => new \RuntimeException('disk full')]);
+        $refuse = false;
+        $this->assertSame('failed', $shared->getRun($handle->id)->status);
+        $this->assertSame([], $sent->types());
+        $this->assertSame([$handle->id], $shared->getState('nightly')->pendingRuns);
+        // Left alone at first, in case its finish is still being written elsewhere.
+        $clock->advance(self::MIN);
+        $cw->check();
+        $this->assertSame([], $sent->types());
+        $clock->advance(Evaluate::SEND_LEASE_MS);
+        $cw->check();
+        $this->assertSame(['failed'], $sent->types());
+        $this->assertNull($shared->getState('nightly')->pendingRuns);
+        $cw->check();
+        $this->assertSame(['failed'], $sent->types());
+    }
+
+    public function testAPendingRunTheStoreNoLongerHasIsLetGoAndARunStoredUnjudgedOnPurposeIsNotEvaluated(): void
+    {
+        $shared = new MemoryStore();
+        $clock = new Clock();
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $shared, now: $clock, alerts: [$sent], cronSecret: null);
+        $cw->job('nightly');
+        $shared->setState(\Cronwatch\JobState::fromJson(['job' => 'nightly', 'open' => [], 'consecutiveFailures' => 0, 'silencedUntil' => null, 'lastAlertAt' => null, 'pendingRuns' => ['gone']]));
+        $cw->check();
+        $this->assertNull($shared->getState('nightly')->pendingRuns);
+        $run = ['id' => 'imported', 'job' => 'nightly', 'status' => 'running', 'startedAt' => $clock(), 'finishedAt' => null, 'durationMs' => null, 'error' => null, 'output' => null, 'metrics' => [], 'trigger' => 'x'];
+        $cw->recordRun($run);
+        $this->assertSame(['imported'], $shared->getState('nightly')->pendingRuns);
+        $cw->recordRun(['status' => 'failed', 'finishedAt' => $clock(), 'durationMs' => 0, 'error' => 'x'] + $run, evaluate: false);
+        $this->assertNull($shared->getState('nightly')->pendingRuns);
+        $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
+        $cw->check();
+        $this->assertSame([], $sent->types());
     }
 }

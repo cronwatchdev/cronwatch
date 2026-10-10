@@ -190,7 +190,7 @@ final class ClientTest extends TestCase
         $this->assertSame(['missed', 'recovered'], $this->capture->types(), 'the next run owes nothing');
     }
 
-    public function testAScheduleRemovedWhileSilencedClosesMissedQuietly(): void
+    public function testAScheduleRemovedWhileSilencedClosesMissedWithItsRecoveryWhichTheSilenceDoesNotHoldBack(): void
     {
         $cw = $this->make();
         $cw->job('sync', ['schedule' => 'every 1h', 'grace' => '10m']);
@@ -200,11 +200,45 @@ final class ClientTest extends TestCase
         $cw->silence('sync', '1h');
         $cw->job('sync');
         $this->clock->advance(self::MIN);
-        $this->assertSame([], $cw->check()->alerts);
+        $this->assertSame(['recovered'], array_map(fn (Alert $a) => $a->type, $cw->check()->alerts));
         $this->assertSame([], $cw->jobSummary('sync')->open);
         $this->clock->advance(2 * self::HOUR);
         $this->assertSame([], $cw->check()->alerts);
-        $this->assertSame(['missed'], $this->capture->types());
+        $this->assertSame(['missed', 'recovered'], $this->capture->types());
+    }
+
+    public function testARecoveryForAnAlertSentBeforeTheSilenceIsSentDuringItNewProblemsAreNot(): void
+    {
+        $cw = $this->make();
+        $job = $cw->job('flaky');
+        $this->failing(fn () => $job->run(self::thrower('x')));
+        $cw->silence('flaky', '1h');
+        $job->run(fn () => 'ok');
+        $this->assertSame(['failed', 'recovered'], $this->capture->types());
+        $this->failing(fn () => $job->run(self::thrower('y')));
+        $this->assertSame(['failed', 'recovered'], $this->capture->types());
+    }
+
+    public function testAfterAForgetRunAndResumeRunByNameDeclareTheJobAgainAsItWasWrittenNotBare(): void
+    {
+        $cw = $this->make();
+        $options = ['schedule' => '0 2 * * *', 'description' => 'Nightly export'];
+        $cw->job('nightly', $options);
+        $cw->run('nightly', fn () => null);
+        $handle = $cw->job('nightly', $options)->start();
+        $cw->forget('nightly');
+        $this->assertNull($cw->jobSummary('nightly'));
+        $cw->run('nightly', fn () => null);
+        $summary = $cw->jobSummary('nightly');
+        $this->assertSame('0 2 * * *', $summary->definition->get('schedule'));
+        $this->assertSame('Nightly export', $summary->definition->get('description'));
+        $cw->forget('nightly');
+        $resumed = $cw->resumeRun('nightly', $handle->id);
+        $this->assertSame($handle->id, $resumed->id);
+        $this->clock->advance(self::HOUR);
+        $cw->check();
+        $this->assertSame('0 2 * * *', $cw->jobSummary('nightly')->definition->get('schedule'));
+        $this->assertNotContains('recovered', $this->capture->types(), "no 'no longer scheduled' recovery");
     }
 
     public function testASilenceEndsOnAWholeMillisecondHeldAtTheLargestSafeInteger(): void

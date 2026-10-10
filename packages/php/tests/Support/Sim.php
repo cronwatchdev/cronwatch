@@ -60,14 +60,9 @@ final class Sim
     /** @return list<Alert> */
     private function settle(JobState $previous, Evaluation $evaluation, int|float $now): array
     {
-        $state = $evaluation->state;
-        $alerts = $evaluation->alerts;
-        if (Evaluate::isSilenced($previous, $now)) {
-            $state = Evaluate::muteOpens($previous, $state);
-            $alerts = [];
-        }
-        $this->state = $state;
-        return array_map(fn ($draft) => Format::composeAlert($draft, $this->definition, $now), $alerts);
+        $settled = Evaluate::applySilence($previous, $evaluation, $now);
+        $this->state = $settled->state;
+        return array_map(fn ($draft) => Format::composeAlert($draft, $this->definition, $now), $settled->alerts);
     }
 
     public function start(string $id, int|float $now): array
