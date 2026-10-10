@@ -222,8 +222,52 @@ func (c *Client) checkJob(ctx context.Context, job StoredJob, now int64, spent *
 	c.reportDropped(job.Name, out.dropped)
 	alerts := c.retryUndelivered(ctx, job.Name, state, now, spent)
 	alerts = append(alerts, c.dispatch(ctx, job.Name, out.alerts, now)...)
+	alerts = append(alerts, c.evaluatePending(ctx, job, recent, state, now)...)
 	summary, err := summarize(job, recent, state, nextExpectedAt, now)
 	return summary, alerts, err
+}
+
+// evaluatePending evaluates the runs the job's state still holds as pending
+// (holdRun) whose finish was written but never evaluated: the process that
+// finished them stopped, or its state write failed, between the two
+// writes. Each one finished more than sendLeaseMs ago is evaluated now, as
+// its finish would have been; one still running is left to the stuck
+// check, and one the store no longer has (given back, or pruned) is let
+// go. The wait leaves a finish under way in another process to write its
+// own evaluation.
+func (c *Client) evaluatePending(ctx context.Context, job StoredJob, recent []Run, state JobState, now int64) []Alert {
+	alerts := []Alert{}
+	for _, id := range state.PendingRuns {
+		err := func() error {
+			var run *Run
+			for i := range recent {
+				if recent[i].ID == id {
+					run = &recent[i]
+					break
+				}
+			}
+			if run == nil {
+				stored, err := c.store.GetRun(ctx, id)
+				if err != nil {
+					return err
+				}
+				run = stored
+			}
+			if run == nil || run.Job != job.Name {
+				_, _, err := updateState(ctx, c, job.Name, func(s JobState) (JobState, struct{}, error) { return releaseRun(s, id), struct{}{}, nil })
+				return err
+			}
+			if run.Status == StatusRunning || run.FinishedAt == nil || *run.FinishedAt > now-sendLeaseMs {
+				return nil
+			}
+			alerts = append(alerts, c.finishRun(ctx, job.Definition, run.clone(), now)...)
+			return nil
+		}()
+		if err != nil {
+			c.report(err, fmt.Sprintf("evaluating run %s of %s", id, job.Name))
+		}
+	}
+	return alerts
 }
 
 // JobWithRuns is a job's summary and its newest runs.

@@ -90,9 +90,11 @@ func TestAnUpdateThatKeepsLosingGivesUpAndTheRunFinishes(t *testing.T) {
 	if err := k.cw.Run(bg, "busy", fails("x")); err == nil {
 		t.Fatal("the job's error")
 	}
-	sameList(t, "errors", k.wheres(), []string{"evaluating busy"})
+	// The start's write (it holds the run as pending) loses too, and is reported the same way.
+	sameList(t, "errors", k.wheres(), []string{"starting busy", "evaluating busy"})
 	eq(t, "status", runs(t, k.cw, "busy")[0].Status, cronwatch.StatusFailed)
-	if msgs := k.messages(); len(msgs) != 1 || msgs[0] != "the state of busy changed under 10 attempts in a row to update it; gave up" {
+	gaveUp := "the state of busy changed under 10 attempts in a row to update it; gave up"
+	if msgs := k.messages(); len(msgs) != 2 || msgs[0] != gaveUp || msgs[1] != gaveUp {
 		t.Error(msgs)
 	}
 }

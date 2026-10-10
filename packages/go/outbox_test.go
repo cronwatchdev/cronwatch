@@ -191,5 +191,5 @@ func TestAProcessThatQueuesItsAlertsWritesThemWithTheStateThatOpensTheCondition(
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	eq(t, "one write: the failure and its alert together", writes, 1)
+	eq(t, "the start holds the run; then one write: the failure, its alert, and the run's release together", writes, 2)
 }
