@@ -17,6 +17,13 @@ defmodule Cronwatch.Store do
   as the SDK does, and without `c:delete_run_if/4` a run given back is
   recorded as it ended.
 
+  Every callback must answer in bounded time, failing with `{:error, reason}`
+  when its database does not answer (a query timeout, as Ecto's and the
+  memory store's calls have). The instance waits for a store call without a
+  deadline of its own: a call that never returns holds the job's lock on
+  this node, so later runs of that job wait behind it, and holds the check
+  that every caller of `Cronwatch.check/1` shares.
+
   `Cronwatch.StoreCase` is the contract test every store passes, for a store
   of the app's own.
   """
