@@ -42,20 +42,26 @@ final class DevelopmentToken
         if ($existing !== null) {
             return [$existing, false];
         }
+        // Written whole to a file of its own, then linked into place, which
+        // fails when the name exists: a request that comes in between never
+        // finds the file empty and makes a token of its own.
         $mask = umask(0077);
         try {
-            $handle = is_link($file) ? false : @fopen($file, 'x');
+            $draft = is_link($file) ? false : @tempnam(dirname($file), 'dev-token-draft-');
         } finally {
             umask($mask);
         }
-        if ($handle === false) {
+        $made = false;
+        if ($draft !== false) {
+            @chmod($draft, 0600);
+            $made = @file_put_contents($draft, $token) === strlen($token) && @link($draft, $file);
+            @unlink($draft);
+        }
+        // phpcs:enable WordPress.WP.AlternativeFunctions
+        if (!$made) {
             // Another request made it first, or the directory is not writable: use its token, or this one.
             return ($existing = self::readToken($file)) !== null ? [$existing, false] : [$token, true];
         }
-        @chmod($file, 0600);
-        fwrite($handle, $token);
-        fclose($handle);
-        // phpcs:enable WordPress.WP.AlternativeFunctions
         return [$token, true];
     }
 
