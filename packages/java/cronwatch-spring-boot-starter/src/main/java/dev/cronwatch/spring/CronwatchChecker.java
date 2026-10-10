@@ -100,7 +100,7 @@ final class CronwatchChecker implements SmartLifecycle {
           yield CronwatchProperties.CheckMode.SHEDLOCK;
         }
         if (quartz != null && quartz.clustered()) {
-          yield CronwatchProperties.CheckMode.QUARTZ;
+          yield quartzOrLocal(quartz);
         }
         yield CronwatchProperties.CheckMode.LOCAL;
       }
@@ -122,10 +122,24 @@ final class CronwatchChecker implements SmartLifecycle {
                   + " check runs in each instance");
           yield CronwatchProperties.CheckMode.LOCAL;
         }
-        yield mode;
+        yield quartzOrLocal(quartz);
       }
       default -> mode;
     };
+  }
+
+  /**
+   * Quartz's check when a scheduler took the check job; else (each refused it) the check in each
+   * instance, so missed and stuck runs are still found.
+   */
+  private static CronwatchProperties.CheckMode quartzOrLocal(QuartzChecks quartz) {
+    if (quartz.runsTheCheck()) {
+      return CronwatchProperties.CheckMode.QUARTZ;
+    }
+    LOGGER.log(
+        System.Logger.Level.WARNING,
+        "[cronwatch] no Quartz scheduler took the check job; the check runs in each instance");
+    return CronwatchProperties.CheckMode.LOCAL;
   }
 
   @Override

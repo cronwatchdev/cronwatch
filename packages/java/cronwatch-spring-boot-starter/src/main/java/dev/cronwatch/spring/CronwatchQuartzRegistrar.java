@@ -53,24 +53,51 @@ final class CronwatchQuartzRegistrar
     for (Scheduler s : all) {
       try {
         watched.add(CronwatchQuartz.watch(cw, s, QuartzOptions.defaults().app(app)));
-        if (quartzCheck) {
-          CronwatchQuartz.scheduleCheck(s, CronwatchChecker.interval(properties.getCheckEvery()));
-          runsTheCheck = true;
-        }
       } catch (SchedulerException e) {
+        cw.reportError(e, "quartz");
+      }
+    }
+    if (!quartzCheck) {
+      return;
+    }
+    // The check job on one scheduler only, a clustered one first (each clustered scheduler would
+    // run it once per cluster, and one that is not, once per instance); the next if one refuses.
+    // When none takes it, runsTheCheck stays false and the starter checks in each instance.
+    List<Scheduler> order = new ArrayList<>();
+    for (Scheduler s : all) {
+      if (isClustered(s)) {
+        order.add(s);
+      }
+    }
+    for (Scheduler s : all) {
+      if (!order.contains(s)) {
+        order.add(s);
+      }
+    }
+    for (Scheduler s : order) {
+      try {
+        CronwatchQuartz.scheduleCheck(s, CronwatchChecker.interval(properties.getCheckEvery()));
+        runsTheCheck = true;
+        return;
+      } catch (SchedulerException | RuntimeException e) {
         cw.reportError(e, "quartz");
       }
     }
   }
 
+  private static boolean isClustered(Scheduler s) {
+    try {
+      return s.getMetaData().isJobStoreClustered();
+    } catch (SchedulerException e) {
+      return false;
+    }
+  }
+
   private static boolean clustered(List<Scheduler> all) {
     for (Scheduler s : all) {
-      try {
-        if (s.getMetaData().isJobStoreClustered()) {
-          return true;
-        }
-      } catch (SchedulerException e) {
-        // Not one the app can ask; not counted.
+      // One the app cannot ask is not counted.
+      if (isClustered(s)) {
+        return true;
       }
     }
     return false;
