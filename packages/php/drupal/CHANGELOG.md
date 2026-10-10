@@ -2,7 +2,7 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
-## Unreleased
+## 0.13.0 - 2026-10-10
 
 ### Changed
 - Keys, tokens, and the webhook secret are password fields: never shown again, kept when left blank, and cleared with Remove it. The permission's description says the settings can send requests to internal addresses.
