@@ -1,5 +1,5 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { cut, postable } from "./shared.js";
+import { cut, drain, errorBody, postable, urlSecrets } from "./shared.js";
 
 export interface DiscordOptions {
   /** A channel webhook URL from Server Settings, Integrations, Webhooks. */
@@ -50,7 +50,9 @@ export function discord(options: DiscordOptions): AlertChannel {
           ],
         }),
       });
-      if (!response.ok) throw new Error(`Discord webhook answered ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+      if (!response.ok) throw new Error(`Discord webhook answered ${response.status}: ${errorBody(await response.text(), urlSecrets(options.webhookUrl))}`);
+      await drain(response);
     },
   };
 }

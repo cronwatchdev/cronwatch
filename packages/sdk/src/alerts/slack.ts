@@ -1,5 +1,5 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { postable } from "./shared.js";
+import { drain, errorBody, postable, urlSecrets } from "./shared.js";
 
 export interface SlackOptions {
   /** An incoming webhook URL from api.slack.com/messaging/webhooks. */
@@ -46,7 +46,9 @@ export function slack(options: SlackOptions): AlertChannel {
           ],
         }),
       });
-      if (!response.ok) throw new Error(`Slack webhook answered ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+      if (!response.ok) throw new Error(`Slack webhook answered ${response.status}: ${errorBody(await response.text(), urlSecrets(options.webhookUrl))}`);
+      await drain(response);
     },
   };
 }
