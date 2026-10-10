@@ -25,7 +25,7 @@ Every CronWatch library reads a handful of environment variables, so the dashboa
 Development decides two things: a dashboard with no token makes one of its own and prints it, and a handler with no secret runs. Production decides one: the default in-memory store warns that it forgets on restart. Every library names the environment the same way:
 
 1. Take the first variable in the language's order (below) whose value, trimmed, is not empty, and lowercase it.
-2. `prod` means production. Only `development` itself means development: `dev`, `local`, `test`, and `testing` (often set for another tool) do not, so nothing but an explicit setting makes a token of its own or runs a handler with no secret.
+2. `prod` means production. `dev` and `local` mean development, as `development` does. `test` and `testing` do not: a test run or CI needs `CRON_SECRET` or a token, as production does.
 3. With nothing set, the environment is neither, so there is no development token and no unguarded handler.
 
 | Language | Order |

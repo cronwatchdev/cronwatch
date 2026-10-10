@@ -1821,8 +1821,8 @@ async function clientCases() {
 /**
  * The environment's name from the variables that name it, in each library's
  * order: CRONWATCH_ENV, APP_ENV, then the language's own (NODE_ENV here,
- * `native` in the cases). Only "development" itself is development; "prod"
- * is production.
+ * `native` in the cases). "development", "dev", and "local" are development,
+ * "production" and "prod" production; "test" and "testing" are neither.
  */
 function environmentCases() {
   const values = [

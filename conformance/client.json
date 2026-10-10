@@ -755,16 +755,16 @@
       "CRONWATCH_ENV": null,
       "APP_ENV": null,
       "native": "dev",
-      "environment": "dev",
-      "development": false,
+      "environment": "development",
+      "development": true,
       "production": false
     },
     {
       "CRONWATCH_ENV": null,
       "APP_ENV": null,
       "native": "local",
-      "environment": "local",
-      "development": false,
+      "environment": "development",
+      "development": true,
       "production": false
     },
     {
@@ -787,8 +787,8 @@
       "CRONWATCH_ENV": null,
       "APP_ENV": "local",
       "native": "production",
-      "environment": "local",
-      "development": false,
+      "environment": "development",
+      "development": true,
       "production": false
     },
     {
@@ -851,16 +851,16 @@
       "CRONWATCH_ENV": null,
       "APP_ENV": "dev",
       "native": null,
-      "environment": "dev",
-      "development": false,
+      "environment": "development",
+      "development": true,
       "production": false
     },
     {
       "CRONWATCH_ENV": "dev",
       "APP_ENV": null,
       "native": null,
-      "environment": "dev",
-      "development": false,
+      "environment": "development",
+      "development": true,
       "production": false
     }
   ],
