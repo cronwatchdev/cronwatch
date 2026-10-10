@@ -743,9 +743,10 @@ class BridgeTest {
   }
 
   @Test
-  void syncWithinGivesUpOnAHungSync() {
+  void syncWithinGivesUpOnAHungSync() throws Exception {
     List<String> errors = new CopyOnWriteArrayList<>();
     CountDownLatch hang = new CountDownLatch(1);
+    CountDownLatch ended = new CountDownLatch(1);
     try (Cronwatch cw = client(new MemoryStore(), errors)) {
       assertFalse(
           SchedulerBridge.syncWithin(
@@ -757,9 +758,13 @@ class BridgeTest {
                   hang.await();
                 } catch (InterruptedException e) {
                   Thread.currentThread().interrupt();
+                } finally {
+                  ended.countDown();
                 }
               }));
       assertEquals(List.of("quartz: the sync took longer than 0 seconds; gave up"), errors);
+      assertTrue(ended.await(10, TimeUnit.SECONDS), "the sync given up is interrupted");
+      Thread.sleep(200);
       assertTrue(SchedulerBridge.syncWithin(cw, Duration.ofSeconds(10), "quartz", () -> {}));
       assertFalse(
           SchedulerBridge.syncWithin(
@@ -772,6 +777,48 @@ class BridgeTest {
       assertEquals("quartz: no", errors.get(1));
     } finally {
       hang.countDown();
+    }
+  }
+
+  @Test
+  void syncWithinStartsNoSecondSyncWhileOneIsStillUnderWay() throws Exception {
+    List<String> errors = new CopyOnWriteArrayList<>();
+    CountDownLatch release = new CountDownLatch(1);
+    CountDownLatch ended = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicInteger started =
+        new java.util.concurrent.atomic.AtomicInteger();
+    Runnable deaf =
+        () -> {
+          started.incrementAndGet();
+          // A sync blocked where an interrupt does not reach (a driver's socket read).
+          while (true) {
+            try {
+              release.await();
+              break;
+            } catch (InterruptedException e) {
+              // Not heard.
+            }
+          }
+          ended.countDown();
+        };
+    try (Cronwatch cw = client(new MemoryStore(), errors)) {
+      assertFalse(SchedulerBridge.syncWithin(cw, Duration.ofMillis(50), "jobrunr", deaf));
+      assertFalse(SchedulerBridge.syncWithin(cw, Duration.ofMillis(50), "jobrunr", deaf));
+      assertEquals(1, started.get(), "the second was never started");
+      assertEquals(
+          List.of(
+              "jobrunr: the sync took longer than 0 seconds; gave up",
+              "jobrunr: the last sync has not ended yet; this one was skipped"),
+          errors);
+      assertTrue(
+          SchedulerBridge.syncWithin(cw, Duration.ofSeconds(10), "quartz", () -> {}),
+          "another integration's sync is its own");
+      release.countDown();
+      assertTrue(ended.await(10, TimeUnit.SECONDS));
+      Thread.sleep(200);
+      assertTrue(SchedulerBridge.syncWithin(cw, Duration.ofSeconds(10), "jobrunr", () -> {}));
+    } finally {
+      release.countDown();
     }
   }
 }
