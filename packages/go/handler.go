@@ -17,8 +17,10 @@ import (
 	"cronwatch.dev/go/internal/js"
 )
 
-// HandlerFunc is a job's work for one request. ctx is the request's
-// context with the job's timeout added. The function may answer the
+// HandlerFunc is a job's work for one request. ctx carries the request's
+// values with the job's timeout added, but not the request's cancellation:
+// a caller that hangs up (a curl with --max-time, a scheduler's attempt
+// deadline) leaves the job running to its end, as the SDK's handler does. The function may answer the
 // request itself through w, and a status of 400 or more written there
 // fails the run; when it writes nothing, the handler answers with how the
 // run went.
@@ -97,7 +99,9 @@ func HandlerValue[T any](job *Job, fn func(ctx context.Context, job *JobContext,
 		h.optedOut = c.secretOptOut
 	}
 	h.run = func(w *answerWriter, r *http.Request) executed {
-		return c.execute(r.Context(), job.def, func(ctx context.Context, jc *JobContext) (any, error) {
+		// The job outlives a caller that hangs up, as in the SDK: only its
+		// own timeout ends it.
+		return c.execute(context.WithoutCancel(r.Context()), job.def, func(ctx context.Context, jc *JobContext) (any, error) {
 			v, err := fn(ctx, jc, w, r)
 			if w.status >= 400 {
 				// What the function wrote is the outcome, as a response it
