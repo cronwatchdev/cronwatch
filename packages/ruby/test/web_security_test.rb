@@ -332,6 +332,90 @@ class WebSecurityTest < Minitest::Test
     assert_raises(TypeError) { Cronwatch::Client.new(**configuration.to_options) }
   end
 
+  # A body that never ends: reads count what they took, so a test can tell
+  # the routes stopped at the cap.
+  class Endless
+    attr_reader :taken
+
+    def initialize(prefix)
+      @prefix = prefix.b
+      @taken = 0
+    end
+
+    # As IO#read(length): `length` bytes, since the body never ends. A read
+    # of everything would never return; it raises instead.
+    def read(length = nil, buffer = nil)
+      raise "read the whole of a body that never ends" if length.nil?
+
+      head = @taken < @prefix.bytesize ? @prefix.byteslice(@taken, length) : "".b
+      chunk = head + ("x" * (length - head.bytesize))
+      @taken += chunk.bytesize
+      buffer ? buffer.replace(chunk) : chunk
+    end
+
+    def gets(*) = read(64 * 1024)
+    def each = yield(read(64 * 1024))
+    def rewind = 0
+  end
+
+  # The SDK's body cap, as every port's: 1 MiB, refused from the
+  # Content-Length or read no further than one byte past it.
+  def test_a_request_body_past_one_mib_is_refused_and_never_read_whole
+    cw, = make
+    cw.run("x") { nil }
+    web = cw.routes(token: "tok", base_path: "/cronwatch")
+    json = { "content-type" => "application/json" }
+    form = { "content-type" => "application/x-www-form-urlencoded" }
+    pad = "x" * (1 << 20)
+    api = send_request(web, "POST", "/cronwatch/api/jobs/x/silence", BEARER.merge(json), JSON.generate("for" => "2h", "pad" => pad))
+    assert_equal 413, api.status
+    assert_equal({ "ok" => false, "error" => "Request body too large" }, api.json)
+    page = send_request(web, "POST", "/cronwatch/jobs/x/silence", BEARER.merge(form), "for=2h&pad=#{pad}")
+    assert_equal 413, page.status
+    assert_includes page.body, "Not silenced"
+    assert_includes page.body, "The request was too large."
+    # Without a Content-Length, read one byte past the cap at most.
+    endless = Endless.new('{"for":"2h","pad":"')
+    streamed = send_request(web, "POST", "/cronwatch/api/jobs/x/silence", BEARER.merge(json, "content-length" => nil), endless)
+    assert_equal 413, streamed.status
+    assert_operator endless.taken, :<=, (1 << 20) + 1
+    assert_nil cw.job_summary("x").silenced_until
+    # The sign-in form: a body too large is no token at all.
+    sign_in = send_request(web, "POST", "/cronwatch/signin", form, "token=tok&pad=#{pad}")
+    assert_equal 401, sign_in.status
+    assert_nil sign_in.headers["set-cookie"]
+    # A body just under the cap is read.
+    fits = send_request(web, "POST", "/cronwatch/api/jobs/x/silence", BEARER.merge(json),
+                        JSON.generate("for" => "2h", "pad" => "x" * ((1 << 20) - 32)))
+    assert_equal 200, fits.status
+  end
+
+  def test_the_token_sign_in_never_redirects_off_the_site_however_many_slashes_lead_the_path
+    cw, = make
+    web = cw.routes(token: "tok", base_path: "/")
+    # A browser reads a backslash there as a slash, so /\host is off-site too.
+    ["//evil.example/x", "///evil.example", "/\\/evil.example", "/\\evil.example", "//\\evil.example"].each do |path|
+      response = send_request(web, "GET", "http://app.test#{path}?token=tok")
+      assert_equal 303, response.status, path
+      location = response.headers["location"]
+      assert location.start_with?("/") && !location.start_with?("//") && !location.start_with?("/\\"), "#{path} -> #{location}"
+    end
+  end
+
+  # The compare runs over what was sent, so its time says nothing of the
+  # secret's length; a length that differs is still a difference.
+  def test_the_constant_time_compare_takes_only_an_exact_match
+    eq = ->(sent, secret) { Cronwatch::HTTP.constant_time_equal?(sent, secret) }
+    assert eq.call("s3cret", "s3cret")
+    refute eq.call("s3cre", "s3cret")
+    refute eq.call("s3crets", "s3cret")
+    refute eq.call("s3cret" * 2, "s3cret"), "the secret repeated is not the secret"
+    refute eq.call("", "s3cret")
+    refute eq.call("x", "")
+    assert eq.call("", "")
+    assert eq.call("tést", "tést".b)
+  end
+
   # Nothing slows down wrong guesses, so a short token is warned about when the app is made.
   def test_a_short_token_is_warned_about_when_the_app_is_made
     Thread.current[:cronwatch_warn_short_token] = true

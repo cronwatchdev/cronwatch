@@ -145,12 +145,19 @@ module Cronwatch
       value.to_s.gsub(/\A[ \t\r\n]+|[ \t\r\n]+\z/, "")
     end
 
-    # Compares two secrets without stopping at the first differing character.
-    def constant_time_equal?(a, b)
-      return false unless a.bytesize == b.bytesize
+    # Compares what a request `sent` with the `secret` without stopping at the
+    # first differing byte, and in time that depends only on the length of
+    # what was sent, so neither the secret's bytes nor its length can be
+    # timed. Every byte of `sent` is compared, against the secret's byte at
+    # the same place (repeating it past its end), and a length that differs
+    # counts as a difference. The SDK's constantTimeEqual, over bytes.
+    def constant_time_equal?(sent, secret)
+      expected = secret.b
+      return sent.bytesize.zero? if expected.empty?
 
-      diff = 0
-      a.bytes.zip(b.bytes) { |x, y| diff |= x ^ y }
+      diff = sent.bytesize ^ expected.bytesize
+      size = expected.bytesize
+      sent.b.each_byte.with_index { |byte, i| diff |= byte ^ expected.getbyte(i % size) }
       diff.zero?
     end
   end
