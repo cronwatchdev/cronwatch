@@ -404,8 +404,9 @@ public abstract class MySqlFamilyStoreTests : ServerStoreTests
     {
         string url = Databases.Require(Variable);
         await using var server = new Server(Databases.MySql(url, useAffectedRows));
-        var first = Store(server.Source).WithPrefix(server.Prefix("twin"));
-        var second = Store(server.Source).WithPrefix(server.Prefix("twin"));
+        string prefix = server.Prefix("twin");
+        var first = Store(server.Source).WithPrefix(prefix);
+        var second = Store(server.Source).WithPrefix(prefix);
         await first.InitAsync();
         // Two processes opening the same condition in the same millisecond write identical states.
         var state = JobState.Initial("j") with { Version = 1 };
