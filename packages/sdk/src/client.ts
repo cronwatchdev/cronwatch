@@ -329,6 +329,11 @@ export class Cronwatch {
   private readonly deferDelivery: boolean;
   private readonly defaults: NonNullable<CronwatchOptions["defaults"]>;
   private readonly definitions = new Map<string, JobDefinition>();
+  /**
+   * Declarations forgotten here (forget()), kept so that run() or resumeRun()
+   * by name declares the job again as it was written, not bare.
+   */
+  private readonly forgotten = new Map<string, JobDefinition>();
   private readonly synced = new Set<string>();
   /** The tail of each job's queue of state updates. See serial(). */
   private readonly queues = new Map<string, Promise<void>>();
@@ -389,8 +394,21 @@ export class Cronwatch {
     const definition: JobDefinition = { ...this.defaults, ...options, name };
     validateDefinition(definition);
     this.definitions.set(name, definition);
+    this.forgotten.delete(name);
     this.synced.delete(name);
     return this.handle(definition);
+  }
+
+  /** The declaration of `name`: the standing one, else one forgotten here, declared again as it was. */
+  private declared(name: string): JobDefinition | undefined {
+    const standing = this.definitions.get(name);
+    if (standing) return standing;
+    const forgotten = this.forgotten.get(name);
+    if (!forgotten) return undefined;
+    this.forgotten.delete(name);
+    this.definitions.set(name, forgotten);
+    this.synced.delete(name);
+    return forgotten;
   }
 
   /** Run a job by name without keeping a handle. Defines it on first use. */
@@ -399,7 +417,8 @@ export class Cronwatch {
   run<T>(name: string, optionsOrFn: JobOptions | JobFn<T>, maybeFn?: JobFn<T>): Promise<T> {
     const fn = typeof optionsOrFn === "function" ? optionsOrFn : maybeFn!;
     const options = typeof optionsOrFn === "function" ? undefined : optionsOrFn;
-    const handle = options || !this.definitions.has(name) ? this.job(name, options) : this.handle(this.definitions.get(name)!);
+    const declared = options ? undefined : this.declared(name);
+    const handle = declared ? this.handle(declared) : this.job(name, options);
     return handle.run(fn);
   }
 
@@ -410,7 +429,7 @@ export class Cronwatch {
 
   /** A handle on a run started elsewhere, as job(name).resume(runId). The job must be declared in this process. */
   resumeRun(name: string, runId: string): Promise<RunHandle> {
-    const definition = this.definitions.get(name);
+    const definition = this.declared(name);
     if (!definition) return Promise.reject(new Error(`resumeRun: job "${name}" is not declared; call job() first`));
     return this.resumeHandle(definition, runId);
   }
@@ -1344,11 +1363,15 @@ export class Cronwatch {
 
   /**
    * Remove a job and its runs from the store. A job still declared in code
-   * comes back: here on its next run, and in any other process that declares
-   * it on its next run there, or at that process's next check or dashboard read.
+   * comes back, with no history: here on its next run, declared as it was
+   * written (cw.run() and cw.resumeRun() by name included), and in any other
+   * process that declares it on its next run there, or at that process's
+   * next check or dashboard read.
    */
   async forget(name: string): Promise<void> {
     await this.ensureReady();
+    const definition = this.definitions.get(name);
+    if (definition) this.forgotten.set(name, definition);
     this.definitions.delete(name);
     this.synced.delete(name);
     await this.store.deleteJob(name);
