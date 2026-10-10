@@ -572,15 +572,15 @@ impl Client {
     /// order the writes were asked for. Not `job_lock`: a state update never
     /// waits on a declaration's write. One given up part way (a dropped
     /// future) lets go of its turn.
-    fn sync_lock(&self, job: &str) -> Arc<tokio::sync::Mutex<()>> {
-        lock(&self.inner.sync_locks).entry(job.to_string()).or_default().clone()
+    fn sync_lock(&self, job: &str) -> Turn<'_> {
+        Turn::take(&self.inner.sync_locks, job)
     }
 
     /// The lock every state update of a job in this process takes in turn
     /// (the SDK's `serial()`). Other processes are coordinated by
     /// `update_state`'s conditional writes instead.
-    fn job_lock(&self, job: &str) -> Arc<tokio::sync::Mutex<()>> {
-        lock(&self.inner.job_locks).entry(job.to_string()).or_default().clone()
+    fn job_lock(&self, job: &str) -> Turn<'_> {
+        Turn::take(&self.inner.job_locks, job)
     }
 
     pub(crate) async fn read_state(&self, job: &str) -> Result<JobState, Error> {
@@ -706,4 +706,81 @@ pub(crate) fn new_id() -> String {
 /// A whole number from `min` to 500.
 pub(crate) fn clamp_limit(limit: usize, min: usize) -> usize {
     limit.clamp(min, 500)
+}
+
+type LockMap = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
+
+/// A job's lock from one of the client's maps, taken out for one turn. The
+/// entry goes once no one holds or waits on it, as the SDK's `serial()`
+/// deletes a job's queue once it is idle, so a process whose job names come
+/// and go does not keep a lock for every name it ever saw. Clones are only
+/// made under the map's lock, so the count read there is exact.
+struct Turn<'a> {
+    map: &'a LockMap,
+    name: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl<'a> Turn<'a> {
+    fn take(map: &'a LockMap, name: &str) -> Self {
+        let lock = lock(map).entry(name.to_string()).or_default().clone();
+        Turn { map, name: name.to_string(), lock }
+    }
+}
+
+impl std::ops::Deref for Turn<'_> {
+    type Target = tokio::sync::Mutex<()>;
+    fn deref(&self) -> &Self::Target {
+        &self.lock
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        let mut map = lock(self.map);
+        // The map's copy and this one: no one else holds or waits on it.
+        if Arc::strong_count(&self.lock) == 2 && map.get(&self.name).is_some_and(|l| Arc::ptr_eq(l, &self.lock)) {
+            map.remove(&self.name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    use crate::JobOptions;
+
+    fn held(cw: &Client) -> usize {
+        lock(&cw.inner.sync_locks).len() + lock(&cw.inner.job_locks).len()
+    }
+
+    #[tokio::test]
+    async fn an_idle_jobs_locks_are_let_go() {
+        let cw = Client::builder().no_cron_secret().build().unwrap();
+        for i in 0..20 {
+            let name = format!("job-{i}");
+            let job = cw.job(&name, JobOptions::new()).unwrap();
+            let ok = |_| async { Ok::<_, std::io::Error>(()) };
+            let (a, b, c) = tokio::join!(job.run(ok), job.run(ok), job.run(ok));
+            for done in [a, b, c] {
+                done.unwrap();
+            }
+            cw.sync_job(&name).await.unwrap();
+        }
+        assert_eq!(held(&cw), 0, "every job's locks went once it was idle");
+    }
+
+    #[tokio::test]
+    async fn a_lock_still_held_stays() {
+        let cw = Client::builder().no_cron_secret().build().unwrap();
+        let first = cw.job_lock("a");
+        let guard = first.lock().await;
+        let second = cw.job_lock("a");
+        assert!(Arc::ptr_eq(&first.lock, &second.lock), "both turns share one lock");
+        drop(guard);
+        drop(first);
+        assert_eq!(lock(&cw.inner.job_locks).len(), 1, "kept while a turn still holds it");
+        drop(second);
+        assert_eq!(lock(&cw.inner.job_locks).len(), 0);
+    }
 }
