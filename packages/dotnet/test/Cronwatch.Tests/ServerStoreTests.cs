@@ -397,6 +397,22 @@ public abstract class MySqlFamilyStoreTests : ServerStoreTests
         Assert.False(await store.CompareAndSetStateAsync(state, 0));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Two_writers_of_the_same_bytes_from_version_0_cannot_both_win(bool useAffectedRows)
+    {
+        string url = Databases.Require(Variable);
+        await using var server = new Server(Databases.MySql(url, useAffectedRows));
+        var first = Store(server.Source).WithPrefix(server.Prefix("twin"));
+        var second = Store(server.Source).WithPrefix(server.Prefix("twin"));
+        await first.InitAsync();
+        // Two processes opening the same condition in the same millisecond write identical states.
+        var state = JobState.Initial("j") with { Version = 1 };
+        Assert.True(await first.CompareAndSetStateAsync(state, 0));
+        Assert.False(await second.CompareAndSetStateAsync(state, 0));
+    }
+
     [Fact]
     public async Task A_long_trigger_is_cut_to_255_code_points()
     {
