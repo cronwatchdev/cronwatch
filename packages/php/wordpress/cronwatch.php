@@ -46,10 +46,28 @@ spl_autoload_register(
 	}
 );
 
-register_activation_hook( __FILE__, array( \Cronwatch\WordPress\Plugin::class, 'activate' ) );
-register_deactivation_hook( __FILE__, array( \Cronwatch\WordPress\Plugin::class, 'deactivate' ) );
+/*
+ * A copy of the library loaded before this plugin's (by another plugin, or
+ * the site's Composer autoloader) wins over the bundled one. When it is
+ * another version, the plugin stays off and says why in wp-admin, rather
+ * than failing where the two differ.
+ */
+$cronwatch_loaded = \Cronwatch\WordPress\Library::mismatch( __DIR__ );
+if ( null === $cronwatch_loaded ) {
+	register_activation_hook( __FILE__, array( \Cronwatch\WordPress\Plugin::class, 'activate' ) );
+	register_deactivation_hook( __FILE__, array( \Cronwatch\WordPress\Plugin::class, 'deactivate' ) );
 
-\Cronwatch\WordPress\Plugin::boot();
+	\Cronwatch\WordPress\Plugin::boot();
+} else {
+	define( 'CRONWATCH_LIBRARY_MISMATCH', $cronwatch_loaded );
+	add_action(
+		'admin_notices',
+		static function () use ( $cronwatch_loaded ): void {
+			\Cronwatch\WordPress\Library::notice( $cronwatch_loaded, (string) \Cronwatch\WordPress\Library::bundled( __DIR__ ) );
+		}
+	);
+}
+unset( $cronwatch_loaded );
 
 /**
  * Adds a line to the output of the WP-Cron event running now, as the job's
@@ -63,5 +81,8 @@ register_deactivation_hook( __FILE__, array( \Cronwatch\WordPress\Plugin::class,
  * @param mixed ...$parts Joined with spaces; anything not a string is written as JSON.
  */
 function cronwatch_log( mixed ...$parts ): void {
+	if ( defined( 'CRONWATCH_LIBRARY_MISMATCH' ) ) {
+		return;
+	}
 	\Cronwatch\WordPress\Plugin::watcher()->log( ...$parts );
 }
