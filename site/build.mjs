@@ -936,7 +936,7 @@ ${code ? `  <p class="code" aria-hidden="true">${code}</p>\n` : ""}  <h1>${headi
     ["Packagist", "https://packagist.org/packages/cronwatch/cronwatch", "composer require cronwatch/cronwatch"],
     ["pkg.go.dev", "https://pkg.go.dev/cronwatch.dev/go", "go get cronwatch.dev/go"],
     ["crates.io", "https://crates.io/crates/cronwatch", "cargo add cronwatch"],
-    ["Hex", "https://hex.pm/packages/cronwatch", `{:cronwatch, "~> 0.12"} in mix.exs`],
+    ["Hex", "https://hex.pm/packages/cronwatch", `{:cronwatch, "~> 0.13"} in mix.exs`],
     ["Maven Central", "https://central.sonatype.com/artifact/dev.cronwatch/cronwatch", `dev.cronwatch:cronwatch:${JAVA_VERSION}, or dev.cronwatch:cronwatch-spring-boot-starter:${JAVA_VERSION} in a Spring Boot app`],
     ["NuGet", "https://www.nuget.org/packages/Cronwatch", "dotnet add package Cronwatch, or Cronwatch.AspNetCore in an ASP.NET Core app"],
     ["WordPress plugin", "https://wordpress.org/plugins/cronwatch/", "wp plugin install cronwatch --activate, or search for CronWatch under Plugins, Add New Plugin in wp-admin"],

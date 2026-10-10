@@ -4,7 +4,7 @@ Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.1
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.12.5
+Stable tag: 0.13.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -137,7 +137,7 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 
 == Changelog ==
 
-= Unreleased =
+= 0.13.0 =
 
 * A site deleted from a network takes its CronWatch tables with it.
 * The plugin stays off with a notice when another plugin loads a different version of the CronWatch library.

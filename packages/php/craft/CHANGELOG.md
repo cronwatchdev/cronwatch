@@ -1,6 +1,6 @@
 # Release Notes for CronWatch
 
-## Unreleased
+## 0.13.0 - 2026-10-10
 
 ### Changed
 - Secrets and settings from config/cronwatch.php are never shown in the form or copied into project config, and the webhook secret is no longer trimmed.
