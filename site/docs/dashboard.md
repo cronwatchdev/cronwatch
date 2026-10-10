@@ -178,7 +178,7 @@ Every success body carries `ok: true` beside its fields.
 
 Silence and unsilence answer the job's summary, as `GET /api/jobs/:name` does, with `silencedUntil` set or cleared. Before 0.11 they answered the job's stored state instead (`{ ok: true, state }`); `@cronwatch/mcp` reads either.
 
-`for` is a duration string such as `"30m"`, `"2h"`, or `"1h30m"`, at most 64 characters, or a number of milliseconds (a JSON number or a string of digits). It defaults to one hour when left out, from the body or a `?for=` query. Anything else, such as `"forever"` or `"2 hours"`, is refused with 400 and the reason, and nothing is silenced. The dashboard's silence form shows the same error as a page. Silencing or unsilencing a job that is not in the store answers 404.
+`for` is a duration string such as `"30m"`, `"2h"`, or `"1h30m"`, at most 64 characters, or a number of milliseconds (a JSON number or a string of digits). It defaults to one hour when left out, from the body or a `?for=` query. Anything else, such as `"forever"` or `"2 hours"`, is refused with 400 and the reason, and nothing is silenced. The dashboard's silence form shows the same error as a page. Silencing or unsilencing a job that is not in the store answers 404. A request body over 1 MiB is refused with 413 (`{"ok":false,"error":"Request body too large"}` from the API, a "Not silenced" page from the form), and a sign-in body over it reads as no token.
 
 Errors are `{ ok: false, error }` with 400, 401, 403, 404, 405, or 503. An unexpected failure answers a bare 500 (`"Internal error"`, or a plain page) and the error itself goes to the client's `onError`.
 
