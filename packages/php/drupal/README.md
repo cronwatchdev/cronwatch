@@ -44,11 +44,17 @@ and set the schedule under the settings to match (`*/5 * * * *`). A missed `drup
 
 Configuration, System, CronWatch (`/admin/config/system/cronwatch`), for users with "Administer CronWatch": where alerts go (email through the site's mail system, a Slack incoming webhook, a webhook, signed when given a secret, and under More channels Discord, email through Resend, Postmark, SendGrid, Mailgun, or Amazon SES, text messages through Twilio, and Sentry, Honeybadger, Datadog, Rollbar, Bugsnag, or New Relic, each once its required fields are set), the grace a run is given (10 minutes by default), cron's schedule, whether the check runs after each cron run, and the watched queues. "Send a test alert" sends one to every channel and says what each answered. Nothing leaves the site until a channel is set; with none, alerts go to the site's log.
 
-The settings are configuration, so they are exported with it; keep a credential out of the export by setting it in `settings.php`:
+Keys, tokens, and the webhook's signing secret are password fields: a saved one is never shown again, a field left blank keeps it, and "Remove it" clears it. The Slack and webhook URLs are shown as saved, and a Slack incoming webhook URL is itself a credential.
+
+The settings are configuration, so they are exported with it (`drush config:export` writes them to the sync directory, often in git). Keep a credential out of the export by setting it in `settings.php`, from the environment, where it overrides the saved value:
 
 ```php
 $config['cronwatch.settings']['slack_webhook_url'] = getenv('SLACK_WEBHOOK_URL');
+$config['cronwatch.settings']['webhook_secret'] = getenv('CRONWATCH_WEBHOOK_SECRET');
+$config['cronwatch.settings']['resend_api_key'] = getenv('RESEND_API_KEY');
 ```
+
+A channel's key is named `<provider>_<field>`, as the settings form names it: `postmark_server_token`, `twilio_auth_token`, `ses_secret_access_key`, `sentry_dsn`, and so on.
 
 `hook_cronwatch_alerts_alter()` adds channels (any of the library's, or a callable), and `hook_cronwatch_job_options_alter()` changes a job's options (a longer timeout for a slow `hook_cron`, say); see `cronwatch.api.php`.
 

@@ -1,6 +1,6 @@
 administer cronwatch:
   title: 'Administer CronWatch'
-  description: 'Choose where alerts go and which queues are watched, and silence, forget, or check jobs from the dashboard.'
+  description: 'Choose where alerts go and which queues are watched, and silence, forget, or check jobs from the dashboard. The site sends requests to the addresses set here, internal ones included, and "Send a test alert" shows what each answered: give it only to roles trusted with the server''s network.'
   restrict access: true
 view cronwatch dashboard:
   title: 'View the CronWatch dashboard'

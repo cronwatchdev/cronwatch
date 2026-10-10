@@ -805,8 +805,17 @@ final class DrupalTest extends TestCase
             \Drupal::service('cronwatch.recorder')->reset();
             $out['saved'] = \Drupal::config('cronwatch.settings')->get('resend_api_key');
             $out['names'] = $names();
-            // Every field emptied (a programmatic submission takes a field it is not given from the form's defaults).
-            $out['cleared'] = $submit(\Cronwatch\Bridge\ChannelSettings::defaults());
+            // A secret left blank keeps the saved one; the webhook's secret is kept exactly as typed.
+            $out['kept'] = $submit(['resend_api_key' => '', 'resend_from' => 'CronWatch <alerts@example.com>', 'resend_to' => 'ops@example.com', 'webhook_secret' => ' s3cret ']);
+            $out['keptKey'] = \Drupal::config('cronwatch.settings')->get('resend_api_key');
+            $out['webhookSecret'] = \Drupal::config('cronwatch.settings')->get('webhook_secret');
+            // Every field emptied, each secret by its "Remove it" box (a programmatic submission takes a field it is not given from the form's defaults).
+            $clear = [];
+            foreach (array_keys(\Cronwatch\Bridge\ChannelSettings::defaults()) as $key) {
+                $clear["{$key}_clear"] = 1;
+            }
+            $out['cleared'] = $submit(\Cronwatch\Bridge\ChannelSettings::defaults() + $clear + ['webhook_secret_clear' => 1]);
+            $out['clearedSecret'] = \Drupal::config('cronwatch.settings')->get('webhook_secret');
             \Drupal::service('cronwatch.recorder')->reset();
             $out['clearedNames'] = $names();
             echo json_encode($out);
@@ -817,8 +826,32 @@ final class DrupalTest extends TestCase
         $this->assertSame([], $result['ok']);
         $this->assertSame('re_123', $result['saved']);
         $this->assertSame(['discord', 'resend', 'twilio'], $result['names']);
+        $this->assertSame([], $result['kept']);
+        $this->assertSame('re_123', $result['keptKey'], 'a key left blank keeps the saved one');
+        $this->assertSame(' s3cret ', $result['webhookSecret']);
         $this->assertSame([], $result['cleared']);
+        $this->assertSame('', $result['clearedSecret']);
         $this->assertSame([], $result['clearedNames']);
+    }
+
+    public function testTheFormNeverShowsASavedSecret(): void
+    {
+        self::inDrupal(<<<'PHP'
+            \Drupal::configFactory()->getEditable('cronwatch.settings')
+                ->set('resend_api_key', 're_never_shown')->set('webhook_secret', 'whsec_never_shown')->save();
+            echo json_encode([]);
+            PHP);
+        self::signIn('admin');
+        [$status, , $form] = self::http('GET', '/admin/config/system/cronwatch', 'admin');
+        $this->assertSame(200, $status);
+        $this->assertStringNotContainsString('re_never_shown', $form);
+        $this->assertStringNotContainsString('whsec_never_shown', $form);
+        $this->assertMatchesRegularExpression('/<input[^>]+id="edit-resend-api-key"[^>]+type="password"|<input[^>]+type="password"[^>]+id="edit-resend-api-key"/', $form);
+        $this->assertStringContainsString('id="edit-webhook-secret-clear"', $form, 'a saved secret has its Remove it box');
+        self::inDrupal(<<<'PHP'
+            \Drupal::configFactory()->getEditable('cronwatch.settings')->set('resend_api_key', '')->set('webhook_secret', '')->save();
+            echo json_encode([]);
+            PHP);
     }
 
     public function testCronFromItsUrlAndFromAutomatedCron(): void
