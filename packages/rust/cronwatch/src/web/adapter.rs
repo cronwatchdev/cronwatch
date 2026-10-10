@@ -21,6 +21,18 @@ use crate::store::{BoxError, BoxFuture};
 
 use super::{Body, Request, Response, Routes};
 
+/// Marks a request as having come over TLS, for an app that terminates TLS
+/// itself (axum-server with rustls, hyper with tokio-rustls). Over HTTP/1.1
+/// a request's URI carries no scheme, so without it the dashboard takes the
+/// request for plain HTTP: its public origin is `http://`, every form the
+/// browser posts is refused as cross-site, and the sign-in cookie is not
+/// `Secure`. Add it to every request, as axum does with
+/// `.layer(axum::Extension(cronwatch::web::Tls))`, or set
+/// [`RoutesOptions::origin`](super::RoutesOptions::origin). Behind a proxy
+/// that terminates TLS, use `trust_proxy` or `origin` instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tls;
+
 /// An `http::Request` as the framework-free [`Request`]: the target as sent
 /// (the original one, when axum nested the service), the headers as bytes,
 /// `Host` from the URI's authority for HTTP/2, and a body read only when a
@@ -41,7 +53,7 @@ where
     let (target, mount): (String, Option<String>) = (target_of(&parts.uri), None);
     let mut out = Request::new(parts.method.as_str(), target);
     out.mount = mount;
-    out.tls = parts.uri.scheme() == Some(&http::uri::Scheme::HTTPS);
+    out.tls = parts.uri.scheme() == Some(&http::uri::Scheme::HTTPS) || parts.extensions.get::<Tls>().is_some();
     for (name, value) in &parts.headers {
         out.headers.push((name.as_str().to_string(), value.as_bytes().to_vec()));
     }

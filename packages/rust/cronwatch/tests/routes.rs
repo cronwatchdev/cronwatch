@@ -618,6 +618,30 @@ async fn a_body_cut_short_is_none() {
     assert_eq!(w.k.summary("s").await.unwrap().silenced_until, Some(T0 + 1000 + HOUR), "the default hour again");
 }
 
+#[tokio::test]
+async fn the_tls_marker_makes_an_http1_request_https() {
+    // An app that terminates TLS itself serves HTTP/1.1 requests whose URI
+    // has no scheme: the browser's Origin is https all the same.
+    let w = Web::new();
+    let sign_in = |tls: bool| {
+        let mut req = http::Request::post("/cronwatch/signin")
+            .header("host", "app.test")
+            .header("origin", "https://app.test")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(http_body_util::Full::new(Bytes::from_static(b"token=tok")))
+            .unwrap();
+        if tls {
+            req.extensions_mut().insert(cronwatch::web::Tls);
+        }
+        w.routes.clone().oneshot(req)
+    };
+    assert_eq!(sign_in(false).await.unwrap().status(), 403, "without the marker the form is cross-site");
+    let res = sign_in(true).await.unwrap();
+    assert_eq!(res.status(), 303, "signed in with the marker");
+    let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap();
+    assert!(cookie.ends_with("; Secure"), "Secure over TLS: {cookie}");
+}
+
 /// A body that sends its first bytes and then fails, as one whose client
 /// went away does.
 struct CutShort(std::vec::IntoIter<Result<Bytes, BoxError>>);
