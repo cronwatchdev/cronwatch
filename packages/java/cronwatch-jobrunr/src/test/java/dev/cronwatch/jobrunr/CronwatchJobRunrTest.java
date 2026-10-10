@@ -185,6 +185,80 @@ class CronwatchJobRunrTest {
     }
   }
 
+  /**
+   * {@code job} as JobRunr hands it to a filter on its {@code attempt}th attempt, then {@code
+   * more}.
+   */
+  private static org.jobrunr.jobs.Job attempt(
+      org.jobrunr.jobs.Job job, int attempt, org.jobrunr.jobs.states.JobState... more) {
+    List<org.jobrunr.jobs.states.JobState> states = new java.util.ArrayList<>();
+    states.add(new org.jobrunr.jobs.states.EnqueuedState());
+    for (int i = 0; i < attempt; i++) {
+      states.add(new org.jobrunr.jobs.states.ProcessingState(java.util.UUID.randomUUID(), "test"));
+    }
+    states.addAll(List.of(more));
+    org.jobrunr.jobs.Job made =
+        new org.jobrunr.jobs.Job(
+            job.getId(),
+            0,
+            job.getJobDetails(),
+            states,
+            new java.util.concurrent.ConcurrentHashMap<>());
+    made.setJobName(job.getJobName());
+    return made;
+  }
+
+  @Test
+  void anAttemptJobRunrNeverReportsTheEndOfIsClosedFailedWhenTheNextOpens() throws Exception {
+    // An Error from the job skips every JobRunr filter: its run stayed open in the filter, and the
+    // current run stayed set, until the job was retried.
+    MemoryStore store = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    try (Cronwatch cw = client(store, errors);
+        CronwatchJobRunr w =
+            CronwatchJobRunr.watch(
+                cw, storage, JobRunrOptions.defaults().app("billing").watchJob("report"))) {
+      JobScheduler scheduler =
+          JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+      org.jobrunr.jobs.Job job = storage.getJobById(scheduler.enqueue(() -> Work.report()));
+      w.onProcessing(attempt(job, 1));
+      w.onProcessing(attempt(job, 2));
+      w.onProcessingSucceeded(attempt(job, 2));
+      List<Run> runs = finished(cw, "report");
+      assertEquals(2, runs.size(), runs.toString());
+      assertEquals(RunStatus.OK, runs.get(0).status());
+      assertEquals(RunStatus.FAILED, runs.get(1).status());
+      assertTrue(runs.get(1).id().endsWith(":1"), runs.get(1).id());
+      assertTrue(
+          runs.get(1).error().contains("without JobRunr reporting how"), runs.get(1).error());
+      assertNull(Cronwatch.current(), "no run is left current on the worker's thread");
+      assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
+  @Test
+  void anAttemptDeletedWhileItRanIsGivenBackNotFailed() throws Exception {
+    MemoryStore store = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    try (Cronwatch cw = client(store, errors);
+        CronwatchJobRunr w =
+            CronwatchJobRunr.watch(
+                cw, storage, JobRunrOptions.defaults().app("billing").watchJob("report"))) {
+      JobScheduler scheduler =
+          JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+      org.jobrunr.jobs.Job job = storage.getJobById(scheduler.enqueue(() -> Work.report()));
+      w.onProcessing(attempt(job, 1));
+      w.onProcessingFailed(
+          attempt(job, 1, new org.jobrunr.jobs.states.DeletedState("deleted from the dashboard")),
+          new RuntimeException(new InterruptedException("sleep interrupted")));
+      assertEquals(List.of(), cw.runs("report", 20), "no run: the attempt was given back");
+      assertNull(Cronwatch.current());
+      assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
   @Test
   void anExceptionIsTheJobsOwn() {
     IllegalStateException own = new IllegalStateException("x");

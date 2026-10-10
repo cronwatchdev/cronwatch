@@ -32,6 +32,7 @@ import org.jobrunr.jobs.Job;
 import org.jobrunr.jobs.RecurringJob;
 import org.jobrunr.jobs.filters.JobServerFilter;
 import org.jobrunr.jobs.states.ProcessingState;
+import org.jobrunr.jobs.states.StateName;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jobrunr.scheduling.Schedule;
 import org.jobrunr.storage.StorageProvider;
@@ -59,8 +60,10 @@ import org.jspecify.annotations.Nullable;
  * Cronwatch#current()} and {@code job.log} work inside it. Each attempt is a run (trigger {@code
  * jobrunr}, id {@code jobrunr:<app>:<job id>:<attempt>}), so a retry is a run of its own, as the
  * gem's Sidekiq rules have it: failing attempts open one failed alert and the one that succeeds
- * closes it. Recurring jobs are the CronWatch jobs named by their ids; a job that is not recurring
- * is watched only when its JobRunr name is given to {@link JobRunrOptions#watchJob}.
+ * closes it. An attempt deleted from JobRunr's dashboard while it runs is given back, not judged;
+ * one that ends in an {@code Error}, which JobRunr reports to no filter, is closed failed when the
+ * job's next attempt opens. Recurring jobs are the CronWatch jobs named by their ids; a job that is
+ * not recurring is watched only when its JobRunr name is given to {@link JobRunrOptions#watchJob}.
  *
  * <p>A recurring job's cron is read in its zone and checked against JobRunr's own fire times
  * ({@link SchedulerBridge#checkFires}); one JobRunr reads differently is reported once and watched
@@ -420,9 +423,29 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
       }
       long attempt = job.getJobStatesOfType(ProcessingState.class).count();
       String id = "jobrunr:" + watch.appSlug() + ":" + job.getId() + ":" + Math.max(1, attempt);
+      // Closed before the next opens, so the new run does not keep it as the current run to put
+      // back when it ends.
+      ObservedRun stale = open.remove(job.getId());
+      if (stale != null) {
+        unfinished(stale);
+      }
       open.put(job.getId(), cwJob.open(RunOptions.trigger(TRIGGER).withId(id)));
     } catch (RuntimeException e) {
       cw.reportError(e, "jobrunr");
+    }
+  }
+
+  /**
+   * Closes, failed, a run JobRunr never reported the end of: an attempt that threw an {@code Error}
+   * (JobRunr calls no filter then, and leaves the job to its orphan check), found when the job's
+   * next attempt opens.
+   */
+  private void unfinished(ObservedRun stale) {
+    if (stale.isOpen()) {
+      stale.close(
+          new CronwatchException(
+              CronwatchException.Kind.OTHER,
+              "the attempt ended without JobRunr reporting how (an Error, or its server stopping)"));
     }
   }
 
@@ -446,10 +469,29 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
       return;
     }
     try {
+      if (deletedWhileProcessing(job, e)) {
+        // Deleted from JobRunr's dashboard while it ran: JobRunr interrupts it and drops the
+        // attempt, so it is given back rather than judged a failure.
+        run.takeBack();
+        return;
+      }
       run.close(unwrap(e));
     } catch (RuntimeException ex) {
       cw.reportError(ex, "jobrunr");
     }
+  }
+
+  /** JobRunr's own reading: an interrupt, with the job deleted meanwhile. */
+  static boolean deletedWhileProcessing(Job job, Throwable e) {
+    if (!job.hasState(StateName.DELETED)) {
+      return false;
+    }
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t instanceof InterruptedException) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** The job's own throwable, from inside the wrappers reflection and JobRunr put around it. */
