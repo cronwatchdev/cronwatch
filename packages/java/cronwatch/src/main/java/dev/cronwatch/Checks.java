@@ -231,7 +231,48 @@ final class Checks {
     delivery.reportDropped(job.name(), out.result().dropped());
     alerts.accept(delivery.retryUndelivered(job.name(), out.state(), now, budget));
     alerts.accept(delivery.dispatch(job.name(), out.result().alerts(), now));
+    alerts.accept(evaluatePending(job, recent, out.state(), now));
     return Evaluate.summarize(job, recent, out.state(), nextExpectedAt[0], now);
+  }
+
+  /**
+   * Runs the job's state still holds as pending ({@code holdRun}) whose finish was written but
+   * never evaluated: the process that finished them stopped, or its state write failed, between the
+   * two writes. Each one finished more than {@link Evaluate#SEND_LEASE_MS} ago is evaluated now, as
+   * its finish would have been; one still running is left to the stuck check, and one the store no
+   * longer has (given back, or pruned) is let go. The wait leaves a finish under way in another
+   * process to write its own evaluation. The SDK's {@code evaluatePending}.
+   */
+  private List<Alert> evaluatePending(StoredJob job, List<Run> recent, JobState state, long now) {
+    List<Alert> out = new ArrayList<>();
+    List<String> pending = state.pendingRuns() == null ? List.of() : state.pendingRuns();
+    for (String id : pending) {
+      try {
+        Run found = null;
+        for (Run r : recent) {
+          if (r.id().equals(id)) {
+            found = r;
+            break;
+          }
+        }
+        Run run = found != null ? found : Core.call(() -> core.store.getRun(id));
+        if (run == null || !run.job().equals(job.name())) {
+          core.updateState(
+              job.name(), s -> new Core.Changed<>(Evaluate.releaseRun(s, id), Boolean.TRUE));
+          continue;
+        }
+        Long finishedAt = run.finishedAt();
+        if (run.status().equals(RunStatus.RUNNING)
+            || finishedAt == null
+            || finishedAt > now - Evaluate.SEND_LEASE_MS) {
+          continue;
+        }
+        out.addAll(runs.finishRun(job.definition(), run, now));
+      } catch (RuntimeException e) {
+        core.report(e, "evaluating run " + id + " of " + job.name());
+      }
+    }
+    return out;
   }
 
   /** A job's summary and its newest runs, without alerting. */

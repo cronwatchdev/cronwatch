@@ -91,26 +91,45 @@ final class Delivery {
   }
 
   /**
-   * Sends the alerts no channel accepted last time, once each, oldest first. {@code state} is the
-   * job's state as this check left it: an alert that no longer describes it is dropped instead.
-   * Retries across a check share the retry budget; once it is spent the rest stay queued.
+   * Sends the alerts no channel accepted last time, once each, oldest first. They are claimed first
+   * ({@code claimUndelivered}): moved into {@code sending} with a lease, in one conditional write,
+   * so when several processes check at once only the one whose write lands sends them. An alert
+   * that no longer describes the job is dropped instead, and while the job is silenced only
+   * recoveries are claimed. Retries across a check share the retry budget; claimed alerts it has no
+   * time left for go back to the queue for the next check.
    */
   List<Alert> retryUndelivered(String name, JobState state, long now, Budget budget) {
     List<Alert> pending = state.undelivered() == null ? List.of() : state.undelivered();
-    if (pending.isEmpty() || Evaluate.isSilenced(state, now) || core.deferDelivery) {
+    if (pending.isEmpty() || core.deferDelivery) {
       return List.of();
     }
-    List<Alert> dropped = new ArrayList<>();
+    List<Alert> claimed;
+    try {
+      claimed =
+          core.updateState(
+                  name,
+                  previous -> {
+                    Evaluate.Claim claim =
+                        Evaluate.claimUndelivered(
+                            previous, now, core.now() + Evaluate.SEND_LEASE_MS);
+                    return new Core.Changed<>(claim.state(), claim.claimed());
+                  })
+              .result();
+    } catch (RuntimeException e) {
+      core.report(e, "claiming undelivered alerts for " + name);
+      return List.of();
+    }
+    if (claimed.isEmpty()) {
+      return List.of();
+    }
     List<Alert> delivered = new ArrayList<>();
     List<Alert> failed = new ArrayList<>();
-    List<Alert> fresh = new ArrayList<>();
-    for (Alert a : pending) {
-      (Evaluate.staleAlert(a, state) ? dropped : fresh).add(a);
-    }
-    for (Alert a : fresh) {
+    for (Alert a : claimed) {
       long left = core.timings.retryBudgetMs - budget.spentMs;
       if (left <= 0) {
-        break;
+        // Not tried: back to the queue as it was.
+        failed.add(a);
+        continue;
       }
       long started = System.nanoTime();
       Alert alert = a;
@@ -124,7 +143,7 @@ final class Delivery {
       (deliver(alert) ? delivered : failed).add(alert);
       budget.spentMs += Math.max(0, (System.nanoTime() - started) / 1_000_000);
     }
-    recordDelivery(name, delivered, failed, dropped, now);
+    recordDelivery(name, delivered, failed, List.of(), now);
     return delivered;
   }
 

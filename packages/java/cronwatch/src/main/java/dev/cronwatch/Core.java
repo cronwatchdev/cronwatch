@@ -114,6 +114,13 @@ final class Core {
 
   private final ReentrantLock declaredLock = new ReentrantLock();
   private final LinkedHashMap<String, JobDef> definitions = new LinkedHashMap<>();
+
+  /**
+   * Declarations forgotten here ({@code forget}), kept so that a run or resume by name declares the
+   * job again as it was written, not bare.
+   */
+  private final java.util.HashMap<String, JobDef> forgotten = new java.util.HashMap<>();
+
   private final Set<String> synced = new HashSet<>();
 
   /** Starts with an id still in flight, so two at once in this process record one run. */
@@ -272,6 +279,7 @@ final class Core {
     declaredLock.lock();
     try {
       definitions.put(def.name(), def);
+      forgotten.remove(def.name());
       synced.remove(def.name());
     } finally {
       declaredLock.unlock();
@@ -282,6 +290,29 @@ final class Core {
     declaredLock.lock();
     try {
       return definitions.get(name);
+    } finally {
+      declaredLock.unlock();
+    }
+  }
+
+  /**
+   * The declaration of {@code name}: the standing one, else one {@link #undeclare forgotten} here,
+   * declared again as it was written, so a run or resume by name after the dashboard's delete does
+   * not declare the job bare.
+   */
+  @Nullable JobDef declaredOrForgotten(String name) {
+    declaredLock.lock();
+    try {
+      JobDef standing = definitions.get(name);
+      if (standing != null) {
+        return standing;
+      }
+      JobDef was = forgotten.remove(name);
+      if (was != null) {
+        definitions.put(name, was);
+        synced.remove(name);
+      }
+      return was;
     } finally {
       declaredLock.unlock();
     }
@@ -299,7 +330,10 @@ final class Core {
   void undeclare(String name) {
     declaredLock.lock();
     try {
-      definitions.remove(name);
+      JobDef was = definitions.remove(name);
+      if (was != null) {
+        forgotten.put(name, was);
+      }
       synced.remove(name);
     } finally {
       declaredLock.unlock();

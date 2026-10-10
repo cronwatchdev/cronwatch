@@ -239,7 +239,9 @@ final class Runs {
     // as it was, or a job overdue would have missed closed by each attempt given back and opened
     // again by the next check, an alert each time.
     Future<?> closing =
-        recorded && !options.mayTakeBack ? core.submit(() -> closeOnStart(def.name())) : null;
+        recorded && !options.mayTakeBack
+            ? core.submit(() -> closeOnStart(def.name(), run.id()))
+            : null;
 
     JobContext context =
         new JobContext(
@@ -333,7 +335,7 @@ final class Runs {
     }
     Future<?> closing = o.closing;
     if (o.recorded && o.options.mayTakeBack) {
-      closing = core.submit(() -> closeOnStart(def.name()));
+      closing = core.submit(() -> closeOnStart(def.name(), run.id()));
     }
 
     String failure;
@@ -473,10 +475,16 @@ final class Runs {
     }
   }
 
-  /** Closes missed and stuck for a run that has started. Never throws. */
-  @Nullable Void closeOnStart(String name) {
+  /**
+   * Closes missed and stuck for a run that has started, and holds the run in {@code pendingRuns}
+   * until its finish is evaluated, so a check can evaluate it if this process stops between writing
+   * the finish and its evaluation. Never throws.
+   */
+  @Nullable Void closeOnStart(String name, String runId) {
     try {
-      core.updateState(name, s -> new Core.Changed<>(Evaluate.onRunStart(s), Boolean.TRUE));
+      core.updateState(
+          name,
+          s -> new Core.Changed<>(Evaluate.holdRun(Evaluate.onRunStart(s), runId), Boolean.TRUE));
     } catch (RuntimeException e) {
       core.report(e, "starting " + name);
     }
@@ -676,7 +684,8 @@ final class Runs {
 
   /**
    * Evaluates a finished run (ok, failed, or timed out by a check), already written, against the
-   * job's state, and sends what that produces. Never throws: problems go to the error handler.
+   * job's state, and sends what that produces; the same write takes the run out of {@code
+   * pendingRuns}. Never throws: problems go to the error handler.
    */
   List<Alert> finishRun(Definition def, Run run, long now) {
     Delivery.Held held;
@@ -686,9 +695,10 @@ final class Runs {
                   run.job(),
                   () -> history(run),
                   (previous, history) -> {
+                    JobState before = Evaluate.releaseRun(previous, run.id());
                     Evaluation settled =
                         Evaluate.applySilence(
-                            previous, Evaluate.onRunFinish(def, run, previous, history, now), now);
+                            before, Evaluate.onRunFinish(def, run, before, history, now), now);
                     return delivery.outbox(settled.state(), settled.alerts(), def, now);
                   })
               .result();
@@ -807,7 +817,10 @@ final class Runs {
     if (!evaluate) {
       return List.of();
     }
-    core.updateState(run.job(), s -> new Core.Changed<>(Evaluate.onRunStart(s), Boolean.TRUE));
+    String id = run.id();
+    core.updateState(
+        run.job(),
+        s -> new Core.Changed<>(Evaluate.holdRun(Evaluate.onRunStart(s), id), Boolean.TRUE));
     if (run.status().equals(RunStatus.RUNNING)) {
       return List.of();
     }
@@ -840,7 +853,17 @@ final class Runs {
           "run " + run.id() + " of " + run.job() + " " + claim.ignored() + "; ignored", where);
       return List.of();
     }
-    if (!evaluate || (claim.late() && !run.status().equals(RunStatus.OK))) {
+    if (!evaluate) {
+      // Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+      try {
+        core.updateState(
+            run.job(), s -> new Core.Changed<>(Evaluate.releaseRun(s, run.id()), Boolean.TRUE));
+      } catch (RuntimeException e) {
+        core.report(e, where);
+      }
+      return List.of();
+    }
+    if (claim.late() && !run.status().equals(RunStatus.OK)) {
       return List.of();
     }
     return finishRun(def, run, core.now());

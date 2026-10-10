@@ -261,7 +261,7 @@ class HealthConformanceTest {
           Evaluate.silenceEnd(Fixtures.integer(c, "now"), ms),
           c.get("silencedUntil"));
     }
-    assertTrue(cases == 196, "health.json cases: " + cases);
+    assertTrue(cases == 198, "health.json cases: " + cases);
     fails.check("health");
   }
 
@@ -303,6 +303,7 @@ class HealthConformanceTest {
     Fixtures.Failures fails = new Fixtures.Failures();
     fails.same("maxUndelivered", Evaluate.MAX_UNDELIVERED, d.get("maxUndelivered"));
     fails.same("sendLeaseMs", Evaluate.SEND_LEASE_MS, d.get("sendLeaseMs"));
+    fails.same("maxPendingRuns", Evaluate.MAX_PENDING_RUNS, d.get("maxPendingRuns"));
     int cases = 0;
     int i = 0;
     for (JsObject c : Fixtures.objects(d, "alertKey")) {
@@ -370,7 +371,46 @@ class HealthConformanceTest {
                       Fixtures.integer(c, "now")))),
           canon(c.get("result")));
     }
-    assertTrue(cases == 35, "delivery cases: " + cases);
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "claimUndelivered")) {
+      cases++;
+      Evaluate.Claim claim =
+          Evaluate.claimUndelivered(
+              state(c.get("state")), Fixtures.integer(c, "now"), Fixtures.integer(c, "until"));
+      List<Object> claimed = new ArrayList<>();
+      for (Alert a : claim.claimed()) {
+        claimed.add(a.toValue());
+      }
+      List<Object> stale = new ArrayList<>();
+      for (Alert a : claim.stale()) {
+        stale.add(a.toValue());
+      }
+      fails.same(
+          "claimUndelivered " + i++,
+          canon(
+              new JsObject()
+                  .set("state", claim.state().toValue())
+                  .set("claimed", claimed)
+                  .set("stale", stale)),
+          canon(c.get("result")));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "holdRun")) {
+      cases++;
+      fails.same(
+          "holdRun " + i++,
+          canon(Evaluate.holdRun(state(c.get("state")), Fixtures.string(c, "runId")).toValue()),
+          canon(c.get("result")));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "releaseRun")) {
+      cases++;
+      fails.same(
+          "releaseRun " + i++,
+          canon(Evaluate.releaseRun(state(c.get("state")), Fixtures.string(c, "runId")).toValue()),
+          canon(c.get("result")));
+    }
+    assertTrue(cases == 56, "delivery cases: " + cases);
     fails.check("health");
   }
 }

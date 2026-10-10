@@ -20,8 +20,10 @@ import dev.cronwatch.internal.js.Js;
 import dev.cronwatch.json.JsObject;
 import dev.cronwatch.json.Json;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -322,6 +324,97 @@ public final class Evaluate {
       next.lastAlertAt = now;
     }
     return queueUndelivered(next.toState(), failed);
+  }
+
+  /** A claim on the undelivered queue: the state to write, what it claimed, and what went stale. */
+  public record Claim(JobState state, List<Alert> claimed, List<Alert> stale) {}
+
+  /**
+   * A check's claim on the undelivered queue, written before it sends, so two processes checking at
+   * once never retry the same alert: the queued alerts that still describe the job move into {@code
+   * sending}, oldest first, each with its lease ending at {@code until}, as many as {@code sending}
+   * has room for under {@link #MAX_UNDELIVERED} (the rest wait for the next check); stale ones
+   * ({@link #staleAlert}) leave the queue. While the job is silenced only recoveries are claimed.
+   * The process whose write lands sends {@code claimed}. The SDK's {@code claimUndelivered}.
+   */
+  public static Claim claimUndelivered(JobState state, long now, long until) {
+    MutableState next = cloneState(state);
+    List<Alert> queue = next.queued();
+    JobState judged = next.toState();
+    Set<Alert> stale = Collections.newSetFromMap(new IdentityHashMap<>());
+    List<Alert> staleList = new ArrayList<>();
+    for (Alert a : queue) {
+      if (staleAlert(a, judged)) {
+        stale.add(a);
+        staleList.add(a);
+      }
+    }
+    boolean silenced = isSilenced(judged, now);
+    int room = Math.max(0, MAX_UNDELIVERED - (next.sending == null ? 0 : next.sending.size()));
+    List<Alert> claimed = new ArrayList<>();
+    for (Alert a : queue) {
+      if (claimed.size() >= room) {
+        break;
+      }
+      if (!stale.contains(a) && (!silenced || a.type().equals(AlertType.RECOVERED))) {
+        claimed.add(a);
+      }
+    }
+    if (staleList.isEmpty() && claimed.isEmpty()) {
+      return new Claim(state, claimed, staleList);
+    }
+    Set<Alert> taken = Collections.newSetFromMap(new IdentityHashMap<>());
+    taken.addAll(stale);
+    taken.addAll(claimed);
+    next.undelivered = new ArrayList<>(queue.stream().filter(a -> !taken.contains(a)).toList());
+    if (!claimed.isEmpty()) {
+      List<SendingAlert> sending =
+          next.sending == null ? new ArrayList<>() : new ArrayList<>(next.sending);
+      for (Alert a : claimed) {
+        sending.add(new SendingAlert(until, a));
+      }
+      next.sending = sending;
+    }
+    return new Claim(next.toState(), claimed, staleList);
+  }
+
+  /** Runs held in {@code pendingRuns} per job; past it the oldest go. */
+  public static final int MAX_PENDING_RUNS = 100;
+
+  /**
+   * A run just started, held in {@code pendingRuns} until its finish is evaluated ({@link
+   * #releaseRun}), so a check can evaluate it if the process that finished it stops before writing
+   * the evaluation. Written with {@link #onRunStart}'s state. Only the newest {@link
+   * #MAX_PENDING_RUNS} are kept.
+   */
+  public static JobState holdRun(JobState state, String runId) {
+    MutableState next = cloneState(state);
+    List<String> held = new ArrayList<>();
+    if (next.pendingRuns != null) {
+      for (String id : next.pendingRuns) {
+        if (!id.equals(runId)) {
+          held.add(id);
+        }
+      }
+    }
+    held.add(runId);
+    next.pendingRuns = newest(held, MAX_PENDING_RUNS);
+    return next.toState();
+  }
+
+  /**
+   * A run taken out of {@code pendingRuns}, as its evaluation is written or once it is gone from
+   * the store.
+   */
+  public static JobState releaseRun(JobState state, String runId) {
+    List<String> held = state.pendingRuns() == null ? List.of() : state.pendingRuns();
+    if (!held.contains(runId)) {
+      return state;
+    }
+    MutableState next = cloneState(state);
+    List<String> left = new ArrayList<>(held.stream().filter(id -> !id.equals(runId)).toList());
+    next.pendingRuns = left.isEmpty() ? null : left;
+    return next.toState();
   }
 
   private static boolean openCondition(MutableState s, Condition c, long now) {
@@ -800,13 +893,16 @@ public final class Evaluate {
 
   /**
    * An evaluation as it is saved and sent: while the job was silenced when it began, nothing opens
-   * and nothing is sent.
+   * and no new alert is sent, but a recovery is. A condition can only close during a silence if it
+   * opened (and alerted) before it, so its recovery closes an incident someone was told about.
    */
   public static Evaluation applySilence(JobState previous, Evaluation e, long now) {
     if (!isSilenced(previous, now)) {
       return e;
     }
-    return new Evaluation(muteOpens(previous, e.state()), List.of());
+    return new Evaluation(
+        muteOpens(previous, e.state()),
+        e.alerts().stream().filter(a -> a.type().equals(AlertType.RECOVERED)).toList());
   }
 
   /**

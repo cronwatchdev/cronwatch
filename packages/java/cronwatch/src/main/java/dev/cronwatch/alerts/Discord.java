@@ -84,7 +84,11 @@ public final class Discord implements Channel {
             Json.stringify(payload));
     if (!answer.ok()) {
       throw Post.fail(
-          "Discord webhook answered " + answer.status() + ": " + Js.head(answer.body(), 200));
+          "Discord webhook answered "
+              + answer.status()
+              + ": "
+              // The URL's credential cut out, in case a proxy echoes the request.
+              + Post.errorBody(answer.body(), Post.urlSecrets(options.webhookUrl)));
     }
   }
 
