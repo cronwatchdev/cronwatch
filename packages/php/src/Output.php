@@ -274,7 +274,10 @@ final class Output
      * pairs with secret-ish names, Authorization headers, URL credentials,
      * bearer tokens, JWTs, PEM private keys, webhook URLs, and well-known token
      * formats) before output or an error is stored, shown, or sent anywhere.
-     * Matches exactly what the SDK's redactSecrets matches.
+     * Matches exactly what the SDK's redactSecrets matches. Should PCRE give
+     * up on a pattern (a host's low backtrack or JIT limits), the whole text
+     * is withheld rather than kept unredacted or thrown, so the run it
+     * belongs to is still recorded.
      */
     public static function redactSecrets(string $text): string
     {
@@ -284,7 +287,7 @@ final class Output
         foreach (self::patterns() as [$pattern, $replace]) {
             $next = preg_replace_callback($pattern, $replace, $out);
             if ($next === null) {
-                throw new \RuntimeException('redaction failed: ' . preg_last_error_msg());
+                return self::REDACTED;
             }
             $out = $next;
         }
