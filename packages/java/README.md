@@ -160,9 +160,7 @@ The pg_cron source watches the jobs that run inside Postgres, where nothing can 
 try (Cronwatch cw = Cronwatch.builder().build()) {
   HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
   server.setExecutor(Executors.newVirtualThreadPerTaskExecutor()); // the routes read the store
-  WebServer.mount(server, "/cronwatch", cw.routes(RoutesOptions.builder()
-      .token(System.getenv("CRONWATCH_TOKEN"))
-      .build()));
+  WebServer.mount(server, "/cronwatch", cw.routes()); // the token from CRONWATCH_TOKEN
   server.start();
 }
 ```
