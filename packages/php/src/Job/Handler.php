@@ -146,7 +146,7 @@ final class Handler
                 }
                 return '';
             }
-            return self::text($request['HTTP_AUTHORIZATION'] ?? $request['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+            return Request::authorizationIn($request);
         }
         if (!is_object($request)) {
             return '';

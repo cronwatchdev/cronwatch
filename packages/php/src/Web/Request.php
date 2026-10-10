@@ -70,6 +70,27 @@ final class Request
     }
 
     /**
+     * The Authorization header in an array of server variables, or ''.
+     * Apache hands it to PHP only when told to, so it is looked for in each
+     * place it may be: HTTP_AUTHORIZATION, REDIRECT_HTTP_AUTHORIZATION, and,
+     * for $_SERVER itself, getallheaders().
+     *
+     * @param array<string, mixed> $server
+     */
+    public static function authorizationIn(array $server): string
+    {
+        $authorization = $server['HTTP_AUTHORIZATION'] ?? $server['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
+        if ($authorization === null && function_exists('getallheaders') && $server === $_SERVER) {
+            foreach ((array) getallheaders() as $name => $value) {
+                if (strtolower((string) $name) === 'authorization') {
+                    $authorization = $value;
+                }
+            }
+        }
+        return is_scalar($authorization) ? (string) $authorization : '';
+    }
+
+    /**
      * The request PHP is answering, from $_SERVER (or the array given), with
      * the body from php://input, or from $_POST and $_FILES for a multipart
      * form, which PHP reads itself and leaves php://input empty.
@@ -100,19 +121,9 @@ final class Request
                 $headers[$name] = (string) $server[$key];
             }
         }
-        // Apache hands the Authorization header to PHP only when told to; these are the places it may be.
-        if (!isset($headers['authorization'])) {
-            $authorization = $server['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
-            if ($authorization === null && function_exists('getallheaders') && $server === $_SERVER) {
-                foreach ((array) getallheaders() as $name => $value) {
-                    if (strtolower((string) $name) === 'authorization') {
-                        $authorization = $value;
-                    }
-                }
-            }
-            if (is_string($authorization) && $authorization !== '') {
-                $headers['authorization'] = $authorization;
-            }
+        $authorization = self::authorizationIn($server);
+        if ($authorization !== '') {
+            $headers['authorization'] = $authorization;
         }
         $script = (string) ($server['SCRIPT_NAME'] ?? '');
         $target = (string) ($server['REQUEST_URI'] ?? ($script . ($server['PATH_INFO'] ?? '') . (isset($server['QUERY_STRING']) && $server['QUERY_STRING'] !== '' ? '?' . $server['QUERY_STRING'] : '')));
