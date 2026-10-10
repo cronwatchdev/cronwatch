@@ -286,8 +286,8 @@ test("a CRONWATCH_TOKEN or token of only whitespace counts as unset, so the rout
   }
 });
 
-test("a dev, local, test, or testing environment is not development: no token of its own, and a handler with no secret refuses", async () => {
-  for (const values of [{ NODE_ENV: "test" }, { APP_ENV: "local" }, { APP_ENV: "dev" }, { CRONWATCH_ENV: "testing" }]) {
+test("a test or testing environment is not development: no token of its own, and a handler with no secret refuses", async () => {
+  for (const values of [{ NODE_ENV: "test" }, { APP_ENV: "testing" }, { CRONWATCH_ENV: " Test " }, { APP_ENV: "test", NODE_ENV: "development" }]) {
     await withEnv({ ...PRODUCTION, NODE_ENV: undefined, ...values, CRONWATCH_TOKEN: undefined, CRON_SECRET: undefined }, async () => {
       const cw = cronwatch({ alerts: [capture()] });
       const label = JSON.stringify(values);

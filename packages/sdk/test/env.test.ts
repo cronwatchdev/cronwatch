@@ -26,15 +26,15 @@ test("the environment is the first of CRONWATCH_ENV, APP_ENV, and NODE_ENV that 
     [{ NODE_ENV: "development" }, "development"],
     [{ NODE_ENV: "test" }, "test"],
     [{ NODE_ENV: "production" }, "production"],
-    [{ APP_ENV: "local", NODE_ENV: "production" }, "local"],
+    [{ APP_ENV: "local", NODE_ENV: "production" }, "development"],
     [{ CRONWATCH_ENV: "production", APP_ENV: "dev", NODE_ENV: "development" }, "production"],
     [{ CRONWATCH_ENV: "staging", NODE_ENV: "development" }, "staging"],
-    // Trimmed and lowercased; "prod" is production. Only "development" itself is development:
-    // a dev, local, test, or testing set for another tool is not.
+    // Trimmed and lowercased; "prod" is production, and "dev" and "local" are development.
+    // "test" and "testing" are not: a test run or CI needs a secret, as production does.
     [{ CRONWATCH_ENV: "  PROD " }, "production"],
     [{ APP_ENV: "Testing" }, "testing"],
     [{ APP_ENV: " Development " }, "development"],
-    [{ APP_ENV: "DEV" }, "dev"],
+    [{ APP_ENV: "DEV" }, "development"],
     // Empty or only spaces counts as unset, so the next one is read.
     [{ CRONWATCH_ENV: "", APP_ENV: "   ", NODE_ENV: "production" }, "production"],
     [{ CRONWATCH_ENV: " \t" }, ""],

@@ -39,17 +39,18 @@ export function secretOption(value: unknown, what: string): string | null | unde
 /**
  * The environment's name from the values of the variables that name it, in
  * order, as every CronWatch library reads it: the first that holds more than
- * whitespace, trimmed and lowercased, with "prod" read as "production"; ""
- * when none is set. Only "development" itself is development: a "dev",
- * "local", "test", or "testing" set for another tool is not, so nothing but
- * an explicit setting makes a token of its own or runs a handler with no
- * secret.
+ * whitespace, trimmed and lowercased, with "prod" read as "production" and
+ * "dev" and "local" as "development"; "" when none is set. "test" and
+ * "testing" are not development: a test run or CI needs CRON_SECRET or a
+ * token, as production does.
  */
 export function environmentOf(values: readonly (string | undefined)[]): string {
   for (const value of values) {
     const name = typeof value === "string" ? value.trim().toLowerCase() : "";
     if (name === "") continue;
-    return name === "prod" ? "production" : name;
+    if (name === "prod") return "production";
+    if (name === "dev" || name === "local") return "development";
+    return name;
   }
   return "";
 }
