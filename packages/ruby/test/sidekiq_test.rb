@@ -125,8 +125,10 @@ if defined?(::Sidekiq::Job)
     end
 
     # What Sidekiq raises into a busy job when a deploy outlasts its
-    # timeout: the job goes back on the queue, and its run is not left running.
-    def test_a_job_stopped_by_sidekiq_shutdown_is_recorded_and_the_shutdown_raised
+    # timeout: the job goes back on the queue, and its run is not left
+    # running. Sidekiq runs it again after the restart, so the stopped run is
+    # not judged: a deploy opens no failed alert, and no recovery follows.
+    def test_a_job_stopped_by_sidekiq_shutdown_is_recorded_not_judged_and_the_shutdown_raised
       job = SidekiqJobs::HardWorker.new
       assert_raises(::Sidekiq::Shutdown) do
         chain.invoke(job, payload(SidekiqJobs::HardWorker, "ok"), "default") { raise ::Sidekiq::Shutdown }
@@ -135,6 +137,18 @@ if defined?(::Sidekiq::Job)
       assert_equal :failed, run.status
       assert_equal "Interrupted: Sidekiq::Shutdown", run.error.split("\n").first
       refute_nil run.finished_at
+      assert_empty @capture.types, "no failed alert for a deploy"
+      assert_equal 0, @client.store.get_state("hard")&.consecutive_failures.to_i
+
+      chain.invoke(job, payload(SidekiqJobs::HardWorker, "ok"), "default") { job.perform("ok") }
+      assert_equal %i[ok failed], runs("hard").map(&:status)
+      assert_empty @capture.types, "nothing opened, so nothing recovers"
+
+      # A failure of the job's own is still judged.
+      assert_raises(SidekiqJobs::HardWorker::Boom) do
+        chain.invoke(job, payload(SidekiqJobs::HardWorker, "raise"), "default") { job.perform("raise") }
+      end
+      assert_equal [:failed], @capture.types
     end
 
     def test_sidekiq_testing_inline_runs_the_middleware

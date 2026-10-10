@@ -117,7 +117,7 @@ class HardWorker
 end
 ```
 
-The same `cronwatch` as for ActiveJob, for classes that include `Sidekiq::Job` (or `Sidekiq::Worker`) directly. `Cronwatch::Sidekiq::ServerMiddleware` records each `perform` with the trigger `"sidekiq"` and raises the job's error on to Sidekiq, so retries and error handlers behave as before. In Rails the Railtie adds it to the Sidekiq server; elsewhere add it in `Sidekiq.configure_server` and call `Cronwatch::Sidekiq.ready!` once `Cronwatch.configure` has run. An ActiveJob class on Sidekiq's adapter keeps `Cronwatch::ActiveJob`; the middleware passes ActiveJob's wrapper through, so it is recorded once.
+The same `cronwatch` as for ActiveJob, for classes that include `Sidekiq::Job` (or `Sidekiq::Worker`) directly. `Cronwatch::Sidekiq::ServerMiddleware` records each `perform` with the trigger `"sidekiq"` and raises the job's error on to Sidekiq, so retries and error handlers behave as before. In Rails the Railtie adds it to the Sidekiq server; elsewhere add it in `Sidekiq.configure_server` and call `Cronwatch::Sidekiq.ready!` once `Cronwatch.configure` has run. An ActiveJob class on Sidekiq's adapter keeps `Cronwatch::ActiveJob`; the middleware passes ActiveJob's wrapper through, so it is recorded once. A job stopped by Sidekiq's shutdown (`Sidekiq::Shutdown`, raised into a job still running when a deploy outlasts Sidekiq's timeout) goes back on the queue and runs again after the restart, so its run is recorded as failed (`Interrupted: Sidekiq::Shutdown`) but not judged: it opens no failed alert and does not count toward `failures_before_alert`. The same holds for an ActiveJob class on Sidekiq's adapter.
 
 ### Schedules from the scheduler's config
 

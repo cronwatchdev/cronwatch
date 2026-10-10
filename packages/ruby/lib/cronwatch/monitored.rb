@@ -166,7 +166,9 @@ module Cronwatch
         return yield unless handle
 
         holder = job.respond_to?(:cronwatch_with, true) ? job : Discard
-        outcome = client.execute(handle.definition, trigger) do |context|
+        # Sidekiq puts a job stopped by its shutdown back on the queue, so that
+        # run is recorded but not judged (see Client#execute).
+        outcome = client.execute(handle.definition, trigger, requeued_on_shutdown: true) do |context|
           holder.__send__(:cronwatch_with, context) { yield }
         end
         raise outcome.error if outcome.threw
