@@ -1,7 +1,7 @@
 defmodule Cronwatch.Supervisor do
   @moduledoc false
-  # An instance's processes, :rest_for_one: the store's process (when it has
-  # one), Cronwatch.Runs (the tables and the monitor on runs in flight),
+  # An instance's processes, :rest_for_one: Cronwatch.Instance (which holds
+  # the config), the store's process (when it has one), Cronwatch.Runs (the tables and the monitor on runs in flight),
   # Cronwatch.Locks, a Task.Supervisor for the work done off the caller's
   # path, and Cronwatch.Checker. The options are checked, and the jobs
   # given in `jobs:` declared, before any of them starts, so a bad option
@@ -47,7 +47,6 @@ defmodule Cronwatch.Supervisor do
 
   @impl true
   def init(config) do
-    Config.put(config)
     {module, handle} = config.store
     Code.ensure_loaded(module)
 
@@ -58,7 +57,8 @@ defmodule Cronwatch.Supervisor do
          else: []
 
     children =
-      store ++
+      [{Cronwatch.Instance, config}] ++
+        store ++
         [
           {Cronwatch.Runs, config.name},
           {Cronwatch.Locks, config.name},

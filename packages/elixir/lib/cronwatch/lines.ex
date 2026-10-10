@@ -31,6 +31,9 @@ defmodule Cronwatch.Lines do
     ])
 
     :ok
+  rescue
+    # The table went with Cronwatch.Runs, which is restarting.
+    ArgumentError -> :ok
   end
 
   @doc "Whether the key is open."
@@ -122,6 +125,10 @@ defmodule Cronwatch.Lines do
       dropped: dropped,
       metrics: metrics(table, key)
     }
+  rescue
+    # The table went with Cronwatch.Runs, which is restarting, and what the
+    # run had collected with it.
+    ArgumentError -> %{lines: [], head: [], dropped: false, metrics: Object.new()}
   end
 
   @doc """
