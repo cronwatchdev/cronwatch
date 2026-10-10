@@ -11,12 +11,17 @@ public final class WebhookOptions {
   final String url;
   final List<Map.Entry<String, String>> headers;
   final String secret;
+
+  /** Whether {@code secret} was given, so an empty one is told from none. */
+  final boolean secretGiven;
+
   final @Nullable Transport transport;
 
   private WebhookOptions(Builder b) {
     this.url = b.url;
     this.headers = List.copyOf(b.headers);
     this.secret = b.secret;
+    this.secretGiven = b.secretGiven;
     this.transport = b.transport;
   }
 
@@ -39,6 +44,7 @@ public final class WebhookOptions {
     private String url = "";
     private final List<Map.Entry<String, String>> headers = new ArrayList<>();
     private String secret = "";
+    private boolean secretGiven;
 
     private Builder() {}
 
@@ -78,9 +84,12 @@ public final class WebhookOptions {
     /**
      * When set, each request carries {@code x-cronwatch-signature: sha256=<hex>}, the HMAC-SHA256
      * of the raw body with this secret, so the receiver can verify it ({@link Webhook#signature}).
+     * An empty string (an unset variable read as {@code ""}, say) signs nothing, and each send
+     * reports that to the error handler.
      */
     public Builder secret(String secret) {
       this.secret = Objects.requireNonNull(secret, "secret");
+      this.secretGiven = true;
       return this;
     }
 

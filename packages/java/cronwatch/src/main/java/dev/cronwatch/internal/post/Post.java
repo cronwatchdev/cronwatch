@@ -459,6 +459,28 @@ public final class Post {
   }
 
   /**
+   * The parts of a webhook URL that are its credential, to cut from an error body that echoes the
+   * request: its path and query together, then the last segment of its path (Slack's and Discord's
+   * token) on its own. The SDK's {@code urlSecrets}.
+   */
+  public static List<@Nullable String> urlSecrets(String url) {
+    if (!(WhatwgUrl.parse(url) instanceof WhatwgUrl.Special s)) {
+      return List.of();
+    }
+    String path = s.url().path();
+    String query = s.url().query();
+    String search = query == null || query.isEmpty() ? "" : "?" + query;
+    String last = path.substring(path.lastIndexOf('/') + 1);
+    List<@Nullable String> out = new ArrayList<>();
+    for (String part : List.of(path + search, last)) {
+      if (!part.isEmpty() && !part.equals("/")) {
+        out.add(part);
+      }
+    }
+    return out;
+  }
+
+  /**
    * The error for an answer outside 2xx: {@code <provider> <origin> answered <status>: <body>}, the
    * body's secrets cut out.
    */

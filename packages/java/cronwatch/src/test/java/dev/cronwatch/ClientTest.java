@@ -163,7 +163,7 @@ class ClientTest {
   }
 
   @Test
-  void aScheduleRemovedWhileSilencedClosesMissedQuietly() {
+  void aScheduleRemovedWhileSilencedClosesMissedWithItsRecoveryWhichTheSilenceDoesNotHoldBack() {
     Made m = Support.make();
     m.cw().job("sync", JobOptions.builder().schedule("every 1h").grace("10m"));
     m.cw().check();
@@ -172,11 +172,12 @@ class ClientTest {
     m.cw().silence("sync", "1h");
     m.cw().job("sync");
     m.clock().advance(MIN);
-    assertEquals(List.of(), m.cw().check().alerts());
+    assertEquals(
+        List.of(AlertType.RECOVERED), m.cw().check().alerts().stream().map(Alert::type).toList());
     assertEquals(List.of(), m.cw().jobSummary("sync").open());
     m.clock().advance(2 * HOUR);
     assertEquals(List.of(), m.cw().check().alerts());
-    assertEquals(List.of("missed"), m.alerts().types());
+    assertEquals(List.of("missed", "recovered"), m.alerts().types());
   }
 
   @Test

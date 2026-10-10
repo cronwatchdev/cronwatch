@@ -371,7 +371,9 @@ class OutboxTest {
       assertEquals(
           List.of("failed"), state.undelivered().stream().map(a -> a.type().value()).toList());
       assertNull(state.sending());
-      assertEquals(1, writes.get(), "one write: the failure and its alert together");
+      // The start's write holds the run as pending; then one write has the failure and its alert.
+      assertEquals(2, writes.get(), "the start's, then the failure and its alert together");
+      assertNull(state.pendingRuns(), "the run is no longer pending once judged");
     }
   }
 }

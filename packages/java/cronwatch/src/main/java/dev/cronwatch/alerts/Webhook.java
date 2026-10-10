@@ -62,6 +62,11 @@ public final class Webhook implements Channel {
   @Override
   public void send(Alert alert, ChannelContext context) throws Exception {
     String body = body(alert);
+    if (options.secretGiven && options.secret.isEmpty()) {
+      context.reportError(
+          "webhook: secret is an empty string, so this request is sent unsigned; set the secret, or"
+              + " leave it out to send unsigned on purpose");
+    }
     // A JavaScript object's keys: an exact name given again keeps its place.
     JsObject headers =
         new JsObject().set("content-type", "application/json").set("user-agent", "cronwatch");

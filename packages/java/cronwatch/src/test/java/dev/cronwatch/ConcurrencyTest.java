@@ -160,7 +160,8 @@ class ConcurrencyTest {
                     j -> {
                       throw new IllegalStateException("x");
                     }));
-    assertEquals(List.of("evaluating busy"), m.errors().wheres());
+    // The start's write (it holds the run as pending) loses too, and is reported the same way.
+    assertEquals(List.of("starting busy", "evaluating busy"), m.errors().wheres());
     assertEquals(RunStatus.FAILED, m.cw().runs("busy", 1).get(0).status());
   }
 

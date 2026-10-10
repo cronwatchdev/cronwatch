@@ -279,7 +279,7 @@ public final class Cronwatch implements AutoCloseable {
   }
 
   private Job declared(String name, @Nullable JobOptions options) {
-    JobDef def = options == null ? core.declared(name) : null;
+    JobDef def = options == null ? core.declaredOrForgotten(name) : null;
     return def == null
         ? job(name, options == null ? JobOptions.builder() : options)
         : new Job(this, def);
@@ -509,7 +509,7 @@ public final class Cronwatch implements AutoCloseable {
       recorded = false;
     }
     if (recorded) {
-      runs.closeOnStart(name);
+      runs.closeOnStart(name, run.id());
     }
     return new RunHandle(core, runs, def, run.id(), run, recorded, null);
   }
@@ -564,7 +564,7 @@ public final class Cronwatch implements AutoCloseable {
    * @throws CronwatchException when the job is not declared, or for an invalid run id
    */
   public RunHandle resumeRun(String name, String runId) {
-    JobDef def = core.declared(name);
+    JobDef def = core.declaredOrForgotten(name);
     if (def == null) {
       throw CronwatchException.invalid(
           "resumeRun: job " + Json.stringify(name) + " is not declared; call job first");
