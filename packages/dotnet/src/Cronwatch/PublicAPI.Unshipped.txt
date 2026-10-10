@@ -678,6 +678,8 @@ Cronwatch.JobState.Undelivered.get -> Cronwatch.ValueList<Cronwatch.Alert!>?
 Cronwatch.JobState.Undelivered.init -> void
 Cronwatch.JobState.UnderFloor.get -> Cronwatch.ValueList<string!>?
 Cronwatch.JobState.UnderFloor.init -> void
+Cronwatch.JobState.PendingRuns.get -> Cronwatch.ValueList<string!>?
+Cronwatch.JobState.PendingRuns.init -> void
 Cronwatch.JobState.Version.get -> long?
 Cronwatch.JobState.Version.init -> void
 Cronwatch.JobStats

@@ -142,7 +142,8 @@ public class ConcurrencyTests
         var contested = new Wrapped { CasMode = Cas.Refused };
         await using var m = Make(store: contested);
         await Fail(m.Cw, "busy");
-        Assert.Equal(["evaluating busy"], m.Errors.Wheres());
+        // The start's write (it holds the run as pending) loses too, and is reported the same way.
+        Assert.Equal(["starting busy", "evaluating busy"], m.Errors.Wheres());
         Assert.Equal(RunStatus.Failed, (await m.Cw.RunsAsync("busy", 1))[0].Status);
     }
 

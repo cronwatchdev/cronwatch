@@ -54,6 +54,26 @@ public class HealthConformanceTests
     }
 
     [Fact]
+    public void Every_section_is_replayed()
+    {
+        var f = Fixtures.Load("health");
+        DurationConformanceTests.Known(f, "jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck",
+            "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery");
+        Known(Fixtures.Object(f, "delivery"), "maxUndelivered", "sendLeaseMs", "maxPendingRuns", "alertKey", "normalizeState",
+            "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun");
+    }
+
+    /// <summary>Fails when a nested section has a key a replay does not know.</summary>
+    internal static void Known(JsObject section, params string[] keys)
+    {
+        var known = new HashSet<string>(keys, StringComparer.Ordinal);
+        foreach (string key in section.Keys)
+        {
+            Assert.True(known.Contains(key), "the fixture has a section this port does not replay: " + key);
+        }
+    }
+
+    [Fact]
     public void Every_case_answers_as_the_sdk_answers()
     {
         var f = Fixtures.Load("health");
@@ -177,7 +197,7 @@ public class HealthConformanceTests
             fails.Same("silenceEnd " + i++, Evaluate.SilenceEnd(Fixtures.Integer(c, "now"), ms), c.Get("silencedUntil"));
         }
         cases += Delivery(Fixtures.Object(f, "delivery"), fails);
-        Assert.Equal(231, cases);
+        Assert.Equal(254, cases);
         fails.Check("health");
     }
 
@@ -217,6 +237,7 @@ public class HealthConformanceTests
     {
         Assert.Equal(Evaluate.MaxUndelivered, Fixtures.Integer(d, "maxUndelivered"));
         Assert.Equal(Evaluate.SendLeaseMs, Fixtures.Integer(d, "sendLeaseMs"));
+        Assert.Equal(Evaluate.MaxPendingRuns, Fixtures.Integer(d, "maxPendingRuns"));
         int cases = 0;
         int i = 0;
         foreach (var c in Fixtures.Objects(d, "alertKey"))
@@ -264,6 +285,29 @@ public class HealthConformanceTests
             cases++;
             var got = Evaluate.RecordSent(State(c.Get("state")), Alerts(c.Get("delivered")), Alerts(c.Get("failed")), Alerts(c.Get("stale")), Fixtures.Integer(c, "now"));
             fails.Same("recordSent " + i++, Result(got), AlertsAsWritten(c.Get("result")));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "claimUndelivered"))
+        {
+            cases++;
+            var (state, claimed, stale) = Evaluate.ClaimUndelivered(State(c.Get("state")), Fixtures.Integer(c, "now"), Fixtures.Integer(c, "until"));
+            var got = new JsObject()
+                .Set("state", state.ToValue())
+                .Set("claimed", claimed.Select(a => (object?)a.ToValue()).ToList())
+                .Set("stale", stale.Select(a => (object?)a.ToValue()).ToList());
+            fails.Same("claimUndelivered " + i++, got, AlertsAsWritten(c.Get("result")));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "holdRun"))
+        {
+            cases++;
+            fails.Same("holdRun " + i++, Evaluate.HoldRun(State(c.Get("state")), Fixtures.String(c, "runId")!).ToValue(), AlertsAsWritten(c.Get("result")));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "releaseRun"))
+        {
+            cases++;
+            fails.Same("releaseRun " + i++, Evaluate.ReleaseRun(State(c.Get("state")), Fixtures.String(c, "runId")!).ToValue(), AlertsAsWritten(c.Get("result")));
         }
         return cases;
     }

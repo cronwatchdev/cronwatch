@@ -88,29 +88,50 @@ public sealed partial class CronwatchClient
 
     /// <summary>
     /// Retries a job's queued alerts once, oldest first, within what is left of the check's
-    /// budget; one that no longer describes the job is dropped.
+    /// budget. They are claimed first (<see cref="Evaluate.ClaimUndelivered"/>): moved into
+    /// <c>sending</c> with a lease, in one conditional write, so when several processes check at
+    /// once only the one whose write lands sends them. One that no longer describes the job is
+    /// dropped instead. Claimed alerts the budget has no time left for go back to the queue for
+    /// the next check.
     /// </summary>
     internal async Task<IReadOnlyList<Alert>> RetryUndeliveredAsync(string name, JobState state, long now, RetryBudget budget)
     {
-        var pending = (IReadOnlyList<Alert>?)state.Undelivered ?? [];
-        if (pending.Count == 0 || Evaluate.IsSilenced(state, now) || _deferDelivery)
+        if (state.Undelivered is not { Count: > 0 } || _deferDelivery)
         {
             return [];
         }
-        var dropped = new List<Alert>();
+        List<Alert> claimed;
+        try
+        {
+            (_, (claimed, List<Alert> stale)) = await UpdateStateAsync(name, previous =>
+            {
+                var claim = Evaluate.ClaimUndelivered(previous, now, Now() + Evaluate.SendLeaseMs);
+                return (claim.State, (claim.Claimed, claim.Stale));
+            }).ConfigureAwait(false);
+            foreach (var a in stale)
+            {
+                Count(a, "dropped");
+            }
+        }
+        catch (Exception e)
+        {
+            Report(e, "claiming undelivered alerts for " + name);
+            return [];
+        }
+        if (claimed.Count == 0)
+        {
+            return [];
+        }
         var delivered = new List<Alert>();
         var failed = new List<Alert>();
-        var fresh = new List<Alert>();
-        foreach (var a in pending)
-        {
-            (Evaluate.StaleAlert(a, state) ? dropped : fresh).Add(a);
-        }
-        foreach (var a in fresh)
+        foreach (var a in claimed)
         {
             TimeSpan left = Timings.RetryBudget - budget.Spent;
             if (left <= TimeSpan.Zero)
             {
-                break;
+                // Not tried: back to the queue as it was.
+                failed.Add(a);
+                continue;
             }
             long started = _time.GetTimestamp();
             Alert alert = a;
@@ -123,11 +144,7 @@ public sealed partial class CronwatchClient
             (await DeliverAsync(alert).ConfigureAwait(false) ? delivered : failed).Add(alert);
             budget.Spent += _time.GetElapsedTime(started);
         }
-        foreach (var a in dropped)
-        {
-            Count(a, "dropped");
-        }
-        await RecordDeliveryAsync(name, delivered, failed, dropped, now).ConfigureAwait(false);
+        await RecordDeliveryAsync(name, delivered, failed, [], now).ConfigureAwait(false);
         return delivered;
     }
 

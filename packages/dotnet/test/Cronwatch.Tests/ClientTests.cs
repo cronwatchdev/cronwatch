@@ -202,7 +202,7 @@ public class ClientTests
     }
 
     [Fact]
-    public async Task A_schedule_removed_while_silenced_closes_missed_quietly()
+    public async Task A_schedule_removed_while_silenced_closes_missed_with_its_recovery_which_the_silence_does_not_hold_back()
     {
         await using var m = Make();
         m.Cw.Job("sync", new JobOptions { Schedule = "every 1h", Grace = "10m" });
@@ -212,11 +212,11 @@ public class ClientTests
         await m.Cw.SilenceAsync("sync", "1h");
         m.Cw.Job("sync");
         m.Clock.Advance(Min);
-        Assert.Empty((await m.Cw.CheckAsync()).Alerts);
+        Assert.Equal(["recovered"], (await m.Cw.CheckAsync()).Alerts.Select(a => a.Type.Value));
         Assert.Empty((await m.Cw.JobSummaryAsync("sync"))!.Open);
         m.Clock.Advance(2 * Hour);
         Assert.Empty((await m.Cw.CheckAsync()).Alerts);
-        Assert.Equal(["missed"], m.Alerts.Types());
+        Assert.Equal(["missed", "recovered"], m.Alerts.Types());
     }
 
     [Fact]
@@ -339,7 +339,20 @@ public class ClientTests
     }
 
     [Fact]
-    public async Task Silence_swallows_alerts_and_nothing_opens_underneath()
+    public async Task A_recovery_for_an_alert_sent_before_the_silence_goes_out_during_it()
+    {
+        await using var m = Make();
+        var job = m.Cw.Job("flaky");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => job.RunAsync((j, ct) => throw new InvalidOperationException("x")));
+        Assert.Equal(["failed"], m.Alerts.Types());
+        await m.Cw.SilenceAsync("flaky", "1h");
+        await job.RunAsync((j, ct) => Task.CompletedTask);
+        // The incident someone was told about closes with its recovery, silence or not.
+        Assert.Equal(["failed", "recovered"], m.Alerts.Types());
+    }
+
+    [Fact]
+    public async Task Silence_swallows_new_alerts_and_nothing_opens_underneath()
     {
         await using var m = Make();
         var job = m.Cw.Job("flaky");
