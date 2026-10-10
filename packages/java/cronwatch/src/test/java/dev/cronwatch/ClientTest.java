@@ -181,6 +181,52 @@ class ClientTest {
   }
 
   @Test
+  void aRecoveryForAnAlertSentBeforeTheSilenceIsSentDuringItNewProblemsAreNot() throws Exception {
+    Made m = Support.make();
+    Job job = m.cw().job("flaky");
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            job.run(
+                j -> {
+                  throw new IllegalStateException("x");
+                }));
+    m.cw().silence("flaky", "1h");
+    job.run(j -> {});
+    assertEquals(List.of("failed", "recovered"), m.alerts().types());
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            job.run(
+                j -> {
+                  throw new IllegalStateException("y");
+                }));
+    assertEquals(List.of("failed", "recovered"), m.alerts().types());
+  }
+
+  @Test
+  void afterAForgetRunAndResumeRunByNameDeclareTheJobAgainAsItWasWrittenNotBare() throws Exception {
+    Made m = Support.make();
+    JobOptions written = JobOptions.builder().schedule("0 2 * * *").description("Nightly export");
+    m.cw().job("nightly", written);
+    m.cw().run("nightly", j -> {});
+    RunHandle handle = m.cw().job("nightly", written.copy()).start();
+    m.cw().forget("nightly");
+    assertNull(m.cw().jobSummary("nightly"));
+    m.cw().run("nightly", j -> {});
+    JobSummary summary = m.cw().jobSummary("nightly");
+    assertEquals("0 2 * * *", summary.definition().schedule());
+    assertEquals("Nightly export", summary.definition().description());
+    m.cw().forget("nightly");
+    RunHandle resumed = m.cw().resumeRun("nightly", handle.id());
+    assertEquals(handle.id(), resumed.id());
+    m.clock().advance(HOUR);
+    m.cw().check();
+    assertEquals("0 2 * * *", m.cw().jobSummary("nightly").definition().schedule());
+    assertTrue(!m.alerts().types().contains("recovered"), "no 'no longer scheduled' recovery");
+  }
+
+  @Test
   void checkMarksARunThatNeverFinishedAsStuck() throws Exception {
     Made m = Support.make();
     Job job = m.cw().job("long", JobOptions.builder().timeout("5m"));
