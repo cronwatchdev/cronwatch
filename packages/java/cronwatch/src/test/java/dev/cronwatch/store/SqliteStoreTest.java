@@ -76,6 +76,19 @@ class SqliteStoreTest {
     return out;
   }
 
+  /** {@code target} behind a proxy of {@code type} that hands each call to {@code calls}. */
+  @Test
+  void theSqliteStoreGivesItsStatementsNoQueryTimeout() {
+    // SQLite's driver makes a query timeout the connection's busy_timeout, which the SDK sets to
+    // five seconds: the store's timeout is for database servers only.
+    StatementTimeouts.Watched w = StatementTimeouts.watch(source(":memory:"));
+    StoreContract.run(SqlStore.sqlite(w.dataSource()));
+    assertTrue(!w.seen().isEmpty(), "no statement was seen");
+    for (String s : w.seen()) {
+      assertTrue(s.endsWith("=0"), w.seen().toString());
+    }
+  }
+
   @Test
   void theSqliteStorePassesTheContractInMemory() {
     StoreContract.run(SqlStore.sqlite(source(":memory:")));
