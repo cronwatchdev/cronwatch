@@ -1,7 +1,9 @@
 """The environment, read in one place, as every CronWatch library reads it:
 the first of CRONWATCH_ENV, APP_ENV, and ENVIRONMENT that holds more than
-spaces, trimmed and lowercased, with "prod" read as "production" and "dev",
-"local", "test", and "testing" as "development". Failing those, a framework
+whitespace, trimmed and lowercased, with "prod" read as "production" and
+"dev" and "local" as "development"; any other value as written, so "test"
+and "testing" are not development (a test run or CI needs CRON_SECRET or a
+token, as production does). Failing those, a framework
 integration may name one (cronwatch.django reads DEBUG: development when it
 is on, production when off). None when nothing names one, which is neither.
 It decides whether the in-memory store warns that it forgets on restart, and
@@ -17,7 +19,7 @@ from . import _js
 __all__ = ["environment", "is_development", "is_production", "read_secret_env", "secret_option", "set_fallback"]
 
 _VARIABLES = ("CRONWATCH_ENV", "APP_ENV", "ENVIRONMENT")
-_ALIASES = {"prod": "production", "dev": "development", "local": "development", "test": "development", "testing": "development"}
+_ALIASES = {"prod": "production", "dev": "development", "local": "development"}
 _fallback: Callable[[], str | None] | None = None
 
 
@@ -54,24 +56,26 @@ def _blank(value: str) -> bool:
 
 
 def read_secret_env(name: str) -> str | None:
-    """A secret from the environment (CRONWATCH_TOKEN, CRON_SECRET): None when
-    the variable is unset, empty, or only whitespace, so a blank value counts as
-    not set and the routes and handlers fail closed. Any other value is used
-    as it is, untrimmed."""
+    """A secret from the environment (CRONWATCH_TOKEN, CRON_SECRET), trimmed as
+    JavaScript trims: a value read from a file often ends in a newline that no
+    header can carry, since HTTP strips the whitespace around a header's
+    value. None when the variable is unset, empty, or only whitespace, so a
+    blank value counts as not set and the routes and handlers fail closed."""
     value = os.environ.get(name)
-    return None if value is None or _blank(value) else value
+    return None if value is None or _blank(value) else _js.trim(value)
 
 
 def secret_option(value: object, what: str, unset: object) -> object:
     """A token or secret passed in code: a str, None (the opt-out), or `unset`
-    (not given). A str that is empty or only whitespace counts as not given
-    (`unset` comes back). Anything else (False, a number, bytes) raises a
-    TypeError naming the option, so it never becomes a password."""
+    (not given). A str is trimmed, as read_secret_env() trims, and one that is
+    empty or only whitespace counts as not given (`unset` comes back).
+    Anything else (False, a number, bytes) raises a TypeError naming the
+    option, so it never becomes a password."""
     if value is unset or value is None:
         return value
     if not isinstance(value, str):
         raise TypeError(f"{what} must be a string, or None to opt out, not {type(value).__name__}")
-    return unset if _blank(value) else value
+    return unset if _blank(value) else _js.trim(value)
 
 
 def is_production() -> bool:
