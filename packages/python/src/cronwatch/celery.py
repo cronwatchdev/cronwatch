@@ -72,6 +72,7 @@ task runs in a child process.
 from __future__ import annotations
 
 import copy
+import hashlib
 import sys
 import threading
 import time
@@ -92,11 +93,11 @@ except ImportError as error:  # pragma: no cover
 
 import cronwatch
 
-from . import _zone
+from . import _js, _zone
 from ._convert import check_options, every_text, field_text, local_zone_name, zone_name
 from ._deprecated import names as _deprecated_names
 from ._scheduler_check import NeverFires, ScheduleError, check_fires
-from ._client import Cronwatch, JobHandle, _Execution
+from ._client import RESERVED_RUN_ID_PREFIX, Cronwatch, JobHandle, _Execution
 from ._schedule import parse_schedule
 
 __all__ = ["CHECK_TASK", "CeleryWatch", "ScheduleError", "check", "cronwatch_task", "install", "watch_for"]
@@ -545,7 +546,10 @@ class CeleryWatch:
         if handle is None:
             return
         client = handle._client
-        prefix = f"{task_id}:"
+        key = _task_key(task_id)
+        if key is None:
+            return
+        prefix = f"{key}:"
         try:
             running = [run for run in client.store.running_runs() if run.job == handle.name and run.id.startswith(prefix)]
         except Exception as problem:
@@ -555,12 +559,25 @@ class CeleryWatch:
             handle.resume(run.id).fail(error)
 
 
-def _run_id(task_id: str | None) -> str | None:
-    """The task's id and a suffix of its own: each attempt of a task (a retry
-    keeps the id) is a run of its own, and the main process can find them."""
-    if not isinstance(task_id, str) or not task_id or len(task_id) > 180 or task_id.startswith("pgcron:"):
+def _task_key(task_id: str | None) -> str | None:
+    """The part of a run id that names the task: its id, or, for an id no run
+    id could start with (over 180 UTF-16 units, holding a NUL, or starting
+    with the pg_cron source's prefix), a hash of it. The same task id always
+    gives the same key, so the main process finds a lost worker's runs."""
+    if not isinstance(task_id, str) or not task_id:
         return None
-    return f"{task_id}:{uuid.uuid4().hex[:12]}"
+    if _js.length16(task_id) <= 180 and "\x00" not in task_id and not task_id.startswith(RESERVED_RUN_ID_PREFIX):
+        return task_id
+    return "celery-" + hashlib.sha256(task_id.encode("utf-8", "surrogatepass")).hexdigest()[:40]
+
+
+def _run_id(task_id: str | None) -> str | None:
+    """The task's key and a suffix of its own: each attempt of a task (a retry
+    keeps the id) is a run of its own, and the main process can find them."""
+    key = _task_key(task_id)
+    if key is None:
+        return None
+    return f"{key}:{uuid.uuid4().hex[:12]}"
 
 
 def _default_client() -> Cronwatch:

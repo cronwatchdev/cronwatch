@@ -242,6 +242,25 @@ def test_ignore_is_an_ok_run_and_reject_a_failed_one() -> None:
     assert cw.runs("e.rejected")[0].error.startswith("Reject: ")
 
 
+@pytest.mark.parametrize("task_id", ["x" * 300, "pgcron:12", "a\x00b", "\U0001F600" * 100])
+def test_a_lost_workers_run_is_found_whatever_its_task_id(task_id: str) -> None:
+    app = new_app()
+    cw, _, alerts = make()
+    watch = install(app, client=cw, tasks={"e.lost": {}})
+
+    @app.task(shared=False, name="e.lost")
+    def lost() -> None:
+        pass
+
+    watch._begin(lost, task_id)
+    first = cw.runs("e.lost")[0]
+    assert first.status == "running"
+    assert not first.id.startswith("pgcron:") and "\x00" not in first.id
+    watch._fail_elsewhere("e.lost", task_id, RuntimeError("WorkerLostError: the worker went away"))
+    assert cw.runs("e.lost")[0].status == "failed"
+    assert alerts.types() == ["failed"]
+
+
 def test_the_decorator_gives_a_task_its_options_above_or_below_the_task_decorator() -> None:
     app = new_app()
     app.conf.beat_schedule = {"n": {"task": "d.below", "schedule": crontab(hour=3, minute=0)}}
