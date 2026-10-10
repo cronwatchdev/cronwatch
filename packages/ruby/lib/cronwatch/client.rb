@@ -137,6 +137,9 @@ module Cronwatch
       @clock = now || -> { Process.clock_gettime(Process::CLOCK_REALTIME, :millisecond) }
       @on_error = on_error || method(:default_on_error)
       @definitions = {}
+      # Declarations forgotten here (forget), kept so that run and resume_run
+      # by name declare the job again as it was written, not bare.
+      @forgotten = {}
       @synced = Set.new
       @registry = Mutex.new
       @ready = false
@@ -166,10 +169,28 @@ module Cronwatch
       validate_definition(definition)
       @registry.synchronize do
         @definitions[name] = definition
+        @forgotten.delete(name)
         @synced.delete(name)
       end
       JobHandle.new(self, definition)
     end
+
+    # The declaration of `name`: the standing one, else one forgotten here,
+    # declared again as it was.
+    def declared(name)
+      @registry.synchronize do
+        standing = @definitions[name]
+        next standing if standing
+
+        forgotten = @forgotten.delete(name)
+        if forgotten
+          @definitions[name] = forgotten
+          @synced.delete(name)
+        end
+        forgotten
+      end
+    end
+    private :declared
 
     # Run a job by name without keeping a handle, declaring it on first use
     # (or again, when options are given).
@@ -184,8 +205,8 @@ module Cronwatch
         return get_run(name_or_id)
       end
 
-      declared = @registry.synchronize { @definitions[name_or_id.to_s] }
-      handle = options.any? || declared.nil? ? job(name_or_id, **options) : JobHandle.new(self, declared)
+      definition = options.any? ? nil : declared(name_or_id.to_s)
+      handle = definition.nil? ? job(name_or_id, **options) : JobHandle.new(self, definition)
       handle.run(&block)
     end
 
@@ -230,7 +251,7 @@ module Cronwatch
       # just before the block runs. The result is the same.
       if recorded
         begin
-          update_state(name) { |before| [Evaluate.on_run_start(before), nil] }
+          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
         rescue StandardError => e
           report(e, "starting #{name}")
         end
@@ -274,7 +295,7 @@ module Cronwatch
     # job must be declared in this process, or it raises ArgumentError.
     def resume_run(name, run_id)
       name = name.to_s if name.is_a?(Symbol)
-      definition = @registry.synchronize { @definitions[name] }
+      definition = declared(name)
       raise ArgumentError, "resume_run: job \"#{name}\" is not declared; call job first" unless definition
 
       resume_handle(definition, run_id)
@@ -404,7 +425,7 @@ module Cronwatch
       end
       return [] unless evaluate
 
-      update_state(run.job) { |before| [Evaluate.on_run_start(before), nil] }
+      update_state(run.job) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
       return [] if run.status == :running
 
       finish_run(definition, run, now)
@@ -503,13 +524,15 @@ module Cronwatch
     end
 
     # Remove a job and its runs from the store. A job still declared in code
-    # comes back: here on its next run, and in any other process that
-    # declares it on its next run there, or at that process's next check or
-    # dashboard read.
+    # comes back, with no history: here on its next run, declared as it was
+    # written (run and resume_run by name included), and in any other process
+    # that declares it on its next run there, or at that process's next check
+    # or dashboard read.
     def forget(name)
       ensure_ready
       @registry.synchronize do
-        @definitions.delete(name)
+        definition = @definitions.delete(name)
+        @forgotten[name] = definition if definition
         @synced.delete(name)
       end
       @store.delete_job(name)
@@ -893,9 +916,22 @@ module Cronwatch
         report(RuntimeError.new("run #{run.id} of #{run.job} #{ignored}; ignored"), "recording #{run.job}")
         return []
       end
-      return [] if !evaluate || (late && run.status != :ok)
+      unless evaluate
+        # Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+        release_unjudged(run)
+        return []
+      end
+      return [] if late && run.status != :ok
 
       finish_run(definition, run, now)
+    end
+
+    # Takes a run stored without judging out of the job's pending runs, so a
+    # check does not evaluate it as one whose evaluation was lost.
+    def release_unjudged(run)
+      update_state(run.job) { |current| [Evaluate.release_run(current, run.id), nil] }
+    rescue StandardError => e
+      report(e, "recording #{run.job}")
     end
 
     # A conditional write (the store's update_run_if), or for a store
@@ -987,7 +1023,11 @@ module Cronwatch
       late, ignored = claim_finish(run)
       return ignored if ignored
 
-      finish_run(Serialize.to_stored(definition), run, finished_at) if judge && (!late || run.status == :ok)
+      if !judge
+        release_unjudged(run)
+      elsif !late || run.status == :ok
+        finish_run(Serialize.to_stored(definition), run, finished_at)
+      end
       nil
     end
 
@@ -1034,7 +1074,7 @@ module Cronwatch
       end
       if recorded
         begin
-          update_state(name) { |before| [Evaluate.on_run_start(before), nil] }
+          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
         rescue StandardError => e
           report(e, "starting #{name}")
         end
@@ -1185,6 +1225,30 @@ module Cronwatch
       joined && Output.cap(joined)
     end
 
+    # Runs the job's state still holds as pending (Evaluate.hold_run) whose
+    # finish was written but never evaluated: the process that finished them
+    # stopped, or its state write failed, between the two writes. Each one
+    # finished more than SEND_LEASE_MS ago is evaluated now, as its finish
+    # would have been; one still running is left to the stuck check, and one
+    # the store no longer has (given back, or pruned) is let go. The wait
+    # leaves a finish under way in another process to write its own evaluation.
+    def evaluate_pending(stored, recent, state, at)
+      alerts = []
+      (state.pending_runs || []).each do |id|
+        run = recent.find { |r| r.id == id } || @store.get_run(id)
+        if run.nil? || run.job != stored.name
+          update_state(stored.name) { |current| [Evaluate.release_run(current, id), nil] }
+          next
+        end
+        next if run.status == :running || !run.finished_at.is_a?(Numeric) || run.finished_at > at - Evaluate::SEND_LEASE_MS
+
+        alerts.concat(finish_run(stored.definition, run, at))
+      rescue StandardError => e
+        report(e, "evaluating run #{id} of #{stored.name}")
+      end
+      alerts
+    end
+
     # Evaluate a finished run (ok, failed, or timed out by a check), already
     # written, against the job's state and send what that produces. The
     # alerts are written with that state (see outbox). Never raises.
@@ -1194,7 +1258,8 @@ module Cronwatch
         past = nil
         _, held = update_state(run.job) do |previous|
           past ||= history(run)
-          outbox(Evaluate.apply_silence(previous, Evaluate.on_run_finish(definition, run, previous, past, at), at), definition, at)
+          before = Evaluate.release_run(previous, run.id)
+          outbox(Evaluate.apply_silence(before, Evaluate.on_run_finish(definition, run, before, past, at), at), definition, at)
         end
       rescue StandardError => e
         report(e, "evaluating #{run.job}")
@@ -1303,6 +1368,7 @@ module Cronwatch
         report_dropped(stored.name, held.dropped)
         alerts.concat(retry_undelivered(stored.name, state, at, retries))
         alerts.concat(dispatch(stored.name, held.alerts, at))
+        alerts.concat(evaluate_pending(stored, recent, state, at))
         jobs << Evaluate.summarize(stored, recent, state, next_expected_at, at)
       rescue StandardError => e
         report(e, "checking #{stored.name}")
@@ -1399,22 +1465,36 @@ module Cronwatch
     RetryBudget = Struct.new(:spent_ms)
 
     # Send the alerts that no channel accepted last time, once each, oldest
-    # first. `state` is the job's state as this check left it: an alert that
-    # no longer describes it (Evaluate.stale_alert?) is dropped instead.
-    # Retries across a check share RETRY_BUDGET_MS of wall-clock time; once it
-    # is spent the rest stay queued for the next check.
+    # first. They are claimed first (Evaluate.claim_undelivered): moved into
+    # `sending` with a lease, in one conditional write, so when several
+    # processes check at once only the one whose write lands sends them. An
+    # alert that no longer describes the job (Evaluate.stale_alert?) is
+    # dropped instead. Retries across a check share RETRY_BUDGET_MS of
+    # wall-clock time; claimed alerts it has no time left for go back to the
+    # queue for the next check.
     def retry_undelivered(name, state, at, budget)
-      pending = state.undelivered || []
-      return [] if pending.empty? || Evaluate.silenced?(state, at) || @defer_delivery
+      return [] if (state.undelivered || []).empty? || @defer_delivery
+
+      begin
+        _, claimed = update_state(name) do |previous|
+          claim = Evaluate.claim_undelivered(previous, at, now + Evaluate::SEND_LEASE_MS)
+          [claim.state, claim.claimed]
+        end
+      rescue StandardError => e
+        report(e, "claiming undelivered alerts for #{name}")
+        return []
+      end
+      return [] if claimed.empty?
 
       delivered = []
       failed = []
-      dropped = pending.select { |alert| Evaluate.stale_alert?(alert, state) }
-      pending.each do |alert|
-        next if dropped.any? { |d| d.equal?(alert) }
-
+      claimed.each do |alert|
         left = @retry_budget_ms - budget.spent_ms
-        break if left <= 0
+        if left <= 0
+          # Not tried: back to the queue as it was.
+          failed << alert
+          next
+        end
 
         started = AbortSignal.monotonic
         # An alert queued by a process that delivers at check time was never
@@ -1423,7 +1503,7 @@ module Cronwatch
         (deliver(alert) ? delivered : failed) << alert
         budget.spent_ms += [0, ((AbortSignal.monotonic - started) * 1000).round].max
       end
-      record_delivery(name, delivered, failed, dropped, at)
+      record_delivery(name, delivered, failed, [], at)
       delivered
     end
 
