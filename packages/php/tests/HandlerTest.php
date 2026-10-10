@@ -286,6 +286,13 @@ final class HandlerTest extends TestCase
     public function testUnderApacheWithoutCgiPassAuthTheBearerIsFoundInGetallheaders(): void
     {
         require_once __DIR__ . '/Support/getallheaders.php';
+        // A polyfill (ralouphie/getallheaders, which guzzlehttp/psr7 2 brings
+        // on older PHP) may have defined it first, from $_SERVER: then there is
+        // no Apache to stand in for.
+        $defined = new \ReflectionFunction('getallheaders');
+        if ($defined->isInternal() || realpath((string) $defined->getFileName()) !== realpath(__DIR__ . '/Support/getallheaders.php')) {
+            $this->markTestSkipped('getallheaders() is defined elsewhere (' . ($defined->getFileName() ?: 'built in') . ')');
+        }
         $server = $_SERVER;
         $GLOBALS['cronwatch_getallheaders'] = ['Host' => 'app.test', 'Authorization' => 'Bearer g'];
         try {

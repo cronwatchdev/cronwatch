@@ -91,9 +91,9 @@ type Client struct {
 	// ResumeRun by name declares the job again as it was written, not bare.
 	forgotten map[string]*jobDef
 	synced    map[string]bool
-	syncTurns   map[string]*syncTurnOf // see syncTurn
-	jobLocks    map[string]*jobLockOf
-	starting    map[string]*startCall
+	syncTurns map[string]*syncTurnOf // see syncTurn
+	jobLocks  map[string]*jobLockOf
+	starting  map[string]*startCall
 
 	readyMu sync.Mutex
 	ready   bool
