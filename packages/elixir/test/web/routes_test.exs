@@ -20,6 +20,7 @@ defmodule Cronwatch.Web.RoutesTest do
   alias Cronwatch.Web.Origin
   alias Cronwatch.Web.Request
   alias Cronwatch.Web.Routes
+  alias Cronwatch.Web.Text
 
   @t0 Clock.t0()
   @min 60_000
@@ -539,6 +540,43 @@ defmodule Cronwatch.Web.RoutesTest do
 
     assert {401, _, _} = Routes.handle(opts, request)
     refute_received :read, "a body was read without the token"
+
+    # The sign-in form: a body too large is no token at all.
+    sign_in = req(w, "POST", "/cronwatch/signin", [@form], "token=tok&pad=" <> String.duplicate("x", Routes.max_body()))
+    assert sign_in.status == 401
+    assert header(sign_in, "set-cookie") == nil
+
+    # A body just under the cap is read.
+    fits = ~s({"for":"2h","pad":"#{String.duplicate("x", Routes.max_body() - 32)}"})
+    assert req(w, "POST", "/cronwatch/api/jobs/s/silence", [@auth, @json], fits).status == 200
+  end
+
+  test "the secret compare matches only the secret itself, whatever is sent" do
+    for {sent, secret, equal} <- [
+          {"tok", "tok", true},
+          {"tok", "tok2", false},
+          {"tok2", "tok", false},
+          {"toktok", "tok", false},
+          {"", "tok", false},
+          {"", "", true},
+          {"x", "", false},
+          {"😀", "😀", true},
+          {"😀", "😁", false}
+        ] do
+      assert Text.constant_time_eq(sent, secret) == equal, "#{inspect(sent)} vs #{inspect(secret)}"
+    end
+  end
+
+  test "the ?token= sign-in never redirects off the site, however many slashes lead the path" do
+    w = web(base_path: "/")
+
+    for path <- ["//evil.example/x", "///evil.example", "/\\/evil.example"] do
+      res = req(w, "GET", path <> "?token=tok")
+      assert res.status == 303, path
+      location = header(res, "location")
+      assert String.starts_with?(location, "/") and not String.starts_with?(location, "//"), "#{path} -> #{location}"
+      assert URI.parse("http://app.test" <> location).host == "app.test", "#{path} -> #{location}"
+    end
   end
 
   test "a body a Phoenix endpoint's parsers already read is taken from its fields" do
