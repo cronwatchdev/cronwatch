@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import logging
 import queue
 import re
 import threading
@@ -88,6 +89,8 @@ from ._run_handle import RunHandle
 from ._schedule import parse_schedule
 
 __all__ = ["ScheduleError", "SchedulerWatch", "convert", "watch"]
+
+_log = logging.getLogger("cronwatch")
 
 _TRIGGER = "apscheduler"
 #: What APScheduler generates for a job added without an id.
@@ -359,9 +362,17 @@ class SchedulerWatch:
                 else:
                     self._handle(event)
             except Exception as error:
-                self.client._report(error, "apscheduler listener")
+                self._report(error, "apscheduler listener")
             finally:
                 self._events.task_done()
+
+    def _report(self, error: BaseException, where: str) -> None:
+        """Reports through the client, or logs when even the client cannot be had,
+        so a failing report never ends the listener's thread."""
+        try:
+            self.client._report(error, where)
+        except Exception as problem:
+            _log.error("%s: %s: %s (and the client could not be had: %s: %s)", where, type(error).__name__, error, type(problem).__name__, problem)
 
     def flush(self) -> None:
         """Waits until every event heard so far is recorded (for tests, and before exit)."""
