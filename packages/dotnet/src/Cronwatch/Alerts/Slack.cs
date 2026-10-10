@@ -92,7 +92,8 @@ public sealed class SlackChannel : IChannel
             cancellationToken).ConfigureAwait(false);
         if (!answer.Ok)
         {
-            throw Post.Fail("Slack webhook answered " + answer.Status.ToString(System.Globalization.CultureInfo.InvariantCulture) + ": " + Js.Head(answer.Body, 200));
+            // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+            throw Post.Fail("Slack webhook answered " + answer.Status.ToString(System.Globalization.CultureInfo.InvariantCulture) + ": " + Post.ErrorBody(answer.Body, ChannelShared.UrlSecrets(_webhookUrl)));
         }
     }
 

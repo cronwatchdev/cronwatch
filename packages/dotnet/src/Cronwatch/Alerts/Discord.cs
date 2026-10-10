@@ -94,7 +94,8 @@ public sealed class DiscordChannel : IChannel
             cancellationToken).ConfigureAwait(false);
         if (!answer.Ok)
         {
-            throw Post.Fail("Discord webhook answered " + answer.Status.ToString(CultureInfo.InvariantCulture) + ": " + Js.Head(answer.Body, 200));
+            // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+            throw Post.Fail("Discord webhook answered " + answer.Status.ToString(CultureInfo.InvariantCulture) + ": " + Post.ErrorBody(answer.Body, ChannelShared.UrlSecrets(_webhookUrl)));
         }
     }
 

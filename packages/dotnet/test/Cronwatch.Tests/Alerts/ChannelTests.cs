@@ -150,6 +150,24 @@ public class ChannelTests
     }
 
     [Fact]
+    public async Task A_webhook_with_an_empty_secret_sends_unsigned_and_says_so_on_each_send()
+    {
+        var rec = new Recorder();
+        var reported = new System.Collections.Generic.List<string>();
+        var context = new ChannelContext(e => reported.Add(e.Message));
+        var empty = new WebhookChannel(new WebhookOptions { Url = "https://hooks.example.com/in", Secret = "", Transport = rec });
+        await empty.SendAsync(ChannelsConformanceTests.Sample(), context, CancellationToken.None);
+        await empty.SendAsync(ChannelsConformanceTests.Sample(), context, CancellationToken.None);
+        Assert.All(rec.Taken(), sent => Assert.DoesNotContain(sent.Headers, h => h.Key == "x-cronwatch-signature"));
+        Assert.Equal(2, reported.Count);
+        Assert.All(reported, m => Assert.StartsWith("webhook: secret is an empty string, so this request is sent unsigned; ", m, StringComparison.Ordinal));
+        // Left out, it sends unsigned on purpose, and says nothing.
+        var none = new WebhookChannel(new WebhookOptions { Url = "https://hooks.example.com/in", Transport = rec });
+        await none.SendAsync(ChannelsConformanceTests.Sample(), context, CancellationToken.None);
+        Assert.Equal(2, reported.Count);
+    }
+
+    [Fact]
     public async Task A_channel_without_a_transport_posts_through_the_clients()
     {
         var rec = new Recorder();

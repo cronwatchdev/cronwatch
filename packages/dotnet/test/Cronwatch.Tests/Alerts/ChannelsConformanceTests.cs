@@ -235,6 +235,8 @@ public class ChannelsConformanceTests
     {
         string[] known = ["generatedBy", "sdkVersion", "alerts", "sends", "failures", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls", "webhookPayloads"];
         Assert.Equal([], Fixtures.Load("channels").Keys.Where(k => !known.Contains(k, StringComparer.Ordinal)));
+        HealthConformanceTests.Known(Fixtures.Object(Fixtures.Load("channels"), "twilioPartial"), "options", "cases");
+        HealthConformanceTests.Known(Fixtures.Object(Fixtures.Load("channels"), "textCuts"), "errorBodies", "subjects", "smsSegments", "smsBodies", "discordDescriptions");
     }
 
     /// <summary>
