@@ -165,6 +165,28 @@ public class HardeningTests
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
+    [Fact]
+    public async Task A_channel_that_throws_its_own_timeout_is_a_failure_of_its_own()
+    {
+        // Thrown before any task exists, and faulting the channel's own task: neither is the
+        // client's deadline, and neither may stop the alert being recorded as delivered.
+        var thrown = CustomChannel.Create("thrown", (a, ctx, ct) => throw new TimeoutException("its own deadline"));
+        var faulted = CustomChannel.Create("faulted", async (a, ctx, ct) =>
+        {
+            await Task.Yield();
+            throw new TimeoutException("its own wait");
+        });
+        await using var m = Make(channels: [thrown, faulted]);
+        await Fail(m.Cw, "h");
+        Assert.Equal(["failed"], m.Alerts.Types());
+        Assert.Equal(["alert channel faulted", "alert channel thrown"], m.Errors.Wheres().Order(StringComparer.Ordinal).ToList());
+        Assert.DoesNotContain(m.Errors.Messages(), message => message.Contains("timed out after", StringComparison.Ordinal));
+        Assert.All(m.Errors.Entries, e => Assert.IsType<TimeoutException>(e.Error));
+        JobState state = await State(m, "h");
+        Assert.Empty(state.Undelivered!);
+        Assert.True(state.Sending is not { Count: > 0 }, "an alert left in sending");
+    }
+
     private sealed class HungTriage : ITriage
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

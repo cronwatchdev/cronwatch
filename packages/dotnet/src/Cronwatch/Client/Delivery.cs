@@ -189,10 +189,12 @@ public sealed partial class CronwatchClient
             Count(alert, "sent", channel.Name);
             return true;
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (send is { IsCompleted: false })
         {
-            Abandon(send!);
-            await cts.CancelAsync().ConfigureAwait(false);
+            // The client's deadline. A channel's own TimeoutException, thrown or faulting its
+            // task, is its failure, reported as any other.
+            Abandon(send);
+            await CancelQuietlyAsync(cts, where).ConfigureAwait(false);
             Report("timed out after " + (long)Timings.Channel.TotalMilliseconds + "ms", where);
         }
         catch (Exception e)
@@ -201,6 +203,19 @@ public sealed partial class CronwatchClient
         }
         Count(alert, "failed", channel.Name);
         return false;
+    }
+
+    /// <summary>Cancels work given up on; a callback registered on its token that throws is reported, not thrown.</summary>
+    private async Task CancelQuietlyAsync(CancellationTokenSource cts, string where)
+    {
+        try
+        {
+            await cts.CancelAsync().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Report(e, where);
+        }
     }
 
     private static void Count(Alert alert, string outcome, string? channel = null) =>
@@ -229,16 +244,17 @@ public sealed partial class CronwatchClient
             return alert.WithTriage(null);
         }
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
+        Task<string?>? task = null;
         try
         {
             var context = new TriageContext(alert, recent) { Transport = _transport };
-            Task<string?> task = Spawn(() => triage.TriageAsync(context, cts.Token));
+            task = Spawn(() => triage.TriageAsync(context, cts.Token));
             string? text = await task.WaitAsync(timeout, _time).ConfigureAwait(false);
             return alert.WithTriage(string.IsNullOrEmpty(text) ? null : text);
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (task is { IsCompleted: false })
         {
-            await cts.CancelAsync().ConfigureAwait(false);
+            await CancelQuietlyAsync(cts, where).ConfigureAwait(false);
             Report("timed out after " + (long)timeout.TotalMilliseconds + "ms", where);
         }
         catch (Exception e)
