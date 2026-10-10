@@ -786,6 +786,29 @@ final class ChannelsTest extends TestCase
         $this->assertSame('https://hooks.example.com', Alerts\Shared::origin("https://hooks.exa\tmple.com/x"), 'a tab inside is dropped, as the URL parser drops it');
     }
 
+    public function testABackslashBeforeTheUrlsPathIsRefusedSoNoPortReadsAnotherHost(): void
+    {
+        // Node posts http://a.com\@b.com/x to a.com; curl and parse_url read on to b.com.
+        $http = new FakeHttp();
+        foreach (['http://a.com\\@b.com/x', 'https://a.com\\:pw@b.com/x'] as $url) {
+            foreach ([new Alerts\Webhook($url, http: $http), new Alerts\Slack($url, http: $http)] as $channel) {
+                try {
+                    $channel->send(self::failed(), self::context());
+                    $this->fail("{$channel->name()} posted to {$url}");
+                } catch (\InvalidArgumentException $error) {
+                    $this->assertSame('a URL with a backslash before its path cannot be posted to', $error->getMessage());
+                }
+            }
+            try {
+                (new NativeHttp(false))->post($url, '{}', []);
+                $this->fail("NativeHttp posted to {$url}");
+            } catch (\InvalidArgumentException $error) {
+                $this->assertSame('a URL with a backslash before its path cannot be posted to', $error->getMessage());
+            }
+        }
+        $this->assertSame([], $http->requests, 'nothing was sent');
+    }
+
     public function testANetworkErrorNamesOnlyTheUrlsOrigin(): void
     {
         $secretPath = implode('/', ['hooks', 'not' . 'areal' . 'secret']);
