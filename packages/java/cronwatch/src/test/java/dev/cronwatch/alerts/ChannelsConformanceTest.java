@@ -30,6 +30,27 @@ import org.junit.jupiter.api.Test;
  * cuts.
  */
 class ChannelsConformanceTest {
+  /**
+   * Every section of {@code channels.json} is replayed here; one the SDK adds fails until it is.
+   */
+  @Test
+  void everySectionIsReplayed() {
+    assertEquals(
+        List.of(
+            "generatedBy",
+            "sdkVersion",
+            "alerts",
+            "sends",
+            "failures",
+            "webhookPayloads",
+            "providerSends",
+            "providerFailures",
+            "twilioPartial",
+            "textCuts",
+            "urls"),
+        Fixtures.load("channels").keys());
+  }
+
   /** The fixture's first alert, a failure. */
   static Alert sample() {
     JsObject f = Fixtures.load("channels");
