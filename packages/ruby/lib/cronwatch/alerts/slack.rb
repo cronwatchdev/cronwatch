@@ -42,7 +42,7 @@ module Cronwatch
           "blocks" => blocks,
         }
         response = @http.post(@webhook_url, JS.json(payload), { "content-type" => "application/json" })
-        raise "Slack webhook answered #{response.status}: #{JS.head16(response.body.to_s, 200)}" unless response.ok?
+        raise "Slack webhook answered #{response.status}: #{JS.head16(Output.utf8(response.body.to_s).delete_prefix("\u{FEFF}"), 200)}" unless response.ok?
       end
 
       # Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>.

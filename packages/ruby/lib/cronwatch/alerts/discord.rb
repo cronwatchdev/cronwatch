@@ -40,7 +40,7 @@ module Cronwatch
           "embeds" => [embed],
         }
         response = @http.post(@webhook_url, JS.json(payload), { "content-type" => "application/json" })
-        raise "Discord webhook answered #{response.status}: #{JS.head16(response.body.to_s, 200)}" unless response.ok?
+        raise "Discord webhook answered #{response.status}: #{JS.head16(Output.utf8(response.body.to_s).delete_prefix("\u{FEFF}"), 200)}" unless response.ok?
       end
 
       # The message in a code block, then the triage. Each part has its own

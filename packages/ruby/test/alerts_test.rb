@@ -107,6 +107,19 @@ class AlertsTest < Minitest::Test
     assert_equal ":x: *j failed*", body["blocks"][0]["text"]["text"]
   end
 
+  # A body read off the socket is bytes (ASCII-8BIT): the message is UTF-8,
+  # cut by UTF-16 units, with no BOM, as the providers' errors are.
+  def test_slack_and_discord_errors_decode_the_body_as_utf8
+    body = "\u{FEFF}#{"\u00e9" * 250}".b
+    [Cronwatch::Alerts::Slack.new(webhook_url: "https://hooks.slack.example/x", http: FakeHTTP.new(502, body)),
+     Cronwatch::Alerts::Discord.new(webhook_url: "https://discord.example/w", http: FakeHTTP.new(502, body))].each do |channel|
+      message = assert_raises(RuntimeError) { channel.call(alert) }.message
+      assert_equal Encoding::UTF_8, message.encoding
+      assert message.valid_encoding?
+      assert message.end_with?(": #{"\u00e9" * 200}"), message
+    end
+  end
+
   def test_slack_link_and_failure
     http = FakeHTTP.new(500, "no")
     channel = Cronwatch::Alerts::Slack.new(webhook_url: "https://hooks.slack.example/x", link: ->(_) { "https://app.example/j" }, http: http)
