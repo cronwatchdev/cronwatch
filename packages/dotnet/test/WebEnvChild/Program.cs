@@ -346,14 +346,19 @@ internal static class Cases
         Check(res.Status == 200, "the variable's token: " + res.Status);
     }
 
-    /// <summary>A token that is not blank is used as given, untrimmed.</summary>
+    /// <summary>
+    /// A token is trimmed as JavaScript trims, as a value read from a file often ends in a newline
+    /// no header can carry: the trimmed token signs in, and the padded one no longer does.
+    /// </summary>
     public static async Task PaddedToken()
     {
         await using var cw = Client();
         Routes routes = cw.Routes();
-        Check(routes.Token() == " padded ", "untrimmed");
-        CronwatchResponse res = await Serve(routes, "http://app.test/cronwatch/?token=%20padded%20", None);
+        Check(routes.Token() == "padded", "trimmed: " + routes.Token());
+        CronwatchResponse res = await Serve(routes, "http://app.test/cronwatch/?token=padded", None);
         Check(res.Status == 303, "signed in: " + res.Status);
+        CronwatchResponse bearer = await Serve(routes, "http://app.test/cronwatch/api/jobs", [H("authorization", "Bearer padded")]);
+        Check(bearer.Status == 200, "the trimmed bearer: " + bearer.Status);
     }
 
     /// <summary>

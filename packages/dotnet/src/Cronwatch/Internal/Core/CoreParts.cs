@@ -24,9 +24,10 @@ internal static class CurrentRun
 /// <c>AddCronwatch</c> its <c>Cronwatch:Environment</c> or the host's own environment, which
 /// <c>--environment</c> sets); else .NET's <c>ASPNETCORE_ENVIRONMENT</c> or
 /// <c>DOTNET_ENVIRONMENT</c>, in ASP.NET Core's order; else unset, which is not development. Each
-/// is lowercased, with the ports' aliases (<c>prod</c> is production; <c>dev</c>, <c>local</c>,
-/// <c>test</c>, and <c>testing</c> are development). A stale .NET variable never outranks the
-/// environment a host resolved or the app named.
+/// is trimmed and lowercased, with the ports' aliases (<c>prod</c> is production; <c>dev</c> and
+/// <c>local</c> are development). <c>test</c> and <c>testing</c> are not development: a test run or
+/// CI needs <c>CRON_SECRET</c> or a token, as production does. A stale .NET variable never
+/// outranks the environment a host resolved or the app named.
 /// </summary>
 internal static class Env
 {
@@ -76,7 +77,7 @@ internal static class Env
         return v switch
         {
             "prod" => "production",
-            "dev" or "local" or "test" or "testing" => "development",
+            "dev" or "local" => "development",
             _ => v,
         };
     }
