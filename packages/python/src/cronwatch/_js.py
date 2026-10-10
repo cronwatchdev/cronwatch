@@ -210,6 +210,13 @@ def quote(text: str) -> str:
     return '"' + _NEEDS_ESCAPE.sub(escape, text) + '"'
 
 
+def finite_metrics(mapping: Mapping[Any, Any]) -> dict[str, Any]:
+    """A run's metrics as read from a stored row: only the finite numbers. A
+    metric another writer left as null, text, or anything else is dropped, as
+    the typed ports drop it, so no comparison in evaluation meets it."""
+    return {str(k): v for k, v in mapping.items() if is_finite(v)}
+
+
 def object_keys(mapping: Mapping[Any, Any]) -> list[Any]:
     """Property order: array-index keys ascending, then the rest as inserted."""
     keys = list(mapping.keys())

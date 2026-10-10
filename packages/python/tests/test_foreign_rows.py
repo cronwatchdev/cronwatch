@@ -136,3 +136,25 @@ def test_a_queued_alert_whose_at_is_not_a_number_is_dropped_and_new_alerts_still
     assert errors.items == []
     assert sent.types() == ["failed"]
     db.close()
+
+
+def test_metrics_that_are_not_numbers_are_dropped_and_a_resumed_run_still_recovers() -> None:
+    db, store = fresh()
+    errors = Errors()
+    sent = Capture()
+    cw = Cronwatch(store=store, now=lambda: 1767605400000, cron_secret=None, alerts=[sent], on_error=errors)
+    job = cw.job("j")
+    try:
+        job.run(lambda _ctx: 1 / 0)
+    except ZeroDivisionError:
+        pass
+    assert sent.types() == ["failed"]
+    insert(db, "runs", {
+        "id": "other", "job": "j", "status": "running", "started_at": 1767605400000,
+        "metrics": json.dumps({"rows": None, "label": "5", "flag": True, "kept": 3}), "trigger": "start",
+    })
+    assert store.get_run("other").metrics == {"kept": 3}
+    job.resume("other").finish()
+    assert errors.items == []
+    assert sent.types() == ["failed", "recovered"]
+    db.close()
