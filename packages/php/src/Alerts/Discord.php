@@ -69,7 +69,8 @@ final class Discord implements AlertChannel
             'embeds' => [$embed],
         ]), ['content-type' => 'application/json']);
         if (!$response->ok()) {
-            throw new \RuntimeException("Discord webhook answered {$response->status}: " . Js::head16($response->body, 200));
+            // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+            throw new \RuntimeException("Discord webhook answered {$response->status}: " . Shared::errorBody(Js::wellFormed($response->body), Shared::urlSecrets($this->webhookUrl)));
         }
     }
 

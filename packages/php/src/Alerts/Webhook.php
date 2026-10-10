@@ -51,6 +51,9 @@ final class Webhook implements AlertChannel
         // Sent as fetch sends a string: UTF-8, U+FFFD for bytes that are not,
         // so the signature is over exactly the bytes sent.
         $body = Js::wellFormed(Js::stringify(['schema' => self::SCHEMA, ...$alert->toJson()]));
+        if ($this->secret === '') {
+            $context->onError(new \RuntimeException('webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose'));
+        }
         $headers = ['content-type' => 'application/json', 'user-agent' => 'cronwatch'];
         // A pasted Authorization value often carries a stray space or newline, which fetch would refuse.
         foreach ($this->headers as $name => $value) {

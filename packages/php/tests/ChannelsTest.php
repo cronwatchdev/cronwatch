@@ -786,6 +786,33 @@ final class ChannelsTest extends TestCase
         $this->assertSame('https://hooks.example.com', Alerts\Shared::origin("https://hooks.exa\tmple.com/x"), 'a tab inside is dropped, as the URL parser drops it');
     }
 
+    public function testAWebhookWithAnEmptySecretReportsThatItSendsUnsignedOnEachSendAndStillSends(): void
+    {
+        $http = new FakeHttp();
+        $channel = new Alerts\Webhook('https://hooks.example.com/x', secret: '', http: $http);
+        foreach ([1, 2] as $send) {
+            $channel->send(self::failed(), self::context($reported));
+            $this->assertSame(['webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose'], $reported, "send {$send}");
+        }
+        $this->assertCount(2, $http->requests);
+        $this->assertArrayNotHasKey('x-cronwatch-signature', $http->requests[0]['headers']);
+        // Left out on purpose, it says nothing.
+        (new Alerts\Webhook('https://hooks.example.com/x', http: $http))->send(self::failed(), self::context($quiet));
+        $this->assertSame([], $quiet);
+    }
+
+    public function testSlackAndDiscordCutTheirUrlsCredentialFromAnEchoedErrorBody(): void
+    {
+        $echo = fn (string $path) => new FakeHttp(502, "<html>502 for POST {$path} HTTP/1.1 " . str_repeat('y', 300) . '</html>');
+        $slack = new Alerts\Slack('https://hooks.slack.example/T/B/secret', http: $echo('/T/B/secret'));
+        $message = self::sendError($slack);
+        $this->assertStringNotContainsString('/T/B/secret', $message);
+        $this->assertStringStartsWith('Slack webhook answered 502: <html>502 for POST [redacted] HTTP/1.1 ', $message);
+        // The token alone, echoed without the rest of the path.
+        $discord = new Alerts\Discord('https://discord.example/api/webhooks/1/tokenvalue', http: $echo('tokenvalue'));
+        $this->assertStringNotContainsString('tokenvalue', self::sendError($discord));
+    }
+
     public function testABackslashBeforeTheUrlsPathIsRefusedSoNoPortReadsAnotherHost(): void
     {
         // Node posts http://a.com\@b.com/x to a.com; curl and parse_url read on to b.com.

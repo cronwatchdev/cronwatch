@@ -182,6 +182,24 @@ final class Shared
      *
      * @param list<string|null> $secrets
      */
+    /**
+     * The parts of a webhook URL that are its credential, to cut from an
+     * error body that echoes the request: its path and query together, then
+     * the last segment of its path (Slack's and Discord's token) on its own.
+     *
+     * @return list<string>
+     */
+    public static function urlSecrets(#[\SensitiveParameter] string $url): array
+    {
+        $parts = self::url($url);
+        if ($parts === null) {
+            return [];
+        }
+        $segments = explode('/', $parts['pathname']);
+        $candidates = [$parts['pathname'] . $parts['search'], end($segments)];
+        return array_values(array_filter($candidates, fn (string $part) => $part !== '' && $part !== '/'));
+    }
+
     public static function errorBody(#[\SensitiveParameter] string $text, #[\SensitiveParameter] array $secrets = []): string
     {
         $kept = array_values(array_filter($secrets, fn ($s) => is_string($s) && Js::length16($s) >= 4));
