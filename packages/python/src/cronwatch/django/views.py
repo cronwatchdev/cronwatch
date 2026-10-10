@@ -3,11 +3,14 @@ Request, and their Response written back, bytes and headers as they are."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse, RawPostDataException
 from django.views.decorators.csrf import csrf_exempt
 
 from .._deprecated import names as _deprecated_names
-from ..web import Request, Response, _request_path, _url_origin
+from ..web import _MAX_BODY, BodyTooLarge, Request, Response, _request_path, _too_large_body, _url_origin
 from . import routes
 
 __all__ = ["dashboard"]
@@ -31,12 +34,16 @@ def _from_django(request: HttpRequest, path: str = "") -> Request:
     raw: list[str | None] = [meta.get("RAW_URI"), meta.get("REQUEST_URI")]
     if isinstance(scope, dict) and scope.get("raw_path"):
         raw.append(scope["raw_path"].decode("latin-1"))
+    form = None
+    body: bytes | Callable[[], bytes]
     try:
-        body: bytes = request.body
-        form = None
+        body = _body(request)
     except RawPostDataException:
         # Something read the form from the stream first; its fields are still here.
         body, form = b"", request.POST
+    except BodyTooLarge:
+        # The routes decide how to answer it, as each answers a body over the cap.
+        body = _too_large_body
     return Request(
         method=request.method or "GET",
         path=_request_path(full.encode("utf-8", "surrogateescape"), *raw),
@@ -47,6 +54,24 @@ def _from_django(request: HttpRequest, path: str = "") -> Request:
         mount=mount.rstrip("/"),
         form=form,
     )
+
+
+def _body(request: HttpRequest) -> bytes:
+    """The request's body, refused past MAX_BODY bytes (BodyTooLarge) as every
+    port refuses it, by its Content-Length first, so the routes answer it."""
+    try:
+        length = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        length = 0
+    if length > _MAX_BODY:
+        raise BodyTooLarge()
+    try:
+        data: bytes = request.body
+    except RequestDataTooBig:
+        raise BodyTooLarge() from None
+    if len(data) > _MAX_BODY:
+        raise BodyTooLarge()
+    return data
 
 
 def _to_django(response: Response) -> HttpResponse:
