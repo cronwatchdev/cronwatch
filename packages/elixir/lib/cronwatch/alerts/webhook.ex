@@ -25,7 +25,9 @@ defmodule Cronwatch.Alerts.Webhook do
       are trimmed of the spaces and newlines a paste leaves.
     * `:secret`: when set, each request carries `x-cronwatch-signature:
       sha256=<hex>`, the HMAC-SHA256 of the raw body with this secret, so
-      the receiver can verify it (see `signature/2`).
+      the receiver can verify it (see `signature/2`). An empty string (an
+      unset variable read as `""`, say) signs nothing, and each send reports
+      that to the instance's error handler.
     * `:transport`: a `Cronwatch.Transport` for the request, else the
       instance's, else `Cronwatch.Transport.HTTP`.
   """
@@ -35,12 +37,21 @@ defmodule Cronwatch.Alerts.Webhook do
   alias Cronwatch.Alert
   alias Cronwatch.Alerts.Post
   alias Cronwatch.Alerts.Shared
+  alias Cronwatch.ChannelContext
   alias Cronwatch.JS
 
-  @derive {Inspect, except: [:url, :headers, :secret, :transport]}
-  defstruct [:url, headers: [], secret: "", transport: nil]
+  @empty_secret "webhook: secret is an empty string, so this request is sent unsigned; " <>
+                  "set the secret, or leave it out to send unsigned on purpose"
 
-  @type t :: %__MODULE__{url: String.t(), headers: [{String.t(), String.t()}], secret: String.t(), transport: term()}
+  @derive {Inspect, except: [:url, :headers, :secret, :transport]}
+  defstruct [:url, headers: [], secret: nil, transport: nil]
+
+  @type t :: %__MODULE__{
+          url: String.t(),
+          headers: [{String.t(), String.t()}],
+          secret: String.t() | nil,
+          transport: term()
+        }
 
   @impl true
   def init(opts) do
@@ -63,7 +74,7 @@ defmodule Cronwatch.Alerts.Webhook do
 
   defp headers(_), do: {:error, "Cronwatch.Alerts.Webhook: :headers must be {name, value} pairs of strings"}
 
-  defp secret(nil), do: {:ok, ""}
+  defp secret(nil), do: {:ok, nil}
   defp secret(s) when is_binary(s), do: {:ok, s}
   defp secret(_), do: {:error, "Cronwatch.Alerts.Webhook: :secret must be a string"}
 
@@ -106,10 +117,14 @@ defmodule Cronwatch.Alerts.Webhook do
     # which fetch would refuse.
     headers = Enum.reduce(o.headers, headers, fn {n, v}, acc -> assign(acc, n, JS.trim(v)) end)
 
+    # An empty secret (an unset variable read as "", say) signs nothing, and
+    # says so on every send rather than fail it.
+    if o.secret == "" and ctx != nil, do: ChannelContext.report(ctx, Cronwatch.Error.other(@empty_secret))
+
     headers =
-      if o.secret != "",
-        do: assign(headers, "x-cronwatch-signature", "sha256=" <> signature(o.secret, body)),
-        else: headers
+      if o.secret in [nil, ""],
+        do: headers,
+        else: assign(headers, "x-cronwatch-signature", "sha256=" <> signature(o.secret, body))
 
     transport = o.transport || (ctx && ctx.transport)
 

@@ -373,6 +373,24 @@ defmodule Cronwatch.Alerts.Post do
     cut(head, @error_body_max)
   end
 
+  @doc """
+  The parts of a webhook URL that are its credential, to cut from an error
+  body that echoes the request: its path and query together, then the last
+  segment of its path (Slack's and Discord's token) on its own.
+  """
+  @spec url_secrets(String.t()) :: [String.t()]
+  def url_secrets(url) do
+    case URL.parse(url) do
+      {:ok, u} ->
+        search = if u.query in [nil, ""], do: "", else: "?" <> u.query
+        last = u.path |> String.split("/") |> List.last()
+        Enum.filter([u.path <> search, last], &(&1 != "" and &1 != "/"))
+
+      _ ->
+        []
+    end
+  end
+
   @doc "The error for an answer outside 2xx: `<provider> <origin> answered <status>: <body>`, the body's secrets cut out."
   @spec refused(String.t(), String.t(), answer(), [String.t()]) :: Cronwatch.Error.t()
   def refused(provider, url, %{status: status, body: body}, secrets) do

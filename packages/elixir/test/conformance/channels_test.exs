@@ -140,7 +140,7 @@ defmodule Cronwatch.Conformance.ChannelsTest do
       length(list(f, "sends")) + length(list(f, "failures")) + length(list(field(f, "textCuts"), "errorBodies")) +
         length(list(field(f, "textCuts"), "discordDescriptions"))
 
-    assert count == 96 + 18 + 6 + 8
+    assert count == 96 + 26 + 6 + 8
   end
 
   test "conformance/channels.json: the webhook's payload, \"schema\":1 first, and its signature" do
