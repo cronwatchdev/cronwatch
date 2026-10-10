@@ -68,12 +68,13 @@ func normalizeState(state *JobState, job string) JobState {
 	}
 	tail := s.tail[:0:0]
 	for _, k := range s.tail {
-		if k != "sending" && k != "underFloor" {
+		if k != "sending" && k != "underFloor" && k != "pendingRuns" {
 			tail = append(tail, k)
 		}
 	}
 	delete(s.extra, "sending")
 	delete(s.extra, "underFloor")
+	delete(s.extra, "pendingRuns")
 	if len(s.Sending) > 0 {
 		tail = append(tail, "sending")
 	} else {
@@ -83,6 +84,11 @@ func normalizeState(state *JobState, job string) JobState {
 		tail = append(tail, "underFloor")
 	} else {
 		s.UnderFloor = nil
+	}
+	if len(s.PendingRuns) > 0 {
+		tail = append(tail, "pendingRuns")
+	} else {
+		s.PendingRuns = nil
 	}
 	s.tail = tail
 	return s
@@ -223,6 +229,73 @@ func recordSent(state JobState, delivered, failed, stale []Alert, now int64) (Jo
 		next.LastAlertAt = ptr(now)
 	}
 	return queueUndelivered(next, failed)
+}
+
+// claimUndelivered is a check's claim on the undelivered queue, written
+// before it sends, so two processes checking at once never retry the same
+// alert: the queued alerts that still describe the job move into Sending,
+// oldest first, each with its lease ending at until, as many as Sending has
+// room for under maxUndelivered (the rest wait for the next check); stale
+// ones (staleAlert) leave the queue. While the job is silenced only
+// recoveries are claimed. The process whose write lands sends claimed.
+func claimUndelivered(state JobState, now, until int64) (next JobState, claimed, stale []Alert) {
+	next = cloneState(state)
+	claimed, stale = []Alert{}, []Alert{}
+	silenced := isSilenced(next, now)
+	room := max(0, maxUndelivered-len(next.Sending))
+	left := []Alert{}
+	for _, a := range next.Undelivered {
+		switch {
+		case staleAlert(a, next):
+			stale = append(stale, a)
+		case len(claimed) < room && (!silenced || a.Type == AlertRecovered):
+			claimed = append(claimed, a)
+		default:
+			left = append(left, a)
+		}
+	}
+	if len(stale) == 0 && len(claimed) == 0 {
+		return state, claimed, stale
+	}
+	next.Undelivered = left
+	for _, a := range claimed {
+		next.Sending = append(next.Sending, SendingAlert{Until: until, Alert: a.clone()})
+	}
+	return next, claimed, stale
+}
+
+// maxPendingRuns is how many runs PendingRuns holds per job; past it the
+// oldest go.
+const maxPendingRuns = 100
+
+// holdRun is a run just started, held in PendingRuns until its finish is
+// evaluated (releaseRun), so a check can evaluate it if the process that
+// finished it stops before writing the evaluation. Written with
+// onRunStart's state. Only the newest maxPendingRuns are kept.
+func holdRun(state JobState, runID string) JobState {
+	next := cloneState(state)
+	held := slices.DeleteFunc(slices.Clone(next.PendingRuns), func(id string) bool { return id == runID })
+	held = append(held, runID)
+	next.PendingRuns = held[max(0, len(held)-maxPendingRuns):]
+	if !slices.Contains(next.tail, "pendingRuns") {
+		next.tail = append(next.tail, "pendingRuns")
+	}
+	return next
+}
+
+// releaseRun takes a run out of PendingRuns, as its evaluation is written
+// or once it is gone from the store.
+func releaseRun(state JobState, runID string) JobState {
+	if !slices.Contains(state.PendingRuns, runID) {
+		return state
+	}
+	next := cloneState(state)
+	next.PendingRuns = slices.DeleteFunc(next.PendingRuns, func(id string) bool { return id == runID })
+	if len(next.PendingRuns) == 0 {
+		next.PendingRuns = nil
+		next.tail = slices.DeleteFunc(next.tail, func(k string) bool { return k == "pendingRuns" })
+	}
+	return next
 }
 
 func cloneState(s JobState) JobState { return normalizeState(&s, s.Job) }
@@ -732,12 +805,21 @@ func isSilenced(state JobState, now int64) bool {
 }
 
 // applySilence is an evaluation as it is saved and sent: while the job was
-// silenced when it began, nothing opens and nothing is sent.
+// silenced when it began, nothing opens and no new alert is sent, but a
+// recovery is. A condition can only close during a silence if it opened
+// (and alerted) before it, so its recovery closes an incident someone was
+// told about.
 func applySilence(previous JobState, e evaluation, now int64) evaluation {
 	if !isSilenced(previous, now) {
 		return e
 	}
-	return evaluation{muteOpens(previous, e.state), []alertDraft{}}
+	recoveries := []alertDraft{}
+	for _, a := range e.alerts {
+		if a.Type == AlertRecovered {
+			recoveries = append(recoveries, a)
+		}
+	}
+	return evaluation{muteOpens(previous, e.state), recoveries}
 }
 
 // staleAlert reports whether an alert waiting to be retried no longer

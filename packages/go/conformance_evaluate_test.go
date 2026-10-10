@@ -44,9 +44,7 @@ func (s *sim) sorted() []Run {
 }
 
 func (s *sim) settle(previous JobState, e evaluation, now int64) []any {
-	if isSilenced(previous, now) {
-		e = evaluation{muteOpens(previous, e.state), nil}
-	}
+	e = applySilence(previous, e, now)
 	s.state = e.state
 	alerts := []any{}
 	for _, d := range e.alerts {

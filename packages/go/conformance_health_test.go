@@ -143,7 +143,41 @@ func TestConformanceDelivery(t *testing.T) {
 		sameState(t, fmt.Sprintf("recordSent %d", i), s, dropped, field(c, "result"))
 		count++
 	}
-	if count < 30 {
+	if int(field(f, "maxPendingRuns").(float64)) != maxPendingRuns {
+		t.Errorf("maxPendingRuns: %v", field(f, "maxPendingRuns"))
+	}
+	alertList := func(alerts []Alert) []any {
+		out := []any{}
+		for _, a := range alerts {
+			out = append(out, a.JSValue())
+		}
+		return out
+	}
+	sameStateKeys := func(what string, state JobState, want any) {
+		t.Helper()
+		if sameJSON(t, what, sorted(state.JSValue()), sorted(want)) {
+			sameJSON(t, what+" key order", state.JSValue().(*js.Object).Keys(), want.(*js.Object).Keys())
+		}
+	}
+	for i, c := range objects(f, "claimUndelivered") {
+		s, claimed, stale := claimUndelivered(fixtureState(t, field(c, "state")), caseNow(c), int64(field(c, "until").(float64)))
+		result := field(c, "result").(*js.Object)
+		sameStateKeys(fmt.Sprintf("claimUndelivered %d", i), s, field(result, "state"))
+		sameJSON(t, fmt.Sprintf("claimUndelivered %d claimed", i), sorted(alertList(claimed)), sorted(field(result, "claimed")))
+		sameJSON(t, fmt.Sprintf("claimUndelivered %d stale", i), sorted(alertList(stale)), sorted(field(result, "stale")))
+		count++
+	}
+	for i, c := range objects(f, "holdRun") {
+		s := holdRun(fixtureState(t, field(c, "state")), field(c, "runId").(string))
+		sameStateKeys(fmt.Sprintf("holdRun %d", i), s, field(c, "result"))
+		count++
+	}
+	for i, c := range objects(f, "releaseRun") {
+		s := releaseRun(fixtureState(t, field(c, "state")), field(c, "runId").(string))
+		sameStateKeys(fmt.Sprintf("releaseRun %d", i), s, field(c, "result"))
+		count++
+	}
+	if count < 48 {
 		t.Errorf("only %d delivery cases", count)
 	}
 }
