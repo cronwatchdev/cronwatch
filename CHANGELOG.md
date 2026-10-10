@@ -2,6 +2,118 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Changed
+
+Every language:
+
+- A recovery for an alert that already went out is sent even while the job is silenced. Silence still holds back new alerts.
+- `test` and `testing` no longer count as development, so a test run or CI without `CRON_SECRET` gets a handler that refuses (503) and a dashboard that needs a token, as in production. `development`, `dev`, and `local` still count, as do a framework's own names for them (Laravel's `local`, Symfony's `dev`, `MIX_ENV=dev`, a Spring `dev` profile). Set `CRON_SECRET` or a token in tests, or `CRONWATCH_ENV=development` where you relied on the old reading.
+- `CRONWATCH_TOKEN`, `CRON_SECRET`, and tokens and secrets given in code are trimmed (with JavaScript's whitespace set), so a value read from a file with a trailing newline matches.
+- A job's state gains `pendingRuns`, the runs started and not yet judged (see Fixed).
+
+Go and Rust:
+
+- A job's HTTP handler runs the job to its end when the caller hangs up (a curl with `--max-time`, a scheduler's attempt deadline), as the SDK's handler does. Before, the job was cancelled and recorded as failed. Rust's `HandlerOptions::cancel_with_request()` keeps the old behaviour.
+
+Ruby:
+
+- A run of a Sidekiq job, or an ActiveJob job on Sidekiq, stopped by `Sidekiq::Shutdown` during a deploy is recorded as failed but no longer judged: it opens no failed alert, does not count toward `failures_before_alert`, and sends no recovery. Sidekiq runs the job again after the restart.
+- The dashboard reads the request's origin from its own scheme and `Host` header. The new `trust_proxy:` option reads the first `X-Forwarded-Proto` and `X-Forwarded-Host`, as the SDK's `trustProxy` does. It defaults to true under Rails, which trusts those headers itself, and to false elsewhere, so a plain Rack app behind a proxy now needs `trust_proxy: true` or `origin:`.
+
+Python:
+
+- Alert channels' requests no longer go through `HTTP_PROXY`, `HTTPS_PROXY`, or the system's proxy settings, as the TypeScript SDK's do not.
+
+### Added
+
+- Rust: `cronwatch::web::Tls` (the `tower` feature), a request extension that marks a request as having come over TLS. An app that terminates TLS itself adds it (`.layer(axum::Extension(cronwatch::web::Tls))`), so the dashboard reads its origin as `https`.
+- .NET: `ObservedRun.TakeBackAsync(Exception?)`. Java: `ObservedRun.takeBack(Throwable)`.
+- MCP: requests time out (30 seconds, 120 for a check), with a `timeoutMs` option.
+- Ruby: making the dashboard routes warns when the token is under 32 characters.
+
+### Fixed
+
+Every language:
+
+- When several processes check one store, a queued alert is retried by one of them, not all: a check claims the alerts it retries in the job's state before sending them.
+- A finished run whose evaluation was never written (the process stopped between the two writes, or the state write failed) is evaluated by a later check, once its finish is five minutes old, so its alert is no longer lost.
+- Dashboard request bodies are capped at 1 MiB in every port (TypeScript and Ruby had no cap): a silence answers 413, and a sign-in body over it reads as no token.
+- The `?token=` sign-in can no longer redirect off the site, however many slashes or backslashes lead the path.
+- Secret compares take time that depends only on what was sent, so the secret's length cannot be timed.
+- Slack and Discord errors cut the webhook URL's token from an answer that echoes it.
+- A webhook given an empty-string secret reports on each send that it goes out unsigned (not in Go and Rust, where an empty secret and none are the same value).
+- After a dashboard Delete, running or resuming a job by name declares it again as it was written, keeping its schedule and options.
+
+TypeScript:
+
+- The Postgres store destroys a connection whose rollback fails, and throws the work's own error.
+- Channels release successful answers.
+
+PHP:
+
+- Laravel: CronWatch failing to build its client (a store driver it has no store for, a setting it cannot read) no longer stops `schedule:run`, queued jobs, or `migrate`. The task or job runs unrecorded and the failure goes to the app's log. The migration is skipped for a connection CronWatch cannot store in. `cronwatch:check` is scheduled without overlapping, and on one server when the cache can lock.
+- Symfony: the same failure no longer stops `messenger:consume`; it goes to the logger. A `DATABASE_URL` holding container parameters (Symfony's default `sqlite:///%kernel.project_dir%/var/data.db`) is read with them resolved.
+- Drupal: keys, tokens, and the webhook secret are password fields, never shown again; left blank they keep the saved value, and "Remove it" clears it.
+- Craft CMS: secrets typed in plain are never shown again, settings `config/cronwatch.php` sets are shown empty and never copied into project config on save, and the webhook secret is kept exactly as typed.
+- WordPress: deleting a site from a network drops its CronWatch tables, and if another plugin loads a different version of the library, the plugin stays off with a notice instead of failing.
+- A value logged with `$job->log()` that holds itself is written as `String()` writes it, instead of exhausting PHP's memory and ending the job.
+- If PCRE gives up on the default redaction (low `pcre.backtrack_limit` or JIT limits), the text is stored as `[redacted]` and the run is still recorded.
+- The development token file is written whole before it appears, so two first requests at once no longer announce a sign-in link that never works.
+- An alert URL with a backslash before its path is refused, since Node and curl read it as different hosts.
+- `Handler` given `$_SERVER` finds the bearer Apache keeps out of it (no `CGIPassAuth`) through `getallheaders()`.
+- A web request that sends alerts for many jobs moves its time limit on once, so `max_execution_time` still bounds it.
+
+Python:
+
+- `cronwatch.apscheduler`: an error reported while the client cannot be made is logged, and the listener's thread keeps recording; before, it ended, and `flush()` could wait forever.
+- Metrics read from a stored row are only its finite numbers, so finishing a run another writer left with a null or text metric no longer fails its evaluation.
+- `cronwatch.celery`: a task id over 180 characters, holding a NUL, or starting with `pgcron:` gives its runs a hashed prefix, so a run whose worker is lost is failed at once instead of reported stuck later.
+
+Go:
+
+- A store call that never answers no longer holds checking for good: the shared check has a 10-minute deadline, each step of recording a run 2 minutes, and `Close` waits at most the check's deadline plus 30 seconds.
+- Callers sharing one `Check` each get their own copy of the result.
+- A `failuresBeforeAlert` another port stored as a fraction is kept in an alert's `threshold`, and the bridge declares it again as the whole number that alerts on the same failure.
+- A long-running process no longer keeps a lock and a sync turn for every job name it has ever seen.
+
+Rust:
+
+- A long-lived client lets go of a job's locks once the job is idle.
+
+Elixir:
+
+- A crash of the memory store's process or of `Cronwatch.Runs` restarts the processes after it with the instance's config in place. Before, the config was erased, the restart could not succeed, and the whole instance went down.
+- `Cronwatch.run/3` runs the function unrecorded, reported once through Logger, when the instance is not running (not started, stopping, or restarting). Before, it raised or exited without running the job.
+- An isolated run whose task went down with a restart of `Cronwatch.Runs` is recorded as failed instead of being left running.
+- An alert's HTTP request is killed when its caller is, so a triage cut short no longer leaves its request and API key alive.
+- Documented: a store of your own must bound its own calls, and on SQLite a run started inside a transaction that has already written waits for it; start runs outside the transaction there.
+
+Java:
+
+- With `cronwatch.enabled=false`, the Spring Boot starter turns every part off (the check, `@Scheduled`, Quartz, and the dashboard), even when the app has its own `Cronwatch` bean. Before, such an app failed to start.
+- On WebFlux behind a TLS-terminating proxy, with Spring's forwarded-header handling on, the dashboard's forms are no longer refused as cross-site, and the sign-in cookie is `Secure`.
+- `close()` stops waiting for a check that cannot end and reports it. On Postgres, MySQL, and MariaDB, `SqlStore`'s statements and the pg_cron source's reads have a 60-second query timeout.
+- Under an app name many apps get alike (`app`, `java`, Spring Boot's launcher), with no `CRONWATCH_APP_ID`, a scheduler integration takes the schedule only from jobs it declared itself, and reports the rest once.
+- A scheduler integration's sync that timed out is interrupted, and no new one starts while one is still running.
+- The starter puts Quartz's check job on one scheduler only, a clustered one first; when no scheduler takes it, the check runs in each instance instead of nowhere.
+- JobRunr: an attempt deleted from JobRunr's dashboard while it runs is given back instead of recorded as failed, and an attempt that ends in an `Error` is closed as failed when the job's next attempt opens.
+- A run that cannot be given back is recorded as failed, never as a success.
+
+.NET:
+
+- When a Hangfire or Quartz.NET run cannot be given back (the store has no `IDeleteRunIfStore`, or its delete failed), it is recorded as failed with what ended it, not as a success, so a scheduler's shutdown cannot send a false recovery.
+- A channel or error handler that disposes the client during a check no longer waits for the check it is part of.
+- A channel that throws its own `TimeoutException` is reported as that channel's failure, not as the client's deadline, and no longer stops the alert's delivery from being recorded.
+- On MySQL and MariaDB, two processes writing the same state from version 0 at the same moment can no longer both count the write as theirs.
+
+Ruby:
+
+- A triage cut short by the retry budget no longer stops later alerts from being triaged.
+- Slack's and Discord's error messages decode the answer as UTF-8, so an error reporter that encodes them as JSON no longer fails.
+- A `failure:` callable that raises fails the run instead of leaving it running.
+
 ## 0.12.5 - 2026-10-10
 
 ### Changed
