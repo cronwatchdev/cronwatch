@@ -3,7 +3,9 @@
  * the directory given (default site/dist), and fails when an href or src on
  * this site points at a file that was not built, or at a #fragment that no
  * id on the target page carries, or when a page carries one id twice. Links
- * to other origins are not fetched.
+ * to other origins are not fetched. It also fails on what the site's CSP
+ * would block in production: a style="" attribute, a <style> element, or a
+ * <script> with its code inline (JSON-LD, which is data, is the exception).
  *
  *   node scripts/check-links.mjs [site/dist]
  */
@@ -64,6 +66,17 @@ for (const page of pages) {
     if (seen.has(id)) problems.push(`${rel}: the id "${id}" is on the page more than once`);
     seen.add(id);
   }
+  // The CSP allows no inline style or script, so the browser would drop these.
+  for (const m of html.matchAll(/<[a-z][^>]*\sstyle\s*=/gi)) {
+    problems.push(`${rel}: a style attribute, which the CSP blocks (${m[0].slice(0, 60)})`);
+  }
+  if (/<style[\s>]/i.test(html)) problems.push(`${rel}: a <style> element, which the CSP blocks`);
+  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = m[1];
+    if (/\ssrc\s*=/i.test(attrs)) continue;
+    if (/\stype\s*=\s*"application\/ld\+json"/i.test(attrs)) continue;
+    problems.push(`${rel}: an inline <script>, which the CSP blocks`);
+  }
   const pageUrl = new URL(rel, "https://site.invalid");
   for (const m of html.matchAll(/\s(?:href|src)="([^"]*)"/g)) {
     const raw = decodeEntities(m[1]);
@@ -84,7 +97,7 @@ for (const page of pages) {
 }
 
 if (problems.length > 0) {
-  console.error(`check-links: ${problems.length} problem${problems.length === 1 ? "" : "s"} (broken links or repeated ids)`);
+  console.error(`check-links: ${problems.length} problem${problems.length === 1 ? "" : "s"} (broken links, repeated ids, or inline style or script)`);
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
