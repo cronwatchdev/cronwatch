@@ -8,19 +8,27 @@
  *
  *   --dry-run          print every change and command, write nothing
  *   --branch <name>    release from this branch instead of main (for testing)
- *   --skip-ruby        skip the gem's tests
+ *   --skip-ruby        skip the gem's tests and build (without it, the release
+ *                      refuses to run when no Ruby 3.2 or newer with bundler is found)
  *   --skip-python      skip the Python package's tests
  *   --skip-php         skip the PHP package's tests
  *   --deprecate <old>  also print `npm deprecate` for these versions (a version
  *                      or range, e.g. "<0.3.0"); may be given more than once
+ *
+ * The release refuses to run unless HEAD is exactly origin/<branch> after a
+ * fetch, so the commit it tags is the one the push will land on.
+ *
+ *   node scripts/release.mjs --check-gem <file>
+ *
+ * lists a built gem's files and fails unless it carries the library and none
+ * of the tests, as the release itself does after building it.
  *
  * A new language package under packages/ needs a row in VERSIONED (the file
  * holding its version), and a row in PUBLISH (how it ships). The script
  * refuses to run while a package directory is missing either row.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addMarkdownChangelog, addReadmeChangelog, addRootChangelog, today } from "./changelogs.mjs";
@@ -121,7 +129,11 @@ const ROOT_CHANGELOG = "CHANGELOG.md";
 const PUBLISH = [
   { dir: "packages/sdk", commands: () => ["npm publish --workspace packages/sdk --access public"] },
   { dir: "packages/mcp", commands: () => ["npm publish --workspace packages/mcp --access public"] },
-  { dir: "packages/ruby", commands: (v, gem) => [`(cd packages/ruby && gem build cronwatch.gemspec && gem push cronwatch-${gem}.gem)`] },
+  // The release builds the gem and checks its files; the gem pushed is that
+  // one. Without Ruby (--skip-ruby), build it and check it before pushing.
+  { dir: "packages/ruby", commands: (v, gem, { gemBuilt }) => [gemBuilt
+    ? `(cd packages/ruby && gem push cronwatch-${gem}.gem)   # the gem this release built and checked`
+    : `(cd packages/ruby && gem build cronwatch.gemspec) && node scripts/release.mjs --check-gem packages/ruby/cronwatch-${gem}.gem && (cd packages/ruby && gem push cronwatch-${gem}.gem)`] },
   { dir: "packages/python", commands: (v) => [`# packages/python: the pushed tag v${v} is published to PyPI by .github/workflows/pypi.yml (trusted publishing, once PYPI_ENABLED is true)`] },
   // Packagist publishes from git tags, and reads composer.json from a
   // repository's root: pushing the tag starts .github/workflows/php-split.yml,
@@ -200,7 +212,7 @@ function fail(message) {
 }
 
 function parseArgs(argv) {
-  const options = { version: null, dryRun: false, branch: "main", skipRuby: false, skipPython: false, skipPhp: false, deprecate: [] };
+  const options = { version: null, dryRun: false, branch: "main", skipRuby: false, skipPython: false, skipPhp: false, deprecate: [], checkGem: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const value = () => {
@@ -214,6 +226,7 @@ function parseArgs(argv) {
     else if (arg === "--skip-php") options.skipPhp = true;
     else if (arg === "--branch") options.branch = value();
     else if (arg === "--deprecate") options.deprecate.push(value());
+    else if (arg === "--check-gem") options.checkGem = value();
     else if (arg === "--help" || arg === "-h") {
       console.log("usage: node scripts/release.mjs <version> [--dry-run] [--branch <name>] [--skip-ruby] [--skip-python] [--skip-php] [--deprecate <old>]");
       process.exit(0);
@@ -221,7 +234,7 @@ function parseArgs(argv) {
     else if (options.version === null) options.version = arg.replace(/^v/, "");
     else fail(`unexpected argument ${arg}`);
   }
-  if (options.version === null) fail("usage: node scripts/release.mjs <version> [--dry-run] [--branch <name>] [--skip-ruby] [--skip-python] [--skip-php] [--deprecate <old>]");
+  if (options.version === null && options.checkGem === null) fail("usage: node scripts/release.mjs <version> [--dry-run] [--branch <name>] [--skip-ruby] [--skip-python] [--skip-php] [--deprecate <old>]");
   return options;
 }
 
@@ -421,6 +434,12 @@ function run(label, cmd, args, { cwd = ROOT, env = {} } = {}) {
 /** Run as a script (not imported by its tests): cut the release. */
 function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.checkGem !== null) {
+    const ruby = findRuby();
+    if (!ruby) fail("listing a gem's files needs Ruby 3.2 or newer with bundler");
+    checkGem(path.resolve(options.checkGem), ruby);
+    return;
+  }
   const next = options.version;
   if (!SEMVER.test(next)) fail(`${next} is not a valid semver version`);
   if (next.includes("+")) fail(`${next} has build metadata, which RubyGems rejects; release without the +...`);
@@ -434,6 +453,17 @@ function main() {
   if (dirty !== "") fail(`the working tree has changes; commit or stash them first:\n${dirty}`);
   const tag = `v${next}`;
   if (git("tag", "--list", tag) !== "") fail(`tag ${tag} already exists`);
+  // The tag must land on the commit the push lands on: a stale or diverged
+  // branch would leave the tag (and the Go tags made from it) on a commit
+  // main never has.
+  try {
+    git("fetch", "--quiet", "origin", branch);
+  } catch {
+    fail(`could not fetch origin ${branch}; the release checks that ${branch} matches origin first`);
+  }
+  const head = git("rev-parse", "HEAD");
+  const remote = git("rev-parse", `refs/remotes/origin/${branch}`);
+  if (head !== remote) fail(`${branch} (${head.slice(0, 12)}) is not origin/${branch} (${remote.slice(0, 12)}); pull or push first, so the release commit sits on what origin has`);
 
   let edits;
   try {
@@ -468,11 +498,13 @@ function main() {
     }
   }
   const ruby = options.skipRuby ? null : findRuby();
+  if (!options.skipRuby && !ruby) fail("no Ruby 3.2 or newer with bundler found, so the gem cannot be tested, built, and checked. Install one (rbenv works), or pass --skip-ruby to release without it and check the gem by hand before pushing it.");
   const uv = !options.skipPython && hasUv();
   const php = !options.skipPhp && hasPhp();
   const gem = gemVersion(next, ruby);
-  const gemDir = options.dryRun ? path.join(os.tmpdir(), "cronwatch-gem-XXXXXX") : mkdtempSync(path.join(os.tmpdir(), "cronwatch-gem-"));
-  const gemFile = path.join(gemDir, `cronwatch-${gem}.gem`);
+  // Built where the printed `gem push` finds it (packages/ruby/.gitignore
+  // ignores *.gem), so the gem pushed is the one checked here.
+  const gemFile = path.join(ROOT, "packages/ruby", `cronwatch-${gem}.gem`);
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const steps = [
     ["Refresh package-lock.json", npm, ["install", "--no-audit", "--no-fund"]],
@@ -506,7 +538,6 @@ function main() {
     for (const line of leftovers) console.log(`  ${line}`);
   }
   if (options.skipRuby) console.log("\nSkipping the gem's tests and build (--skip-ruby).");
-  else if (!ruby) console.log("\nNo Ruby 3.2 or newer with bundler found; skipping the gem's tests and build. CI runs the tests; wait for it to pass before pushing the gem.");
   else console.log(`\nRuby ${ruby.version}${ruby.env.RBENV_VERSION ? " (rbenv)" : ""} found; the gem's tests run and the gem is built.`);
   if (options.skipPython) console.log("Skipping the Python package's tests (--skip-python).");
   else if (!uv) console.log("No uv found; skipping the Python package's tests. CI runs them, and pypi.yml waits for CI to pass before it publishes.");
@@ -532,7 +563,6 @@ function main() {
       run(label, cmd, args, opts);
       opts.after?.();
     }
-    rmSync(gemDir, { recursive: true, force: true });
     const untracked = git("status", "--porcelain").split("\n").filter((line) => line.startsWith("??"));
     if (untracked.length > 0) console.log(`\nLeft out of the commit (untracked):\n${untracked.join("\n")}`);
     git("add", "-u");
@@ -541,8 +571,8 @@ function main() {
     console.log(`\nCommitted "Release ${next}" and tagged ${tag}. Nothing is pushed or published.`);
   }
 
-  console.log(`\nNext, by hand:\n  git push origin ${branch} ${tag}\n  # The tag's publish workflows wait for CI to pass on this commit (.github/workflows/ci-passed.yml); publish the rest by hand once it has.`);
-  for (const { commands } of PUBLISH) for (const command of commands(next, gem)) console.log(`  ${command}`);
+  console.log(`\nNext, by hand (--atomic: the branch and the tag land together, or neither does):\n  git push --atomic origin ${branch} ${tag}\n  # The tag's publish workflows wait for CI to pass on this commit (.github/workflows/ci-passed.yml); publish the rest by hand once it has.`);
+  for (const { commands } of PUBLISH) for (const command of commands(next, gem, { gemBuilt: ruby !== null })) console.log(`  ${command}`);
   for (const old of options.deprecate) {
     for (const name of NPM_PACKAGES) console.log(`  npm deprecate "${name}@${old}" "Upgrade to ${next}"`);
   }
