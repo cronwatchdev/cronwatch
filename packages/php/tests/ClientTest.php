@@ -108,6 +108,30 @@ final class ClientTest extends TestCase
         $this->assertSame(['failed', 'recovered'], $this->capture->types());
     }
 
+    public function testARedactionPcreGivesUpOnIsWithheldAndTheRunIsStillRecorded(): void
+    {
+        $cw = $this->make();
+        $job = $cw->job('export');
+        $jit = ini_get('pcre.jit');
+        $limit = ini_get('pcre.backtrack_limit');
+        try {
+            $result = $job->run(function (JobContext $j) {
+                $j->log('password=hunter2 ' . str_repeat('a', 200));
+                // A host whose PCRE gives up on the redaction patterns.
+                ini_set('pcre.jit', '0');
+                ini_set('pcre.backtrack_limit', '1');
+                return 'done';
+            });
+        } finally {
+            ini_set('pcre.jit', (string) $jit);
+            ini_set('pcre.backtrack_limit', (string) $limit);
+        }
+        $this->assertSame('done', $result);
+        $run = $cw->runs('export')[0];
+        $this->assertSame('ok', $run->status);
+        $this->assertSame('[redacted]', $run->output);
+    }
+
     public function testRunDefinesOnFirstUseAndValidatesNamesAndSchedules(): void
     {
         $cw = $this->make();
