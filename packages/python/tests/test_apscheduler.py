@@ -304,3 +304,32 @@ def test_a_job_without_a_usable_name_is_reported_and_left_alone() -> None:
             watch(scheduler, client=cw, schedule="* * * * *")
     finally:
         watched.close()
+
+
+def test_a_client_that_cannot_be_had_is_logged_and_the_listener_keeps_going(caplog: pytest.LogCaptureFixture) -> None:
+    cw, _, _ = make()
+    broken_client = {"on": True}
+
+    def client() -> cronwatch.Cronwatch:
+        if broken_client["on"]:
+            raise ImportError("CRONWATCH STORE names a module that is not there")
+        return cw
+
+    scheduler = BackgroundScheduler(timezone=UTC)
+    scheduler.add_job(nightly_report, "cron", hour=2, id="early")
+    watched = watch(scheduler, client=client)
+    try:
+        flushed = threading.Thread(target=watched.flush, daemon=True)
+        flushed.start()
+        flushed.join(5)
+        assert not flushed.is_alive(), "flush() hung: the listener's thread died"
+        assert "the client could not be had" in caplog.text
+        assert watched._thread.is_alive()
+        broken_client["on"] = False
+        scheduler.start()
+        scheduler.add_job(nightly_report, "cron", hour=3, id="later")
+        watched.flush()
+        assert "later" in [job.name for job in cw.defined_jobs()]
+        scheduler.shutdown()
+    finally:
+        watched.close()
