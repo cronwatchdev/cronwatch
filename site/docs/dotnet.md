@@ -260,7 +260,7 @@ A store of your own implements `IStore`: `InitAsync`, `UpsertJobAsync`, `GetJobA
 await StoreContract.RunAsync(new MyStore());
 ```
 
-`StoreReplay` replays the SDK's recorded store cases (`conformance/store.json`, which your test reads), and `FinishOnce` runs several clients over one database to hold a run to being recorded and judged once.
+It takes an empty store and fails at the first thing the store gets wrong. The kit's other public types are helpers of the port's own tests, deprecated and removed in 1.0 (see [Deprecated](#deprecated)).
 
 ## Alerts
 
@@ -481,7 +481,7 @@ These names still work, marked `[Obsolete]` so the compiler points at the replac
 | `Cronwatch.Hosting.CronwatchServiceCollectionExtensions`, `Cronwatch.AspNetCore.CronwatchAspNetCore` | the extension methods' classes in `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder`; `services.AddCronwatch(...)` and `app.MapCronwatch(...)` compile as before, and the former classes keep the methods as plain static methods | 2.0 |
 | `Slack.Webhook(url)`, `Discord.Webhook(url)` | `SlackChannel.Webhook(url)`, `DiscordChannel.Webhook(url)`, on the channel types | 2.0 |
 | `Json.Quote`, `Json.Kind`, `Json.Copy`, `Json.TryNumber`, `Json.MaxDepth` | internal: `Json.Parse`, `Json.ParseObject`, and `Json.Stringify` are the JSON the library promises (`Json.Stringify(text)` quotes a string as `Quote` did) | 1.0 |
-| `StoreContract.NewRun`, `ForeignRows` | fixture helpers: the store kit promises `StoreContract.RunAsync`, `StoreReplay`, and `FinishOnce` | 1.0 |
+| `StoreContract.NewRun`, `ForeignRows`, `StoreReplay`, `FinishOnce` | helpers of the port's own tests: the store kit promises only `StoreContract.RunAsync`, which runs the whole contract | 1.0 |
 | `IConditionalRunStore`, `IStateCasStore`, `IRunDeletingStore` | `IUpdateRunIfStore`, `ICompareAndSetStateStore`, `IDeleteRunIfStore`, named after their methods; each former interface extends its replacement, so a store that implements it, even explicitly, still compiles and is used | 2.0 |
 
 ## Kept in step

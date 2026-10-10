@@ -131,7 +131,7 @@ Marked `[Obsolete]`, so the compiler points at the replacement. See [.NET](/docs
 | `Cronwatch.Hosting.CronwatchServiceCollectionExtensions`, `Cronwatch.AspNetCore.CronwatchAspNetCore` | the same extension methods, in `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder` | 2.0 |
 | `Slack.Webhook(url)`, `Discord.Webhook(url)` | `SlackChannel.Webhook(url)`, `DiscordChannel.Webhook(url)` | 2.0 |
 | `Json.Quote`, `Json.Kind`, `Json.Copy`, `Json.TryNumber`, `Json.MaxDepth` | `Json.Parse`, `Json.ParseObject`, `Json.Stringify` | 1.0 |
-| `StoreContract.NewRun`, `ForeignRows` | `StoreContract.RunAsync`, `StoreReplay`, `FinishOnce` | 1.0 |
+| `StoreContract.NewRun`, `ForeignRows`, `StoreReplay`, `FinishOnce` | `StoreContract.RunAsync` | 1.0 |
 | `IConditionalRunStore`, `IStateCasStore`, `IRunDeletingStore` | `IUpdateRunIfStore`, `ICompareAndSetStateStore`, `IDeleteRunIfStore` | 2.0 |
 
 The Hangfire and Quartz.NET packages have nothing deprecated.
