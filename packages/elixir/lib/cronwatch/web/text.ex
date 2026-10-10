@@ -124,12 +124,24 @@ defmodule Cronwatch.Web.Text do
   def latin1(bytes), do: :unicode.characters_to_binary(bytes, :latin1, :utf8)
 
   @doc """
-  Compares two secrets without stopping at the first character that
-  differs, over UTF-16 code units as the SDK compares them.
+  Compares what a request `sent` with the `secret` without stopping at the
+  first character that differs, over UTF-16 code units as the SDK compares
+  them, and in time that depends only on the length of what was sent, so
+  neither the secret's characters nor its length can be timed: every unit
+  sent is compared against the secret's unit at the same place (repeating
+  it past its end), and a length that differs counts as a difference.
   """
   @spec constant_time_eq(String.t(), String.t()) :: boolean()
-  def constant_time_eq(a, b) do
-    {ua, ub} = {JS.units(a), JS.units(b)}
-    byte_size(ua) == byte_size(ub) and :crypto.hash_equals(ua, ub)
+  def constant_time_eq(sent, secret) do
+    {us, uk} = {JS.units(sent), JS.units(secret)}
+
+    if uk == "" do
+      us == ""
+    else
+      n = byte_size(us)
+      repeated = binary_part(:binary.copy(uk, div(n, byte_size(uk)) + 1), 0, n)
+      same = :crypto.hash_equals(us, repeated)
+      same and n == byte_size(uk)
+    end
   end
 end

@@ -42,9 +42,9 @@ defmodule Cronwatch.Web.Routes do
   @language "elixir"
   @api_version 1
 
-  # The most of a request body the dashboard reads: its forms and JSON are a
-  # few bytes. A body past it is answered 413; the SDK leaves this to the
-  # server in front of it.
+  # The most of a request body the dashboard reads (1 MiB), as every port's:
+  # its forms and JSON are a few bytes. A body past it is answered 413, and a
+  # sign-in's reads as no token.
   @max_body 1_048_576
 
   @doc "The most of a request body the dashboard reads; past it the answer is 413."
@@ -477,7 +477,9 @@ defmodule Cronwatch.Web.Routes do
           for {n, v} <- said.query, n != "token", do: "#{Request.form_encode(n)}=#{Request.form_encode(v)}"
 
         search = if rest == [], do: "", else: "?" <> Enum.join(rest, "&")
-        redirect(pathname <> search, [sign_in_cookie(token, said.public_origin, base)])
+        # One leading slash: "//host/..." would be a protocol-relative Location, off this site.
+        location = String.replace(pathname, ~r{\A/+}, "/") <> search
+        redirect(location, [sign_in_cookie(token, said.public_origin, base)])
 
       true ->
         route(opts, req, said, path, base, wants_html)
