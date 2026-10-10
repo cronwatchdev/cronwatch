@@ -74,7 +74,12 @@ defmodule Cronwatch.Alerts.Discord do
     with {:ok, answer} <- Post.fetch(transport, Post.timeout(), o.webhook_url, headers, JS.stringify_lone(payload)) do
       if Post.ok?(answer),
         do: :ok,
-        else: {:error, Post.fail("Discord webhook answered #{answer.status}: #{JS.head16(answer.body, 200)}")}
+        # The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+        else:
+          {:error,
+           Post.fail(
+             "Discord webhook answered #{answer.status}: #{Post.error_body(answer.body, Post.url_secrets(o.webhook_url))}"
+           )}
     end
   end
 

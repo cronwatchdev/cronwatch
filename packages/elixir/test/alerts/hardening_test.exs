@@ -47,6 +47,39 @@ defmodule Cronwatch.Alerts.HardeningTest do
   # look like one.
   defp secret, do: "not" <> "areal" <> "secret"
 
+  test "a webhook with an empty secret sends unsigned and says so through on_error" do
+    rec = Rec.start()
+    test = self()
+    ctx = %ChannelContext{on_error: fn e -> send(test, {:reported, Exception.message(e)}) end}
+
+    {:ok, empty} = Webhook.init(url: "https://hooks.example.com/in", secret: "", transport: Rec.spec(rec))
+    assert Webhook.send(empty, sample(), ctx) == :ok
+    [request] = Rec.taken(rec)
+    refute List.keymember?(request.headers, "x-cronwatch-signature", 0)
+    assert_received {:reported, said}
+    assert said =~ "secret is an empty string, so this request is sent unsigned"
+
+    # Left out, it sends unsigned on purpose, and says nothing.
+    {:ok, none} = Webhook.init(url: "https://hooks.example.com/in", transport: Rec.spec(rec))
+    assert Webhook.send(none, sample(), ctx) == :ok
+    refute_received {:reported, _}
+  end
+
+  test "Slack and Discord cut the webhook URL's credential out of an answer that echoes it" do
+    for {module, url} <- [
+          {Slack, "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX"},
+          {Discord, "https://discord.com/api/webhooks/123456/tokenTOKENtoken"}
+        ] do
+      rec = Rec.start()
+      {:ok, u} = URL.parse(url)
+      Rec.answer_with(rec, 502, "<html>bad gateway for POST #{u.path} HTTP/1.1</html>")
+      err = message(send!({module, webhook_url: url, transport: Rec.spec(rec)}))
+      refute err =~ u.path
+      refute err =~ u.path |> String.split("/") |> List.last()
+      assert err =~ "[redacted]"
+    end
+  end
+
   test "every channel refuses to follow a redirect" do
     evil = HTTPServer.start(fn _ -> {202, [], ""} end)
     target = evil.url <> "/steal"
