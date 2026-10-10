@@ -105,12 +105,13 @@ export function isObject(value: unknown): value is Record<string, unknown> {
  * number (anything but an object reads as {}); `silencedUntil` and
  * `lastAlertAt` that are not numbers read as null; `pendingRecovery` keeps
  * only its strings, and `undelivered` only its entries that are objects (a
- * list of neither shape reads as []), and `underFloor` only its strings
- * (absent when none). Unknown fields are kept as written.
+ * list of neither shape reads as []), and `underFloor` and `pendingRuns`
+ * only their strings (each absent when none). Unknown fields are kept as
+ * written.
  */
 export function normalizeState(state: JobState | null, job: string): JobState {
   if (!isObject(state)) return emptyState(job);
-  const { sending, underFloor, ...rest } = state;
+  const { sending, underFloor, pendingRuns, ...rest } = state;
   const open = isObject(state.open)
     ? Object.fromEntries(Object.entries(state.open).filter(([, at]) => typeof at === "number"))
     : {};
@@ -127,6 +128,7 @@ export function normalizeState(state: JobState | null, job: string): JobState {
     undelivered: list(state.undelivered).filter((alert): alert is Alert => isObject(alert)),
     ...(Array.isArray(sending) && sending.length > 0 ? { sending: [...sending] } : {}),
     ...(Array.isArray(underFloor) && underFloor.some((m) => typeof m === "string") ? { underFloor: underFloor.filter((m): m is string => typeof m === "string") } : {}),
+    ...(Array.isArray(pendingRuns) && pendingRuns.some((id) => typeof id === "string") ? { pendingRuns: pendingRuns.filter((id): id is string => typeof id === "string") } : {}),
   };
 }
 
@@ -220,6 +222,56 @@ export function recordSent(state: JobState, delivered: Alert[], failed: Alert[],
   else delete next.sending;
   if (delivered.length > 0) next.lastAlertAt = now;
   return queueUndelivered(next, failed);
+}
+
+/**
+ * A check's claim on the undelivered queue, written before it sends, so two
+ * processes checking at once never retry the same alert: the queued alerts
+ * that still describe the job move into `sending`, oldest first, each with
+ * its lease ending at `until`, as many as `sending` has room for under
+ * MAX_UNDELIVERED (the rest wait for the next check); stale ones
+ * (staleAlert) leave the queue. While the job is silenced only recoveries
+ * are claimed. The process whose write lands sends `claimed`.
+ */
+export function claimUndelivered(state: JobState, now: number, until: number): { state: JobState; claimed: Alert[]; stale: Alert[] } {
+  const next = cloneState(state);
+  const queue = next.undelivered!;
+  const stale = queue.filter((alert) => staleAlert(alert, next));
+  const silenced = isSilenced(next, now);
+  const room = Math.max(0, MAX_UNDELIVERED - (next.sending ?? []).length);
+  const claimed = queue.filter((alert) => !stale.includes(alert) && (!silenced || alert.type === "recovered")).slice(0, room);
+  if (stale.length === 0 && claimed.length === 0) return { state, claimed, stale };
+  next.undelivered = queue.filter((alert) => !stale.includes(alert) && !claimed.includes(alert));
+  if (claimed.length > 0) next.sending = [...(next.sending ?? []), ...claimed.map((alert) => ({ until, alert }))];
+  return { state: next, claimed, stale };
+}
+
+/** Runs held in `pendingRuns` per job; past it the oldest go. */
+export const MAX_PENDING_RUNS = 100;
+
+/**
+ * A run just started, held in `pendingRuns` until its finish is evaluated
+ * (releaseRun), so a check can evaluate it if the process that finished it
+ * stops before writing the evaluation. Written with onRunStart's state.
+ * Only the newest MAX_PENDING_RUNS are kept.
+ */
+export function holdRun(state: JobState, runId: string): JobState {
+  const next = cloneState(state);
+  const held = (next.pendingRuns ?? []).filter((id) => id !== runId);
+  held.push(runId);
+  next.pendingRuns = held.slice(-MAX_PENDING_RUNS);
+  return next;
+}
+
+/** A run taken out of `pendingRuns`, as its evaluation is written or once it is gone from the store. */
+export function releaseRun(state: JobState, runId: string): JobState {
+  const held = state.pendingRuns ?? [];
+  if (!held.includes(runId)) return state;
+  const next = cloneState(state);
+  const left = held.filter((id) => id !== runId);
+  if (left.length > 0) next.pendingRuns = left;
+  else delete next.pendingRuns;
+  return next;
 }
 
 function cloneState(state: JobState): JobState {
@@ -497,11 +549,13 @@ export function isSilenced(state: JobState, now: number): boolean {
 
 /**
  * An evaluation as it is saved and sent: while the job was silenced when it
- * began, nothing opens and nothing is sent.
+ * began, nothing opens and no new alert is sent, but a recovery is. A
+ * condition can only close during a silence if it opened (and alerted)
+ * before it, so its recovery closes an incident someone was told about.
  */
 export function applySilence(previous: JobState, evaluation: Evaluation, now: number): Evaluation {
   if (!isSilenced(previous, now)) return evaluation;
-  return { state: muteOpens(previous, evaluation.state), alerts: [] };
+  return { state: muteOpens(previous, evaluation.state), alerts: evaluation.alerts.filter((alert) => alert.type === "recovered") };
 }
 
 /**

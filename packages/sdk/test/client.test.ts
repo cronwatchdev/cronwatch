@@ -135,7 +135,7 @@ test("a job declared again without its schedule closes missed with a recovery, o
   assert.deepEqual(alerts.types(), ["missed", "recovered"], "the next run owes nothing");
 });
 
-test("a schedule removed while silenced closes missed quietly", async () => {
+test("a schedule removed while silenced closes missed with its recovery, which the silence does not hold back", async () => {
   const { cw, c, alerts } = make();
   cw.job("sync", { schedule: "every 1h", grace: "10m" });
   await cw.check();
@@ -144,11 +144,11 @@ test("a schedule removed while silenced closes missed quietly", async () => {
   await cw.silence("sync", "1h");
   cw.job("sync");
   c.advance(MIN);
-  assert.deepEqual((await cw.check()).alerts, []);
+  assert.deepEqual((await cw.check()).alerts.map((a) => a.type), ["recovered"]);
   assert.deepEqual((await cw.jobSummary("sync"))!.open, []);
   c.advance(2 * HOUR);
   assert.deepEqual((await cw.check()).alerts, []);
-  assert.deepEqual(alerts.types(), ["missed"]);
+  assert.deepEqual(alerts.types(), ["missed", "recovered"]);
 });
 
 test("check marks a run that never finished as stuck", async () => {
@@ -228,6 +228,17 @@ test("silence swallows alerts and nothing opens underneath; unsilence alerts aga
   await assert.rejects(job.run(async () => { throw new Error("y"); }));
   assert.deepEqual(alerts.types(), ["failed"]);
   c.advance(1);
+});
+
+test("a recovery for an alert sent before the silence is sent during it; new problems are not", async () => {
+  const { cw, alerts } = make();
+  const job = cw.job("flaky");
+  await assert.rejects(job.run(async () => { throw new Error("x"); }));
+  await cw.silence("flaky", "1h");
+  await job.run(() => "ok");
+  assert.deepEqual(alerts.types(), ["failed", "recovered"]);
+  await assert.rejects(job.run(async () => { throw new Error("y"); }));
+  assert.deepEqual(alerts.types(), ["failed", "recovered"]);
 });
 
 test("a silence ends on a whole millisecond, never past 2^53 - 1", async () => {

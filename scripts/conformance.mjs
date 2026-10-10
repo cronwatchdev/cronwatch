@@ -28,6 +28,10 @@ import { expectation, nextFire, parseSchedule, runCovers } from "../packages/sdk
 import {
   alertKey,
   applySilence,
+  claimUndelivered,
+  holdRun,
+  MAX_PENDING_RUNS,
+  releaseRun,
   emptyState,
   formatNumber,
   holdAlerts,
@@ -375,11 +379,7 @@ class Sim {
   }
 
   settle(previous, evaluation, now) {
-    let { state, alerts } = evaluation;
-    if (isSilenced(previous, now)) {
-      state = muteOpens(previous, state);
-      alerts = [];
-    }
+    const { state, alerts } = applySilence(previous, evaluation, now);
     this.state = state;
     return alerts.map((draft) => clone(sdk.composeAlert(draft, this.def, now)));
   }
@@ -660,7 +660,7 @@ function evaluateCases() {
       ],
     },
     {
-      name: "silence swallows alerts and opens nothing, closes still close, and alerts return after",
+      name: "silence swallows new alerts and opens nothing, a close still sends its recovery, and alerts return after",
       definition: { name: "flaky", schedule: "every 1h" },
       steps: [
         { op: "silence", until: T0 + HOUR },
@@ -672,6 +672,20 @@ function evaluateCases() {
         run(T0 + 50 * MIN),
         fail(T0 + 3 * HOUR + MIN),
         check(T0 + 5 * HOUR),
+      ],
+    },
+    {
+      name: "a recovery for an alert sent before the silence goes out during it",
+      definition: { name: "flaky" },
+      steps: [
+        fail(T0),
+        { op: "silence", until: T0 + 3 * HOUR },
+        fail(T0 + 30 * MIN),
+        run(T0 + HOUR),
+        fail(T0 + 2 * HOUR),
+        run(T0 + 2 * HOUR + 30 * MIN),
+        { op: "unsilence" },
+        fail(T0 + 4 * HOUR),
       ],
     },
     {
@@ -1108,13 +1122,17 @@ function healthCases() {
     [recents[5], state({ silencedUntil: T0 })],
   ].map(([recent, s]) => ({ stored: broken, recent, state: s, now: T0, summary: clone(unevaluableSummary(broken, recent, s, T0)) }));
 
-  // Silence as a saved evaluation sees it: nothing opens and nothing is sent while the job was silenced.
+  // Silence as a saved evaluation sees it: nothing opens and no new alert is
+  // sent while the job was silenced, but a recovery still is.
   const draft = { type: "failed", run: null, details: { consecutiveFailures: 1, threshold: 1 } };
+  const recovery = { type: "recovered", run: null, details: { after: ["failed"] } };
   const silences = [
     [state(), { state: state({ open: { failed: T0 }, consecutiveFailures: 1 }), alerts: [draft] }],
     [state({ silencedUntil: T0 + 1 }), { state: state({ silencedUntil: T0 + 1, open: { failed: T0 }, consecutiveFailures: 1 }), alerts: [draft] }],
     [state({ silencedUntil: T0 }), { state: state({ silencedUntil: T0, open: { failed: T0 }, consecutiveFailures: 1 }), alerts: [draft] }],
     [state({ silencedUntil: T0 + HOUR, open: { slow: 1 } }), { state: state({ silencedUntil: T0 + HOUR, open: { failed: T0 }, pendingRecovery: ["slow"] }), alerts: [] }],
+    [state({ silencedUntil: T0 + HOUR, open: { failed: 1 }, consecutiveFailures: 2 }), { state: state({ silencedUntil: T0 + HOUR }), alerts: [recovery] }],
+    [state({ silencedUntil: T0 + HOUR, open: { failed: 1 } }), { state: state({ silencedUntil: T0 + HOUR, open: { slow: T0 } }), alerts: [recovery, { ...draft, type: "slow" }] }],
   ].map(([previous, evaluation]) => ({ previous, evaluation, now: T0, result: clone(applySilence(previous, evaluation, T0)) }));
 
   // Which queued alerts a retry drops.
@@ -1232,7 +1250,46 @@ function deliveryCases(state) {
     [state({ sending: [held(now, a)], lastAlertAt: 5 }), [], [], []],
   ].map(([s, delivered, failed, stale]) => ({ state: s, delivered, failed, stale, now: at, result: clone(recordSent(s, delivered, failed, stale, at)) }));
 
-  return { maxUndelivered: MAX_UNDELIVERED, sendLeaseMs: SEND_LEASE_MS, alertKey: alertKeys, normalizeState: normalized, queueUndelivered: queued, holdAlerts: holds, releaseSending: releases, recordSent: sent };
+  // A check's claim on the queue before it retries: what it sends, what it
+  // drops as stale, and the state its write leaves.
+  const until = now + SEND_LEASE_MS;
+  const claims = [
+    [state()],
+    [state({ open: { failed: T0 }, undelivered: [a] })],
+    [state({ open: { failed: T0 }, undelivered: [a, b, c] })],
+    [state({ open: { failed: T0, slow: T0 }, undelivered: [a, b], sending: [held(until, d)] })],
+    [state({ open: { failed: T0 }, undelivered: [a, c], silencedUntil: now + 1 })],
+    [state({ open: { failed: T0 }, undelivered: [a], silencedUntil: now })],
+    [state({ undelivered: [a, c] })],
+    [state({ open: { slow: T0 }, undelivered: [c, b], silencedUntil: now + 1 })],
+    [state({ open: { failed: T0, slow: T0 }, undelivered: [a, b], sending: many(19).map((x) => held(until, x)) })],
+    [state({ open: { failed: T0 }, undelivered: [a], sending: many(20).map((x) => held(until, x)) })],
+  ].map(([s]) => ({ state: s, now, until, result: clone(claimUndelivered(s, now, until)) }));
+
+  // Runs held as pending from their start until their finish is evaluated.
+  const holdsRun = [
+    [state(), "r1"],
+    [state({ pendingRuns: ["r0"] }), "r1"],
+    [state({ pendingRuns: ["r1", "r2"] }), "r1"],
+    [state({ pendingRuns: Array.from({ length: MAX_PENDING_RUNS }, (_, i) => `p${i}`) }), "r1"],
+  ].map(([s, id]) => ({ state: s, runId: id, result: clone(holdRun(s, id)) }));
+  const releasesRun = [
+    [state(), "r1"],
+    [state({ pendingRuns: ["r1"] }), "r1"],
+    [state({ pendingRuns: ["r0", "r1", "r2"] }), "r1"],
+    [state({ pendingRuns: ["r0"] }), "r1"],
+  ].map(([s, id]) => ({ state: s, runId: id, result: clone(releaseRun(s, id)) }));
+  const normalizedPending = [
+    { job: "j", open: {}, consecutiveFailures: 0, silencedUntil: null, lastAlertAt: null, pendingRuns: ["a", 1, null, "b"] },
+    { job: "j", open: {}, consecutiveFailures: 0, silencedUntil: null, lastAlertAt: null, pendingRuns: [] },
+    { job: "j", open: {}, consecutiveFailures: 0, silencedUntil: null, lastAlertAt: null, pendingRuns: "r1" },
+  ].map((s) => ({ state: s, normalized: clone(normalizeState(s, "j")) }));
+
+  return {
+    maxUndelivered: MAX_UNDELIVERED, sendLeaseMs: SEND_LEASE_MS, maxPendingRuns: MAX_PENDING_RUNS, alertKey: alertKeys,
+    normalizeState: [...normalized, ...normalizedPending], queueUndelivered: queued, holdAlerts: holds, releaseSending: releases, recordSent: sent,
+    claimUndelivered: claims, holdRun: holdsRun, releaseRun: releasesRun,
+  };
 }
 
 // ---------------------------------------------------------------- output

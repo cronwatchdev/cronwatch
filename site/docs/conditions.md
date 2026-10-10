@@ -104,7 +104,7 @@ Baselines use the last twenty successful runs, reading past any failures in betw
 
 ## Silence
 
-`cw.silence(name, "2h")` (every port has the same call in its own spelling, such as `silence(name, for: "2h")` in Ruby), the dashboard button, or the MCP tool. While silenced, nothing new is recorded as an incident and no alerts are sent; conditions that clear during the silence do clear. When the silence ends, the next problem alerts normally.
+`cw.silence(name, "2h")` (every port has the same call in its own spelling, such as `silence(name, for: "2h")` in Ruby), the dashboard button, or the MCP tool. While silenced, nothing new is recorded as an incident and no new alert is sent; conditions that clear during the silence do clear, and the recovery for an alert that already went out is still sent, so an incident someone was told about is always closed. When the silence ends, the next problem alerts normally.
 
 ## Output and metrics
 
