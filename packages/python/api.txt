@@ -137,6 +137,7 @@ class JobState
     sending: list[Any] | None = None
     version: int | None = None
     under_floor: list[str] | None = None
+    pending_runs: list[str] | None = None
     extra: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     @classmethod def from_dict(cls, data: Mapping[str, Any] | JobState) -> JobState
     def to_dict(self) -> dict[str, Any]
@@ -707,6 +708,7 @@ class JobState
     sending: list[Any] | None = None
     version: int | None = None
     under_floor: list[str] | None = None
+    pending_runs: list[str] | None = None
     extra: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
     @classmethod def from_dict(cls, data: Mapping[str, Any] | JobState) -> JobState
     def to_dict(self) -> dict[str, Any]

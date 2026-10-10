@@ -546,12 +546,18 @@ class JobState:
     #: The metrics under their floor at the job's last successful run (see
     #: floor_breaches). None when none: the key is never written as an empty list.
     under_floor: list[str] | None = None
+    #: The ids of runs started and not yet judged, oldest first (see
+    #: hold_run). A run leaves when its finish is evaluated; one a check finds
+    #: finished and still here (the process that finished it stopped before
+    #: writing its evaluation) is evaluated by that check. None when empty:
+    #: the key is never written as an empty list.
+    pending_runs: list[str] | None = None
     #: Keys a newer release wrote that this one does not know, as their JSON,
     #: written back unchanged so a shared store never loses them.
     extra: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     #: The keys this release reads, camelCase as stored.
-    _KEYS: ClassVar[tuple[str, ...]] = ("job", "open", "consecutiveFailures", "silencedUntil", "lastAlertAt", "pendingRecovery", "undelivered", "sending", "underFloor", "version")
+    _KEYS: ClassVar[tuple[str, ...]] = ("job", "open", "consecutiveFailures", "silencedUntil", "lastAlertAt", "pendingRecovery", "undelivered", "sending", "underFloor", "pendingRuns", "version")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | JobState) -> JobState:
@@ -571,14 +577,15 @@ class JobState:
             undelivered=None if undelivered is None else _read_alerts(undelivered),
             sending=[SendingAlert.from_json(e) for e in sending] if isinstance(sending, list) and sending else None,
             under_floor=_read_metric_names(_get(data, "underFloor")),
+            pending_runs=_read_metric_names(_get(data, "pendingRuns")),
             version=_get(data, "version"),
             extra={k: v for k, v in data.items() if k not in known},
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """pendingRecovery, undelivered, sending, underFloor, and version are
-        left out when unset, as in state written before they existed (sending
-        and underFloor also when empty). The version comes after the known keys, where the SDK's
+        """pendingRecovery, undelivered, sending, underFloor, pendingRuns, and
+        version are left out when unset, as in state written before they
+        existed (sending, underFloor, and pendingRuns also when empty). The version comes after the known keys, where the SDK's
         spread of a normalized state puts it, and the keys this release does
         not know come after it, as they were read."""
         out: dict[str, Any] = {
@@ -596,6 +603,8 @@ class JobState:
             out["sending"] = [_sending_to_json(e) for e in self.sending]
         if self.under_floor:
             out["underFloor"] = list(self.under_floor)
+        if self.pending_runs:
+            out["pendingRuns"] = list(self.pending_runs)
         if self.version is not None:
             out["version"] = self.version
         for key, value in self.extra.items():
@@ -613,6 +622,7 @@ class JobState:
             undelivered=None if self.undelivered is None else list(self.undelivered),
             sending=None if self.sending is None else list(self.sending),
             under_floor=None if self.under_floor is None else list(self.under_floor),
+            pending_runs=None if self.pending_runs is None else list(self.pending_runs),
             version=self.version,
             extra=dict(self.extra),
         )

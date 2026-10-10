@@ -35,20 +35,21 @@ from ._evaluate import (
     SEND_LEASE_MS,
     Evaluation,
     apply_silence,
+    claim_undelivered,
     empty_state,
     has_full_baseline,
     hold_alerts,
-    is_silenced,
+    hold_run,
     is_stuck,
     normalize_state,
     on_check,
     on_run_finish,
     on_run_start,
     record_sent,
+    release_run,
     release_sending,
     run_duration,
     silence_end,
-    stale_alert,
     state_version,
     summarize,
     timeout_ms,
@@ -463,7 +464,8 @@ class _Execution:
         # done just before the job runs. The result is the same.
         if self.recorded:
             try:
-                client._update_state(name, lambda before: (on_run_start(before), None))
+                run_id = self.run.id
+                client._update_state(name, lambda before: (hold_run(on_run_start(before), run_id), None))
             except Exception as error:
                 client._report(error, f"starting {name}")
 
@@ -628,6 +630,9 @@ class Cronwatch:
         self._clock = now if now is not None else (lambda: time.time_ns() // 1_000_000)
         self._on_error = on_error
         self._definitions: dict[str, JobDefinition] = {}
+        # Declarations forgotten here (forget()), kept so that run() or
+        # resume_run() by name declares the job again as it was written, not bare.
+        self._forgotten: dict[str, JobDefinition] = {}
         self._synced: set[str] = set()
         self._registry = threading.RLock()
         self._ready = False
@@ -657,15 +662,28 @@ class Cronwatch:
         self._validate_definition(definition)
         with self._registry:
             self._definitions[name] = definition
+            self._forgotten.pop(name, None)
             self._synced.discard(name)
         return JobHandle(self, definition)
+
+    def _declared(self, name: str) -> JobDefinition | None:
+        """The declaration of `name`: the standing one, else one forgotten here, declared again as it was."""
+        with self._registry:
+            standing = self._definitions.get(name)
+            if standing is not None:
+                return standing
+            forgotten = self._forgotten.pop(name, None)
+            if forgotten is None:
+                return None
+            self._definitions[name] = forgotten
+            self._synced.discard(name)
+            return forgotten
 
     def run(self, name: str, fn: Callable[[JobContext], T] | None = None, **options: Any) -> Any:
         """Run a job by name without keeping a handle, declaring it on first use
         (or again, when options are given). Without a function, a context manager."""
-        with self._registry:
-            declared = self._definitions.get(name)
-        handle = self.job(name, **options) if options or declared is None else JobHandle(self, declared)
+        declared = None if options else self._declared(name)
+        handle = JobHandle(self, declared) if declared is not None else self.job(name, **options)
         return handle.run(fn)
 
     def _declares(self, name: str) -> bool:
@@ -680,8 +698,7 @@ class Cronwatch:
 
     def resume_run(self, name: str, run_id: str) -> RunHandle:
         """A handle on a run started elsewhere, as job(name).resume(run_id). The job must be declared in this process."""
-        with self._registry:
-            definition = self._definitions.get(name)
+        definition = self._declared(name)
         if definition is None:
             raise ValueError(f'resume_run: job "{name}" is not declared; call job() first')
         return self._resume_handle(definition, run_id)
@@ -743,7 +760,7 @@ class Cronwatch:
             raise
         if not evaluate:
             return []
-        self._update_state(run.job, lambda before: (on_run_start(before), None))
+        self._update_state(run.job, lambda before: (hold_run(on_run_start(before), run.id), None))
         if run.status == RunStatus.RUNNING:
             return []
         return self._finish_run(definition, run, self.now())
@@ -831,12 +848,15 @@ class Cronwatch:
 
     def forget(self, name: str) -> None:
         """Remove a job and its runs from the store. A job still declared in code
-        comes back: here on its next run, and in any other process that
-        declares it on its next run there, or at that process's next check or
-        dashboard read."""
+        comes back, with no history: here on its next run, declared as it was
+        written (cw.run() and cw.resume_run() by name included), and in any
+        other process that declares it on its next run there, or at that
+        process's next check or dashboard read."""
         self._ensure_ready()
         with self._registry:
-            self._definitions.pop(name, None)
+            definition = self._definitions.pop(name, None)
+            if definition is not None:
+                self._forgotten[name] = definition
             self._synced.discard(name)
         self.store.delete_job(name)
 
@@ -1383,7 +1403,7 @@ class Cronwatch:
             self._report(error, f"recording {name}")
         if recorded:
             try:
-                self._update_state(name, lambda before: (on_run_start(before), None))
+                self._update_state(name, lambda before: (hold_run(on_run_start(before), run.id), None))
             except Exception as error:
                 self._report(error, f"starting {name}")
         handle = RunHandle(self, definition, run.id, run, recorded, None)
@@ -1500,7 +1520,14 @@ class Cronwatch:
         if ignored:
             self._report(RuntimeError(f"run {run.id} of {run.job} {ignored}; ignored"), f"recording {run.job}")
             return []
-        if not evaluate or (late and run.status != RunStatus.OK):
+        if not evaluate:
+            # Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+            try:
+                self._update_state(run.job, lambda current: (release_run(current, run.id), None))
+            except Exception as error:
+                self._report(error, f"recording {run.job}")
+            return []
+        if late and run.status != RunStatus.OK:
             return []
         return self._finish_run(definition, run, self.now())
 
@@ -1513,7 +1540,8 @@ class Cronwatch:
         def change(previous: JobState) -> tuple[JobState, _Held]:
             if not past:
                 past.append(self._history(run))
-            return self._outbox(apply_silence(previous, on_run_finish(definition, run, previous, past[0], at), at), definition, at)
+            before = release_run(previous, run.id)
+            return self._outbox(apply_silence(before, on_run_finish(definition, run, before, past[0], at), at), definition, at)
 
         try:
             _, held = self._update_state(run.job, change)
@@ -1622,6 +1650,7 @@ class Cronwatch:
                 self._report_dropped(stored.name, held.dropped)
                 alerts.extend(self._retry_undelivered(stored.name, state, at, retries))
                 alerts.extend(self._dispatch(stored.name, held.alerts, at))
+                alerts.extend(self._evaluate_pending(stored, recent, state, at))
                 jobs.append(summarize(stored, recent, state, expected[0], at))
             except Exception as error:
                 self._report(error, f"checking {stored.name}")
@@ -1635,6 +1664,29 @@ class Cronwatch:
             except Exception as error:
                 self._report(error, "pruning")
         return CheckResult(checked_at=at, jobs=jobs, alerts=alerts, pruned=pruned)
+
+    def _evaluate_pending(self, stored: StoredJob, recent: list[Run], state: JobState, at: int) -> list[Alert]:
+        """Runs the job's state still holds as pending (hold_run) whose finish
+        was written but never evaluated: the process that finished them
+        stopped, or its state write failed, between the two writes. Each one
+        finished more than SEND_LEASE_MS ago is evaluated now, as its finish
+        would have been; one still running is left to the stuck check, and one
+        the store no longer has (given back, or pruned) is let go. The wait
+        leaves a finish under way in another process to write its own
+        evaluation."""
+        alerts: list[Alert] = []
+        for run_id in list(state.pending_runs or []):
+            try:
+                run = next((r for r in recent if r.id == run_id), None) or self.store.get_run(run_id)
+                if run is None or run.job != stored.name:
+                    self._update_state(stored.name, lambda current, run_id=run_id: (release_run(current, run_id), None))
+                    continue
+                if run.status == RunStatus.RUNNING or not _js.is_number(run.finished_at) or run.finished_at > at - SEND_LEASE_MS:
+                    continue
+                alerts.extend(self._finish_run(stored.definition, run, at))
+            except Exception as error:
+                self._report(error, f"evaluating run {run_id} of {stored.name}")
+        return alerts
 
     def _snapshot(self, stored: StoredJob, at: int, count: int) -> JobWithRuns:
         """A job's summary and its newest runs, without alerting. A job that cannot be evaluated is reported and shown as failing."""
@@ -1686,21 +1738,35 @@ class Cronwatch:
 
     def _retry_undelivered(self, name: str, state: JobState, at: int, budget: list[float]) -> list[Alert]:
         """Send the alerts that no channel accepted last time, once each, oldest
-        first. An alert that no longer describes the job (stale_alert) is
-        dropped instead. Retries across a check share RETRY_BUDGET_MS of
-        wall-clock time; once it is spent the rest stay queued for the next check."""
-        pending = state.undelivered or []
-        if not pending or is_silenced(state, at) or self._defer_delivery:
+        first. They are claimed first (claim_undelivered): moved into
+        `sending` with a lease, in one conditional write, so when several
+        processes check at once only the one whose write lands sends them. An
+        alert that no longer describes the job (stale_alert) is dropped
+        instead. Retries across a check share RETRY_BUDGET_MS of wall-clock
+        time; claimed alerts it has no time left for go back to the queue for
+        the next check."""
+        if not state.undelivered or self._defer_delivery:
+            return []
+
+        def change(previous: JobState) -> tuple[JobState, list[Alert]]:
+            claim = claim_undelivered(previous, at, self.now() + SEND_LEASE_MS)
+            return claim.state, claim.claimed
+
+        try:
+            _, claimed = self._update_state(name, change)
+        except Exception as error:
+            self._report(error, f"claiming undelivered alerts for {name}")
+            return []
+        if not claimed:
             return []
         delivered: list[Alert] = []
         failed: list[Alert] = []
-        dropped = [alert for alert in pending if stale_alert(alert, state)]
-        for alert in pending:
-            if any(alert is d for d in dropped):
-                continue
+        for alert in claimed:
             left = self._retry_budget_ms - budget[0]
             if left <= 0:
-                break
+                # Not tried: back to the queue as it was.
+                failed.append(alert)
+                continue
             started = time.monotonic()
             # An alert queued by a process that delivers at check time was never
             # triaged. One that was tried (triage: null) is not tried again.
@@ -1708,7 +1774,7 @@ class Cronwatch:
                 self._add_triage(alert, min(self._triage_timeout_ms, left))
             (delivered if self._deliver(alert) else failed).append(alert)
             budget[0] += max(0.0, (time.monotonic() - started) * 1000)
-        self._record_delivery(name, delivered, failed, dropped, at)
+        self._record_delivery(name, delivered, failed, [], at)
         return delivered
 
     def _record_delivery(self, name: str, delivered: list[Alert], failed: list[Alert], dropped: list[Alert], at: int) -> None:

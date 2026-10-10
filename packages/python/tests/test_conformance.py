@@ -187,12 +187,9 @@ class Sim:
         return sorted(self.runs, key=lambda r: (-r.started_at, -self.order[r.id]))
 
     def settle(self, previous: JobState, evaluation: _evaluate.Evaluation, now: int) -> list[Alert]:
-        state, alerts = evaluation.state, evaluation.alerts
-        if _evaluate.is_silenced(previous, now):
-            state = _evaluate.mute_opens(previous, state)
-            alerts = []
-        self.state = state
-        return [compose_alert(draft, self.definition, now) for draft in alerts]
+        settled = _evaluate.apply_silence(previous, evaluation, now)
+        self.state = settled.state
+        return [compose_alert(draft, self.definition, now) for draft in settled.alerts]
 
     def start(self, run_id: str, now: int) -> dict[str, Any]:
         self.runs.append(Run(id=run_id, job=self.definition.name, status="running", started_at=now))
@@ -436,6 +433,13 @@ DELIVERY = HEALTH["delivery"]
 def test_delivery_constants_are_the_sdks() -> None:
     assert DELIVERY["maxUndelivered"] == _evaluate.MAX_UNDELIVERED
     assert DELIVERY["sendLeaseMs"] == _evaluate.SEND_LEASE_MS
+    assert DELIVERY["maxPendingRuns"] == _evaluate.MAX_PENDING_RUNS
+
+
+def test_every_delivery_section_is_replayed() -> None:
+    constants = {"maxUndelivered", "sendLeaseMs", "maxPendingRuns"}
+    replayed = {"alertKey", "normalizeState", "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun"}
+    assert set(DELIVERY) == constants | replayed
 
 
 def delivered(result: _evaluate.Delivery) -> str:
@@ -493,6 +497,23 @@ def test_record_sent() -> None:
         return same_delivery(c["result"], delivered(_evaluate.record_sent(JobState.from_dict(c["state"]), *lists, c["now"])))
 
     each_case(DELIVERY["recordSent"], check)
+
+
+def test_claim_undelivered() -> None:
+    def check(c: dict[str, Any]) -> str | None:
+        claim = _evaluate.claim_undelivered(JobState.from_dict(c["state"]), c["now"], c["until"])
+        got = {"state": claim.state.to_dict(), "claimed": [a.to_dict() for a in claim.claimed], "stale": [a.to_dict() for a in claim.stale]}
+        return same_delivery(c["result"], _js.dumps(got))
+
+    each_case(DELIVERY["claimUndelivered"], check)
+
+
+def test_hold_run() -> None:
+    each_case(DELIVERY["holdRun"], lambda c: same_delivery(c["result"], _js.dumps(_evaluate.hold_run(JobState.from_dict(c["state"]), c["runId"]).to_dict())))
+
+
+def test_release_run() -> None:
+    each_case(DELIVERY["releaseRun"], lambda c: same_delivery(c["result"], _js.dumps(_evaluate.release_run(JobState.from_dict(c["state"]), c["runId"]).to_dict())))
 
 
 def test_stale_alert() -> None:

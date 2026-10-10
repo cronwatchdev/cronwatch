@@ -154,7 +154,7 @@ def test_a_job_declared_again_without_its_schedule_closes_missed_with_a_recovery
     assert alerts.types() == ["missed", "recovered"], "the next run owes nothing"
 
 
-def test_a_schedule_removed_while_silenced_closes_missed_quietly() -> None:
+def test_a_schedule_removed_while_silenced_closes_missed_with_its_recovery_which_the_silence_does_not_hold_back() -> None:
     cw, c, alerts = make()
     cw.job("sync", schedule="every 1h", grace="10m")
     cw.check()
@@ -163,11 +163,11 @@ def test_a_schedule_removed_while_silenced_closes_missed_quietly() -> None:
     cw.silence("sync", "1h")
     cw.job("sync")
     c.advance(MIN)
-    assert cw.check().alerts == []
+    assert [str(a.type) for a in cw.check().alerts] == ["recovered"]
     assert cw.job_summary("sync").open == []
     c.advance(2 * HOUR)
     assert cw.check().alerts == []
-    assert alerts.types() == ["missed"]
+    assert alerts.types() == ["missed", "recovered"]
 
 
 def test_check_marks_a_run_that_never_finished_as_stuck() -> None:
@@ -366,6 +366,38 @@ def test_forget_removes_the_job_and_its_runs() -> None:
     cw.forget("gone")
     assert len(cw.jobs()) == 0
     assert cw.job_summary("gone") is None
+
+
+def test_after_a_forget_run_and_resume_run_by_name_declare_the_job_again_as_it_was_written() -> None:
+    cw, c, alerts = make()
+    cw.job("nightly", schedule="0 2 * * *", description="Nightly export")
+    cw.run("nightly", lambda ctx: None)
+    handle = cw.job("nightly", schedule="0 2 * * *", description="Nightly export").start()
+    cw.forget("nightly")
+    assert cw.job_summary("nightly") is None
+    cw.run("nightly", lambda ctx: None)
+    summary = cw.job_summary("nightly")
+    assert summary.definition.schedule == "0 2 * * *"
+    assert summary.definition.description == "Nightly export"
+    cw.forget("nightly")
+    assert cw.resume_run("nightly", handle.id).id == handle.id
+    c.advance(HOUR)
+    cw.check()
+    assert cw.job_summary("nightly").definition.schedule == "0 2 * * *"
+    assert "recovered" not in alerts.types(), "no 'no longer scheduled' recovery"
+
+
+def test_a_recovery_for_an_alert_sent_before_the_silence_is_sent_during_it_new_problems_are_not() -> None:
+    cw, _, alerts = make()
+    job = cw.job("flaky")
+    with pytest.raises(RuntimeError):
+        job.run(boom("x"))
+    cw.silence("flaky", "1h")
+    job.run(lambda ctx: "ok")
+    assert alerts.types() == ["failed", "recovered"]
+    with pytest.raises(RuntimeError):
+        job.run(boom("y"))
+    assert alerts.types() == ["failed", "recovered"]
 
 
 def test_a_failing_alert_channel_does_not_break_the_run() -> None:
