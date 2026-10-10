@@ -108,6 +108,12 @@ final class Shared
         if ($parts['scheme'] !== 'http' && $parts['scheme'] !== 'https') {
             throw new \InvalidArgumentException("only http and https URLs can be posted to, not {$parts['protocol']}");
         }
+        // WHATWG ends an http(s) URL's host at a backslash, where curl and
+        // parse_url read on to the last @: refused, so no URL means one host
+        // to Node and another here.
+        if (preg_match('#^[A-Za-z][A-Za-z0-9+.-]*://[^/?\#]*\\\\#', $clean) === 1) {
+            throw new \InvalidArgumentException('a URL with a backslash before its path cannot be posted to');
+        }
         return $clean;
     }
 
