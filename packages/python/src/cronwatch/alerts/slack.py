@@ -9,7 +9,7 @@ from .. import _js
 from .._deprecated import names as _deprecated_names
 from ..types import Alert
 from ._http import HTTP
-from ._shared import http_or_default, link_for, positional_url, present, slice16
+from ._shared import http_or_default, link_for, positional_url, present, slice16, webhook_error
 
 __all__ = ["Slack"]
 
@@ -73,7 +73,7 @@ class Slack:
         # Refused, not followed: a webhook URL is its own credential.
         response = self._http.post(self._webhook_url, _js.dumps(payload), {"content-type": "application/json"})
         if not response.ok:
-            raise RuntimeError(f"Slack webhook answered {response.status}: {_js.head16(response.body or '', 200)}")
+            raise webhook_error("Slack", response.status, response.body, self._webhook_url)
 
 
 def _escape(text: str) -> str:

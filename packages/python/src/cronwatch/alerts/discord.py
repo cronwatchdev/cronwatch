@@ -10,7 +10,7 @@ from .. import _js
 from .._deprecated import names as _deprecated_names
 from ..types import Alert
 from ._http import HTTP
-from ._shared import cut, http_or_default, iso, link_for, positional_url, present, slice16
+from ._shared import cut, http_or_default, iso, link_for, positional_url, present, slice16, webhook_error
 
 __all__ = ["Discord"]
 
@@ -75,7 +75,7 @@ class Discord:
         # Refused, not followed: a webhook URL is its own credential.
         response = self._http.post(self._webhook_url, _js.dumps(payload), {"content-type": "application/json"})
         if not response.ok:
-            raise RuntimeError(f"Discord webhook answered {response.status}: {_js.head16(response.body or '', 200)}")
+            raise webhook_error("Discord", response.status, response.body, self._webhook_url)
 
 
 def _embed_description(alert: Alert) -> str:
