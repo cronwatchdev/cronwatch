@@ -88,8 +88,8 @@ type Client struct {
 	order       []string // declared names, in the order first declared
 	definitions map[string]*jobDef
 	synced      map[string]bool
-	syncTurns   map[string]chan struct{} // see syncTurn
-	jobLocks    map[string]*sync.Mutex
+	syncTurns   map[string]*syncTurnOf // see syncTurn
+	jobLocks    map[string]*jobLockOf
 	starting    map[string]*startCall
 
 	readyMu sync.Mutex
@@ -160,8 +160,8 @@ func New(options ...Option) (*Client, error) {
 		now:         func() int64 { return time.Now().UnixMilli() },
 		definitions: map[string]*jobDef{},
 		synced:      map[string]bool{},
-		syncTurns:   map[string]chan struct{}{},
-		jobLocks:    map[string]*sync.Mutex{},
+		syncTurns:   map[string]*syncTurnOf{},
+		jobLocks:    map[string]*jobLockOf{},
 		starting:    map[string]*startCall{},
 		channelBusy: map[int]int{},
 	}
@@ -493,21 +493,38 @@ func (c *Client) storedJobs(ctx context.Context) ([]StoredJob, error) {
 // the writes of one name reach the store one at a time, in the order they
 // were asked for (a channel's senders are taken first come, first served),
 // and one still under way cannot land after a later one. The function
-// returned ends the turn. A context done first gives up the wait.
+// returned ends the turn. A context done first gives up the wait. A
+// name's entry lasts only while someone holds or waits for its turn, so a
+// process that sees many names over its life does not keep one for each.
 func (c *Client) syncTurn(ctx context.Context, name string) (func(), error) {
 	c.mu.Lock()
 	turn, ok := c.syncTurns[name]
 	if !ok {
-		turn = make(chan struct{}, 1)
+		turn = &syncTurnOf{ch: make(chan struct{}, 1)}
 		c.syncTurns[name] = turn
 	}
+	turn.users++
 	c.mu.Unlock()
+	leave := func() {
+		c.mu.Lock()
+		if turn.users--; turn.users == 0 && c.syncTurns[name] == turn {
+			delete(c.syncTurns, name)
+		}
+		c.mu.Unlock()
+	}
 	select {
-	case turn <- struct{}{}:
-		return func() { <-turn }, nil
+	case turn.ch <- struct{}{}:
+		return func() { <-turn.ch; leave() }, nil
 	case <-ctx.Done():
+		leave()
 		return nil, context.Cause(ctx)
 	}
+}
+
+// syncTurnOf is one name's turn, and how many hold or wait for it.
+type syncTurnOf struct {
+	ch    chan struct{}
+	users int
 }
 
 // SyncJob writes the definition declared in this process under name to
@@ -563,18 +580,42 @@ func equalJSON(a, b json.Marshaler) bool {
 	return reflect.DeepEqual(va, vb)
 }
 
-// jobLock is the lock every state update of a job in this process takes in
-// turn (the SDK's serial()). Other processes are coordinated by
-// updateState's conditional writes instead.
-func (c *Client) jobLock(job string) *sync.Mutex {
+// jobLock takes the lock every state update of a job in this process takes
+// in turn (the SDK's serial()), and returns what unlocks it. Other processes
+// are coordinated by updateState's conditional writes instead. A job's
+// entry lasts only while someone holds or waits for its lock, as serial()'s
+// queue does.
+func (c *Client) jobLock(job string) (unlock func()) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	l, ok := c.jobLocks[job]
 	if !ok {
-		l = &sync.Mutex{}
+		l = &jobLockOf{}
 		c.jobLocks[job] = l
 	}
-	return l
+	l.users++
+	c.mu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		c.mu.Lock()
+		if l.users--; l.users == 0 && c.jobLocks[job] == l {
+			delete(c.jobLocks, job)
+		}
+		c.mu.Unlock()
+	}
+}
+
+// jobLockOf is one job's lock, and how many hold or wait for it.
+type jobLockOf struct {
+	mu    sync.Mutex
+	users int
+}
+
+// lockEntries is how many names' locks and turns are kept, for the tests.
+func (c *Client) lockEntries() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.jobLocks) + len(c.syncTurns)
 }
 
 func (c *Client) readState(ctx context.Context, job string) (JobState, error) {
@@ -594,9 +635,7 @@ func (c *Client) readState(ctx context.Context, job string) (JobState, error) {
 // compute: what it returns from the attempt that was written is the result.
 // Nothing is written when the state is unchanged. Returns the state as stored.
 func updateState[T any](ctx context.Context, c *Client, job string, change func(JobState) (JobState, T, error)) (JobState, T, error) {
-	lock := c.jobLock(job)
-	lock.Lock()
-	defer lock.Unlock()
+	defer c.jobLock(job)()
 	var zero T
 	for attempt := 1; ; attempt++ {
 		current, err := c.readState(ctx, job)
