@@ -124,8 +124,24 @@ module Cronwatch
       # the server log.
       @generated = @token.nil? && !@opted_out && Environment.stated_development?
       @token = Web.development_token if @generated
+      Web.warn_short_token(@token) unless @generated
       @announced = false
       @announce_lock = Mutex.new
+    end
+
+    # Under this many characters a token could be guessed one request at a
+    # time, since nothing slows down wrong guesses.
+    SHORT_TOKEN = 32
+    private_constant :SHORT_TOKEN
+
+    # Warns, once per app, when the dashboard's token is short enough to guess.
+    #
+    # @api private
+    def self.warn_short_token(token)
+      return if token.nil? || token.length >= SHORT_TOKEN
+
+      warn "[cronwatch] the dashboard token is #{token.length} characters; use #{SHORT_TOKEN} or more random characters, " \
+           "such as the output of `ruby -rsecurerandom -e 'puts SecureRandom.urlsafe_base64(32)'`"
     end
 
     # A token for one app in development, when none is configured: 32 random

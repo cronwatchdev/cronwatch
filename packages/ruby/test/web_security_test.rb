@@ -329,4 +329,18 @@ class WebSecurityTest < Minitest::Test
     configuration.cron_secret = false
     assert_raises(TypeError) { Cronwatch::Client.new(**configuration.to_options) }
   end
+
+  # Nothing slows down wrong guesses, so a short token is warned about when the app is made.
+  def test_a_short_token_is_warned_about_when_the_app_is_made
+    Thread.current[:cronwatch_warn_short_token] = true
+    cw, = make
+    _, short = capture_io { cw.routes(token: "tok") }
+    assert_match(/\[cronwatch\] the dashboard token is 3 characters; use 32 or more/, short)
+    _, long = capture_io { cw.routes(token: "x" * 32) }
+    assert_empty long
+    _, unset = capture_io { cw.routes(token: nil) }
+    assert_empty unset
+  ensure
+    Thread.current[:cronwatch_warn_short_token] = nil
+  end
 end

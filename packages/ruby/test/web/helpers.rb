@@ -4,6 +4,15 @@ require_relative "../test_helper"
 require "cronwatch/web"
 require "digest"
 
+# The tests' token is "tok": the warning about a short token is kept for the
+# test that checks it, so it does not fill every run's output.
+module QuietShortToken
+  def warn_short_token(token)
+    super if Thread.current[:cronwatch_warn_short_token]
+  end
+end
+Cronwatch::Web.singleton_class.prepend(QuietShortToken)
+
 # Shared by the web tests: requests in the shape of the SDK tests' `new Request(...)`.
 module WebHelpers
   include TestHelpers
