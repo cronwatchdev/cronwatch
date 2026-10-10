@@ -111,4 +111,31 @@ public class DisposeTests
         // Waiting for itself, the check would never end.
         await Support.Eventually("the check ends", () => check.IsCompleted);
     }
+
+    /// <summary>A channel that disposes the client from inside its send, as an app's handler might.</summary>
+    private sealed class DisposingChannel : IChannel
+    {
+        public CronwatchClient? Client;
+
+        public string Name => "disposing";
+
+        public async Task SendAsync(Alert alert, ChannelContext context, CancellationToken cancellationToken)
+        {
+            await Client!.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Dispose_from_a_channel_send_inside_the_check_does_not_wait_for_it()
+    {
+        var channel = new DisposingChannel();
+        var m = Support.Make(channels: [channel], timings: new Timings { CloseWait = TimeSpan.Zero });
+        channel.Client = m.Cw;
+        m.Cw.Job("sync", new JobOptions { Schedule = "every 1h", Grace = "10m" });
+        await m.Cw.CheckAsync();
+        m.Clock.Set(Support.T0 + (70 * 60_000) + 1);
+        // The send runs in a task the check spawned; waiting there for the check would wait for good.
+        Task<CheckResult> check = m.Cw.CheckAsync();
+        await Support.Eventually("the check ends", () => check.IsCompleted);
+    }
 }

@@ -18,8 +18,9 @@ public sealed partial class CronwatchClient
     private TaskCompletionSource<CheckResult>? _checking;
 
     /// <summary>
-    /// Set in the check's own flow, which reaches a source's sync, a channel's send, and the error
-    /// handler, so a dispose called from there does not wait for the check it is part of.
+    /// Set in the check's own flow, which reaches a source's sync, and carried by
+    /// <see cref="Spawn{T}"/> into the work it starts (a channel's send, triage, the error handler
+    /// they report to), so a dispose called from there does not wait for the check it is part of.
     /// </summary>
     private readonly AsyncLocal<bool> _inCheck = new();
 

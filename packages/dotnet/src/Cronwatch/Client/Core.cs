@@ -517,11 +517,14 @@ public sealed partial class CronwatchClient
     /// <summary>
     /// Starts <paramref name="work"/> on the thread pool, outside the caller's execution context, so
     /// an app's <see cref="AsyncLocal{T}"/> values (its log scope, its current run, an activity) do
-    /// not leak into work that outlives the call, and tracks it so disposal can wait for it.
+    /// not leak into work that outlives the call, and tracks it so disposal can wait for it. Work
+    /// spawned from a check (a channel's send, triage) is marked as the check's own, so a dispose
+    /// called from there does not wait for the check it is part of.
     /// </summary>
     internal Task<T> Spawn<T>(Func<Task<T>> work)
     {
-        Task<T> task = WithoutFlow(() => Task.Run(work));
+        Func<Task<T>> start = _inCheck.Value ? () => InCheck(work) : work;
+        Task<T> task = WithoutFlow(() => Task.Run(start));
         _inFlight.TryAdd(task, 0);
         _ = task.ContinueWith(
             static (t, state) =>
@@ -536,6 +539,12 @@ public sealed partial class CronwatchClient
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
         return task;
+    }
+
+    private Task<T> InCheck<T>(Func<Task<T>> work)
+    {
+        _inCheck.Value = true;
+        return work();
     }
 
     /// <summary>Observes a task given up on, so its later failure is not reported as unobserved.</summary>
