@@ -234,13 +234,13 @@ impl ClientBuilder {
         let retention_ms = schedule::parse_duration(&self.retention.to_value(), "retention").map_err(Error::Invalid)?;
         let default_store = self.store.is_none();
         let secret_opt_out = self.cron_secret == Some(None);
-        // A blank secret (empty or only whitespace), given or read, counts as
-        // unset; one given blank does not fall back to the variable.
+        // Trimmed, given or read; a blank one (empty or only whitespace)
+        // counts as unset, and one given blank does not fall back to the
+        // variable.
         let cron_secret = match self.cron_secret {
-            Some(secret) => secret,
+            Some(secret) => secret.and_then(|s| crate::env::secret(&s)),
             None => crate::env::secret_var("CRON_SECRET"),
-        }
-        .filter(|s| !crate::env::is_blank(s));
+        };
         Ok(Client {
             inner: Arc::new(Inner {
                 store: self.store.unwrap_or_else(|| Arc::new(MemoryStore::new())),
@@ -290,6 +290,10 @@ pub(crate) struct Declared {
     pub order: Vec<String>,
     pub definitions: HashMap<String, Arc<JobDef>>,
     pub synced: HashSet<String>,
+    /// Declarations forgotten here (`forget`), kept so that `run` or
+    /// `resume_run` by name declares the job again as it was written, not
+    /// bare.
+    pub forgotten: HashMap<String, Arc<JobDef>>,
     /// Starts with an id still in flight, so two at once in this process
     /// record one run and get one handle.
     pub starting: HashMap<String, StartCall>,
@@ -421,6 +425,7 @@ impl Client {
             declared.order.push(name.to_string());
         }
         declared.definitions.insert(name.to_string(), def.clone());
+        declared.forgotten.remove(name);
         declared.synced.remove(name);
         drop(declared);
         Ok(Job { client: self.clone(), def })
@@ -435,6 +440,20 @@ impl Client {
 
     pub(crate) fn declared(&self, name: &str) -> Option<Arc<JobDef>> {
         lock(&self.inner.declared).definitions.get(name).cloned()
+    }
+
+    /// The declaration of `name`: the standing one, else one forgotten here,
+    /// declared again as it was.
+    pub(crate) fn declared_again(&self, name: &str) -> Option<Arc<JobDef>> {
+        let mut declared = lock(&self.inner.declared);
+        if let Some(def) = declared.definitions.get(name) {
+            return Some(def.clone());
+        }
+        let def = declared.forgotten.remove(name)?;
+        declared.order.push(name.to_string());
+        declared.definitions.insert(name.to_string(), def.clone());
+        declared.synced.remove(name);
+        Some(def)
     }
 
     pub(crate) fn declared_all(&self) -> Vec<Arc<JobDef>> {

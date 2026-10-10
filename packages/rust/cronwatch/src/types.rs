@@ -599,6 +599,12 @@ pub struct JobState {
     /// `None` when none, and in state written before the field existed: it
     /// is never written as `[]`.
     pub under_floor: Option<Vec<String>>,
+    /// The ids of runs started and not yet judged, oldest first: a run
+    /// leaves when its finish is evaluated, and one a check finds finished
+    /// and still here (the process that finished it stopped before writing
+    /// its evaluation) is evaluated by that check. `None` when empty, and in
+    /// state written before the field existed: it is never written as `[]`.
+    pub pending_runs: Option<Vec<String>>,
     /// Goes up by one on every write (see `Store::compare_and_set_state`).
     /// `None` is a state written before versions, which counts as 0.
     pub version: Option<i64>,
@@ -608,7 +614,7 @@ pub struct JobState {
     pub(crate) tail: Vec<(String, Value)>,
 }
 
-const STATE_KEYS: [&str; 9] = [
+const STATE_KEYS: [&str; 10] = [
     "job",
     "open",
     "consecutiveFailures",
@@ -618,6 +624,7 @@ const STATE_KEYS: [&str; 9] = [
     "undelivered",
     "sending",
     "underFloor",
+    "pendingRuns",
 ];
 
 /// An alert in [`JobState::sending`]. Read leniently, as the SDK's
@@ -768,6 +775,9 @@ impl JobState {
         if let Some(list) = self.under_floor.as_ref().filter(|l| !l.is_empty()) {
             o.set("underFloor", list.iter().map(|m| Value::from(m.as_str())).collect::<Vec<_>>());
         }
+        if let Some(list) = self.pending_runs.as_ref().filter(|l| !l.is_empty()) {
+            o.set("pendingRuns", list.iter().map(|id| Value::from(id.as_str())).collect::<Vec<_>>());
+        }
         Value::Object(o)
     }
 
@@ -838,6 +848,11 @@ impl JobState {
             // Only its strings, and absent when it has none.
             let metrics: Vec<String> = list.iter().filter_map(|m| m.as_str().map(str::to_string)).collect();
             s.under_floor = (!metrics.is_empty()).then_some(metrics);
+        }
+        if let Some(Value::Array(list)) = o.get("pendingRuns") {
+            // Only its strings, and absent when it has none.
+            let ids: Vec<String> = list.iter().filter_map(|id| id.as_str().map(str::to_string)).collect();
+            s.pending_runs = (!ids.is_empty()).then_some(ids);
         }
         for (k, v) in o.iter() {
             if STATE_KEYS.contains(&k) {

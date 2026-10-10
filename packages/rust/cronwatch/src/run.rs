@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 
 use crate::client::{Client, JobDef, new_id};
 use crate::error::Error;
-use crate::evaluate::{BASELINE_WINDOW, apply_silence, on_run_finish, on_run_start, timeout_ms};
+use crate::evaluate::{BASELINE_WINDOW, apply_silence, hold_run, on_run_finish, on_run_start, release_run, timeout_ms};
 use crate::handle::RunHandle;
 use crate::js;
 use crate::output::{self, Recorder};
@@ -326,7 +326,7 @@ impl Drop for DropGuard {
                 (None, None) => (false, None),
             };
             let closing = match closing {
-                None if recorded && !closed_on_start => Some(client.close_on_start(&def.name)),
+                None if recorded && !closed_on_start => Some(client.close_on_start(&def.name, &run.id)),
                 closing => closing,
             };
             let failure = "Cancelled: the run's future was dropped before it finished".to_string();
@@ -424,9 +424,12 @@ impl Client {
         T: 'static,
         E: fmt::Display,
     {
-        let def = match (options, self.declared(name)) {
-            (None, Some(def)) => def,
-            (options, _) => self.job(name, options.unwrap_or_default())?.def,
+        let def = match options {
+            None => match self.declared_again(name) {
+                Some(def) => def,
+                None => self.job(name, crate::JobOptions::default())?.def,
+            },
+            Some(options) => self.job(name, options)?.def,
         };
         Ok(self.execute(def, "run".into(), None::<fn(&E) -> bool>, f).await)
     }
@@ -564,7 +567,7 @@ impl Client {
                             if !recorded || client.discard_run(&run).await {
                                 return None;
                             }
-                            let closing = Some(client.close_on_start(&def.name));
+                            let closing = Some(client.close_on_start(&def.name, &run.id));
                             Some(client.finish_executed(&def, run, &rec, None, Some(text), recorded, closing).await)
                         });
                         let run = match task.await {
@@ -589,7 +592,7 @@ impl Client {
             }
         };
         let closing = match closing {
-            None if recorded && !close_on_start => Some(self.close_on_start(&def.name)),
+            None if recorded && !close_on_start => Some(self.close_on_start(&def.name, &run.id)),
             closing => closing,
         };
         let client = self.clone();
@@ -664,12 +667,16 @@ impl Client {
         }
     }
 
-    /// Closes missed and stuck for a run that has started, beside the job.
-    fn close_on_start(&self, name: &str) -> JoinHandle<()> {
+    /// Closes missed and stuck for a run that has started, beside the job,
+    /// and holds the run in `pending_runs` until its finish is evaluated.
+    fn close_on_start(&self, name: &str, run_id: &str) -> JoinHandle<()> {
         let client = self.clone();
         let name = name.to_string();
+        let run_id = run_id.to_string();
         self.inner.handle.spawn(async move {
-            if let Err(err) = client.update_state(&name, async { Ok(()) }, |s, _| Ok((on_run_start(&s), ()))).await {
+            let started =
+                client.update_state(&name, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run_id), ())));
+            if let Err(err) = started.await {
                 client.report(err, &format!("starting {name}"));
             }
         })
@@ -688,7 +695,7 @@ impl Client {
             self.report(err, &format!("recording {name}"));
             return (false, None);
         }
-        (true, close.then(|| self.close_on_start(name)))
+        (true, close.then(|| self.close_on_start(name, &run.id)))
     }
 
     /// The end of a run: its fields set from how it went, judged, written
@@ -838,8 +845,9 @@ impl Client {
     pub(crate) async fn finish_run(&self, def: &Definition, run: &Run, now: i64) -> Vec<Alert> {
         let result = self
             .update_state(&run.job, self.history(run), |previous, history: &Vec<Run>| {
-                let e = on_run_finish(def, run, &previous, history, now).map_err(Error::Other)?;
-                Ok(self.outbox(apply_silence(&previous, e, now), def, now))
+                let before = release_run(&previous, &run.id);
+                let e = on_run_finish(def, run, &before, history, now).map_err(Error::Other)?;
+                Ok(self.outbox(apply_silence(&before, e, now), def, now))
             })
             .await;
         match result {
@@ -941,7 +949,7 @@ impl Client {
         if !evaluate {
             return Ok(Vec::new());
         }
-        self.update_state(&run.job, async { Ok(()) }, |s, _| Ok((on_run_start(&s), ()))).await?;
+        self.update_state(&run.job, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run.id), ()))).await?;
         if run.status == RunStatus::Running {
             return Ok(Vec::new());
         }
@@ -979,7 +987,16 @@ impl Client {
             );
             return Ok(Vec::new());
         }
-        if !evaluate || (late && run.status != RunStatus::Ok) {
+        if !evaluate {
+            // Stored unjudged on purpose: a check must not evaluate it as one
+            // whose evaluation was lost.
+            let released = self.update_state(&run.job, async { Ok(()) }, |s, _| Ok((release_run(&s, &run.id), ())));
+            if let Err(err) = released.await {
+                self.report(err, &format!("recording {}", run.job));
+            }
+            return Ok(Vec::new());
+        }
+        if late && run.status != RunStatus::Ok {
             return Ok(Vec::new());
         }
         Ok(self.finish_run(def, run, self.now()).await)

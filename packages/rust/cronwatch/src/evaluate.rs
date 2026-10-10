@@ -62,6 +62,9 @@ pub(crate) fn normalize_state(state: Option<&JobState>, job: &str) -> JobState {
     if s.under_floor.as_ref().is_some_and(Vec::is_empty) {
         s.under_floor = None;
     }
+    if s.pending_runs.as_ref().is_some_and(Vec::is_empty) {
+        s.pending_runs = None;
+    }
     s
 }
 
@@ -187,6 +190,72 @@ pub(crate) fn record_sent(
         next.last_alert_at = Some(now);
     }
     queue_undelivered(&next, failed)
+}
+
+/// A check's claim on the undelivered queue, written before it sends, so two
+/// processes checking at once never retry the same alert: the queued alerts
+/// that still describe the job move into `sending`, oldest first, each with
+/// its lease ending at `until`, as many as `sending` has room for under
+/// `MAX_UNDELIVERED` (the rest wait for the next check); stale ones
+/// (`stale_alert`) leave the queue. While the job is silenced only
+/// recoveries are claimed. The process whose write lands sends `claimed`.
+/// Returns the state, the claimed alerts, and the stale ones.
+pub(crate) fn claim_undelivered(state: &JobState, now: i64, until: i64) -> (JobState, Vec<Alert>, Vec<Alert>) {
+    let mut next = clone_state(state);
+    let queue = next.undelivered.take().unwrap_or_default();
+    let stale: Vec<bool> = queue.iter().map(|a| stale_alert(a, &next)).collect();
+    let silenced = is_silenced(&next, now);
+    let room = MAX_UNDELIVERED.saturating_sub(next.sending.as_ref().map_or(0, Vec::len));
+    let mut claimed_at = Vec::new();
+    for (i, alert) in queue.iter().enumerate() {
+        if claimed_at.len() < room && !stale[i] && (!silenced || alert.alert_type == AlertType::Recovered) {
+            claimed_at.push(i);
+        }
+    }
+    let stale_alerts: Vec<Alert> = queue.iter().zip(&stale).filter(|(_, s)| **s).map(|(a, _)| a.clone()).collect();
+    if stale_alerts.is_empty() && claimed_at.is_empty() {
+        return (state.clone(), Vec::new(), Vec::new());
+    }
+    let claimed: Vec<Alert> = claimed_at.iter().map(|&i| queue[i].clone()).collect();
+    next.undelivered = Some(
+        queue.into_iter().enumerate().filter(|(i, _)| !stale[*i] && !claimed_at.contains(i)).map(|(_, a)| a).collect(),
+    );
+    if !claimed.is_empty() {
+        let mut sending = next.sending.take().unwrap_or_default();
+        sending.extend(claimed.iter().map(|a| SendingAlert::new(Some(until), Some(a.clone()))));
+        next.sending = Some(sending);
+    }
+    (next, claimed, stale_alerts)
+}
+
+/// Runs held in `pending_runs` per job; past it the oldest go.
+pub(crate) const MAX_PENDING_RUNS: usize = 100;
+
+/// A run just started, held in `pending_runs` until its finish is evaluated
+/// (`release_run`), so a check can evaluate it if the process that finished
+/// it stops before writing the evaluation. Written with `on_run_start`'s
+/// state. Only the newest `MAX_PENDING_RUNS` are kept.
+pub(crate) fn hold_run(state: &JobState, run_id: &str) -> JobState {
+    let mut next = clone_state(state);
+    let mut held: Vec<String> =
+        next.pending_runs.take().unwrap_or_default().into_iter().filter(|id| id != run_id).collect();
+    held.push(run_id.to_string());
+    let excess = held.len().saturating_sub(MAX_PENDING_RUNS);
+    next.pending_runs = Some(held.split_off(excess));
+    next
+}
+
+/// A run taken out of `pending_runs`, as its evaluation is written or once
+/// it is gone from the store.
+pub(crate) fn release_run(state: &JobState, run_id: &str) -> JobState {
+    let held = state.pending_runs.as_deref().unwrap_or_default();
+    if !held.iter().any(|id| id == run_id) {
+        return state.clone();
+    }
+    let mut next = clone_state(state);
+    let left: Vec<String> = held.iter().filter(|id| *id != run_id).cloned().collect();
+    next.pending_runs = (!left.is_empty()).then_some(left);
+    next
 }
 
 fn clone_state(s: &JobState) -> JobState {
@@ -669,12 +738,15 @@ pub(crate) fn is_silenced(state: &JobState, now: i64) -> bool {
 }
 
 /// An evaluation as it is saved and sent: while the job was silenced when it
-/// began, nothing opens and nothing is sent.
+/// began, nothing opens and no new alert is sent, but a recovery is. A
+/// condition can only close during a silence if it opened (and alerted)
+/// before it, so its recovery closes an incident someone was told about.
 pub(crate) fn apply_silence(previous: &JobState, e: Evaluation, now: i64) -> Evaluation {
     if !is_silenced(previous, now) {
         return e;
     }
-    Evaluation { state: mute_opens(previous, &e.state), alerts: Vec::new() }
+    let alerts = e.alerts.into_iter().filter(|a| a.alert_type == AlertType::Recovered).collect();
+    Evaluation { state: mute_opens(previous, &e.state), alerts }
 }
 
 /// Whether an alert waiting to be retried no longer describes the job, so it
