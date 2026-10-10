@@ -31,6 +31,11 @@ final class Stores
         if (preg_match('#^(?:pdo-)?sqlite3?://(.*)$#i', $url, $m) === 1) {
             $path = explode('?', $m[1], 2)[0];
             $path = $path === '/:memory:' || $path === ':memory:' ? ':memory:' : rawurldecode($path);
+            // Doctrine's absolute form, four slashes (sqlite:////srv/app/var/data.db, as
+            // sqlite:///%kernel.project_dir%/... comes out), is the same file as three.
+            if (str_starts_with($path, '//')) {
+                $path = '/' . ltrim($path, '/');
+            }
             if ($path === '') {
                 throw new \InvalidArgumentException('a sqlite:// store URL needs a path: sqlite:///var/lib/app/cronwatch.db');
             }

@@ -106,6 +106,25 @@ final class ConfigTest extends TestCase
             $this->assertSame('/srv/app/var/cronwatch.db', $store->path);
             putenv('DATABASE_URL=sqlite:///srv/app/var/app.db');
             $this->assertSame('/srv/app/var/app.db', ClientFactory::store([], '/srv/app')->path);
+            // Symfony's own default, whose parameter Doctrine puts in from the container.
+            putenv('DATABASE_URL=sqlite:///%kernel.project_dir%/var/data.db');
+            $this->assertSame('/srv/app/var/data.db', ClientFactory::store([], '/srv/app')->path);
+        } finally {
+            putenv($saved === false ? 'DATABASE_URL' : "DATABASE_URL={$saved}");
+        }
+    }
+
+    public function testADatabaseUrlsParametersComeFromTheContainer(): void
+    {
+        $bag = new \Symfony\Component\DependencyInjection\ParameterBag\ParameterBag(['app.db_dir' => '/data', 'kernel.project_dir' => '/elsewhere']);
+        $this->assertSame('sqlite:////data/app.db', ClientFactory::parameters('sqlite:///%app.db_dir%/app.db', '/srv/app', $bag));
+        $this->assertSame('sqlite:////srv/app/x.db', ClientFactory::parameters('sqlite:///%kernel.project_dir%/x.db', '/srv/app', $bag), 'the kernel\'s own directory');
+        $this->assertSame('mysql://u:p%40ss@db/app', ClientFactory::parameters('mysql://u:p%%40ss@db/app', '/srv/app', $bag), '%% is a percent sign');
+        $this->assertSame('mysql://db/%unknown%', ClientFactory::parameters('mysql://db/%unknown%', '/srv/app', $bag), 'a name the container lacks is left');
+        $saved = getenv('DATABASE_URL');
+        try {
+            putenv('DATABASE_URL=sqlite:///%app.db_dir%/app.db');
+            $this->assertSame('/data/app.db', ClientFactory::store([], '/srv/app', $bag)->path);
         } finally {
             putenv($saved === false ? 'DATABASE_URL' : "DATABASE_URL={$saved}");
         }

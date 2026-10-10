@@ -117,6 +117,7 @@ final class CronwatchBundle extends AbstractBundle
                 service('mailer.mailer')->nullOnInvalid(),
                 $channels,
                 $config['store_service'] !== null ? service((string) $config['store_service']) : null,
+                service('parameter_bag')->nullOnInvalid(),
             ])
             ->tag('monolog.logger', ['channel' => 'cronwatch'])
             ->public();
@@ -134,11 +135,14 @@ final class CronwatchBundle extends AbstractBundle
                     is_string($config['app_id']) && trim($config['app_id']) !== '' ? $config['app_id'] : null,
                     service('parameter_bag')->nullOnInvalid(),
                     param('kernel.project_dir'),
-                ]);
+                    service('logger')->nullOnInvalid(),
+                ])
+                ->tag('monolog.logger', ['channel' => 'cronwatch']);
             if ($config['scheduler']['watch']) {
                 $services->set(SchedulerSubscriber::class)
-                    ->args([service_closure(Cronwatch::class), service(ScheduledMessages::class)])
-                    ->tag('kernel.event_subscriber');
+                    ->args([service_closure(Cronwatch::class), service(ScheduledMessages::class), service('logger')->nullOnInvalid()])
+                    ->tag('kernel.event_subscriber')
+                    ->tag('monolog.logger', ['channel' => 'cronwatch']);
             }
         }
         $services->set(CheckMessageHandler::class)
@@ -148,8 +152,9 @@ final class CronwatchBundle extends AbstractBundle
             $services->get(CheckMessageHandler::class)->tag('messenger.message_handler', ['handles' => CheckMessage::class]);
             if ($config['messenger']['watch']) {
                 $services->set(MessengerSubscriber::class)
-                    ->args([service_closure(Cronwatch::class), $scheduler ? service(ScheduledMessages::class) : null])
-                    ->tag('kernel.event_subscriber');
+                    ->args([service_closure(Cronwatch::class), $scheduler ? service(ScheduledMessages::class) : null, service('logger')->nullOnInvalid()])
+                    ->tag('kernel.event_subscriber')
+                    ->tag('monolog.logger', ['channel' => 'cronwatch']);
             }
         }
         if ($scheduler && $messenger && $config['check']['schedule'] !== false) {
