@@ -1,5 +1,8 @@
 # A release tag -> the WordPress plugin (packages/php/wordpress/build.php),
-# in two jobs.
+# in three jobs.
+#
+# "build" builds the zip from the tagged commit with no credentials of any
+# kind, and hands the zip and the directory's assets on as an artifact.
 #
 # "attach" puts the zip on the tag's GitHub release, making the release when
 # it is not there yet. The zip goes up twice: as cronwatch-X.Y.Z.zip, and as
@@ -51,12 +54,15 @@ jobs:
     with:
       tag: ${{ inputs.tag }}
 
-  attach:
+  # The plugin is built here, from the tagged commit, with no credentials at
+  # all: the jobs that hold a token or the SVN password only download what
+  # this job made, and never run the repository's code.
+  build:
     needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -68,11 +74,9 @@ jobs:
           extensions: zip
           coverage: none
           tools: none
-      - name: Build the zip and attach it to the release
+      - name: Build the zip
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "not a release tag: $TAG"; exit 1 ;; esac
           version="${TAG#v}"
@@ -82,10 +86,44 @@ jobs:
           plugin="$(sed -n 's/^ \* Version: *\([^ ]*\)$/\1/p' packages/php/wordpress/cronwatch.php)"
           if [ "$plugin" != "$version" ]; then echo "the plugin is $plugin, the tag is $TAG"; exit 1; fi
           out="$RUNNER_TEMP/wordpress"
-          mkdir -p "$out"
+          mkdir -p "$out/assets"
           php packages/php/wordpress/build.php "$out"
+          if [ ! -f "$out/cronwatch-$version.zip" ]; then echo "build.php did not write cronwatch-$version.zip"; exit 1; fi
+          # The directory's banners, icons, and screenshots go to SVN's assets/.
+          for f in banner-1544x500.png banner-772x250.png icon-128x128.png icon-256x256.png icon.svg screenshot-1.png screenshot-2.png screenshot-3.png screenshot-4.png; do
+            cp "packages/php/wordpress/assets/$f" "$out/assets/$f"
+          done
+          echo "OUT=$out" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wordpress-plugin
+          path: |
+            ${{ env.OUT }}/cronwatch-*.zip
+            ${{ env.OUT }}/assets/
+          if-no-files-found: error
+
+  attach:
+    needs: [ci, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wordpress-plugin
+          path: ${{ runner.temp }}/wordpress
+      - name: Attach the zip to the release
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "not a release tag: $TAG"; exit 1 ;; esac
+          version="${TAG#v}"
+          out="$RUNNER_TEMP/wordpress"
           zip="$out/cronwatch-$version.zip"
-          if [ ! -f "$zip" ]; then echo "build.php did not write $zip"; exit 1; fi
+          if [ ! -f "$zip" ]; then echo "the build job left no cronwatch-$version.zip"; exit 1; fi
           cp "$zip" "$out/cronwatch.zip"
           # A release written by hand first keeps its title and notes. A
           # prerelease (v0.8.0-beta.1) is marked one, and only the highest
@@ -110,7 +148,7 @@ jobs:
           gh release upload "$TAG" "$zip" "$out/cronwatch.zip" --clobber
 
   svn:
-    needs: ci
+    needs: [ci, build]
     if: vars.WPORG_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -118,16 +156,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          ref: ${{ needs.ci.outputs.sha }}
-          persist-credentials: false
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.37.2
-        with:
-          php-version: "8.2"
-          extensions: zip
-          coverage: none
-          tools: none
+          name: wordpress-plugin
+          path: ${{ runner.temp }}/wordpress
       - name: Commit the plugin to wordpress.org's SVN
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -138,23 +170,18 @@ jobs:
           case "$TAG" in v[0-9]*) ;; *) echo "not a release tag: $TAG"; exit 1 ;; esac
           version="${TAG#v}"
           case "$version" in *-*) echo "$TAG is a prerelease; the directory gets stable releases only"; exit 0 ;; esac
-          plugin="$(sed -n 's/^ \* Version: *\([^ ]*\)$/\1/p' packages/php/wordpress/cronwatch.php)"
-          if [ "$plugin" != "$version" ]; then echo "the plugin is $plugin, the tag is $TAG"; exit 1; fi
           if [ -z "$SVN_USERNAME" ] || [ -z "$SVN_PASSWORD" ]; then echo "SVN_USERNAME and SVN_PASSWORD must be set in the wordpress-org environment"; exit 1; fi
           command -v svn >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q subversion; }
           if svn ls "$SVN_URL/tags/$version" >/dev/null 2>&1; then echo "tags/$version is already in SVN"; exit 0; fi
           out="$RUNNER_TEMP/wordpress"
-          mkdir -p "$out"
-          php packages/php/wordpress/build.php "$out"
+          if [ ! -f "$out/cronwatch-$version.zip" ]; then echo "the build job left no cronwatch-$version.zip"; exit 1; fi
           (cd "$out" && unzip -q "cronwatch-$version.zip")
           # Only trunk and assets are checked out: tags/ holds every release.
           co="$RUNNER_TEMP/svn"
           svn co -q --depth immediates "$SVN_URL" "$co"
           svn update -q --set-depth infinity "$co/trunk" "$co/assets"
           rsync -a --delete --exclude .svn "$out/cronwatch/" "$co/trunk/"
-          for f in banner-1544x500.png banner-772x250.png icon-128x128.png icon-256x256.png icon.svg screenshot-1.png screenshot-2.png screenshot-3.png screenshot-4.png; do
-            cp "packages/php/wordpress/assets/$f" "$co/assets/$f"
-          done
+          cp "$out"/assets/* "$co/assets/"
           cd "$co"
           svn add -q --force trunk assets
           # Files the build no longer has are removed from trunk.
@@ -163,5 +190,7 @@ jobs:
           svn propset -q svn:mime-type image/svg+xml assets/icon.svg 2>/dev/null
           svn cp -q trunk "tags/$version"
           svn st
-          svn ci -m "CronWatch $version" --non-interactive --no-auth-cache \
-            --username "$SVN_USERNAME" --password "$SVN_PASSWORD"
+          # The password goes in on standard input, never on the command line,
+          # where any process on the runner could read it.
+          printf '%s' "$SVN_PASSWORD" | svn ci -m "CronWatch $version" --non-interactive --no-auth-cache \
+            --username "$SVN_USERNAME" --password-from-stdin
