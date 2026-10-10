@@ -86,48 +86,69 @@ defmodule Cronwatch.Delivery do
   end
 
   @doc """
-  Sends the alerts no channel accepted last time, once each, oldest first;
-  one that no longer describes the job is dropped instead. Retries across a
-  check share the retry budget of wall-clock time, kept in `spent`.
+  Sends the alerts no channel accepted last time, once each, oldest first.
+  They are claimed first (`Cronwatch.Evaluate.claim_undelivered/3`): moved
+  into `sending` with a lease, in one conditional write, so when several
+  processes check at once only the one whose write lands sends them. One
+  that no longer describes the job is dropped instead. Retries across a
+  check share the retry budget of wall-clock time, kept in `spent`; claimed
+  alerts it has no time left for go back to the queue for the next check.
   Answers `{delivered, spent}`.
   """
   def retry_undelivered(%Config{} = c, name, state, now, spent) do
-    pending = state.undelivered || []
-
-    if pending == [] or Evaluate.silenced?(state, now) or c.deliver == :check do
+    if (state.undelivered || []) == [] or c.deliver == :check do
       {[], spent}
     else
-      dropped = Enum.filter(pending, &Evaluate.stale_alert?(&1, state))
-      for a <- dropped, do: Telemetry.alert(:dropped, meta(c, a, nil))
-
-      {delivered, failed, spent} =
-        pending
-        |> Enum.reject(&(&1 in dropped))
-        |> Enum.reduce_while({[], [], spent}, fn alert, {delivered, failed, spent} ->
-          left = retry_budget() - spent
-
-          if left <= 0 do
-            {:halt, {delivered, failed, spent}}
-          else
-            started = System.monotonic_time(:millisecond)
-
-            # An alert queued by a process that delivers at check time was
-            # never triaged. One that was tried is not tried again.
-            alert =
-              if c.triage && alert.type != "recovered" && not alert.triage_tried,
-                do: add_triage(c, alert, min(triage_timeout(), left)),
-                else: alert
-
-            {delivered, failed} =
-              if deliver(c, alert), do: {delivered ++ [alert], failed}, else: {delivered, failed ++ [alert]}
-
-            {:cont, {delivered, failed, spent + max(0, System.monotonic_time(:millisecond) - started)}}
-          end
-        end)
-
-      record_delivery(c, name, delivered, failed, dropped, now)
-      {delivered, spent}
+      case claim(c, name, now) do
+        [] -> {[], spent}
+        claimed -> retry(c, name, claimed, now, spent)
+      end
     end
+  end
+
+  defp claim(c, name, now) do
+    {_, {claimed, stale}} =
+      Core.update_state!(c, name, fn previous ->
+        until = Core.now(c) + Evaluate.send_lease_ms()
+        {state, claimed, stale} = Evaluate.claim_undelivered(Evaluate.normalize_state(previous, name), now, until)
+        {state, {claimed, stale}}
+      end)
+
+    for a <- stale, do: Telemetry.alert(:dropped, meta(c, a, nil))
+    claimed
+  rescue
+    e ->
+      Core.report(c, e, "claiming undelivered alerts for #{name}")
+      []
+  end
+
+  defp retry(c, name, claimed, now, spent) do
+    {delivered, failed, spent} =
+      Enum.reduce(claimed, {[], [], spent}, fn alert, {delivered, failed, spent} ->
+        left = retry_budget() - spent
+
+        if left <= 0 do
+          # Not tried: back to the queue as it was.
+          {delivered, failed ++ [alert], spent}
+        else
+          started = System.monotonic_time(:millisecond)
+
+          # An alert queued by a process that delivers at check time was
+          # never triaged. One that was tried is not tried again.
+          alert =
+            if c.triage && alert.type != "recovered" && not alert.triage_tried,
+              do: add_triage(c, alert, min(triage_timeout(), left)),
+              else: alert
+
+          {delivered, failed} =
+            if deliver(c, alert), do: {delivered ++ [alert], failed}, else: {delivered, failed ++ [alert]}
+
+          {delivered, failed, spent + max(0, System.monotonic_time(:millisecond) - started)}
+        end
+      end)
+
+    record_delivery(c, name, delivered, failed, [], now)
+    {delivered, spent}
   end
 
   # Marks delivered alerts done, drops stale ones, and keeps failed ones for

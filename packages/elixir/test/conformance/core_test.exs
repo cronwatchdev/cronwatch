@@ -355,10 +355,61 @@ defmodule Cronwatch.Conformance.CoreTest do
         same(acc, "recordSent #{i}", held(got), held(field(c, "result")))
       end)
 
-    counts =
-      for k <- ~w(alertKey normalizeState queueUndelivered holdAlerts releaseSending recordSent), do: length(list(d, k))
+    fails =
+      d
+      |> list("claimUndelivered")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        {s, claimed, stale} = Evaluate.claim_undelivered(state(field(c, "state")), field(c, "now"), field(c, "until"))
+        want = field(c, "result")
 
-    assert counts == [6, 4, 5, 6, 7, 7]
+        got =
+          %Object{
+            pairs: [
+              {"state", JobState.to_value(s)},
+              {"claimed", Enum.map(claimed, &Alert.to_value/1)},
+              {"stale", Enum.map(stale, &Alert.to_value/1)}
+            ]
+          }
+
+        expected =
+          %Object{
+            pairs: [
+              {"state", JobState.to_value(state(field(want, "state")))},
+              {"claimed", Enum.map(alerts(list(want, "claimed")), &Alert.to_value/1)},
+              {"stale", Enum.map(alerts(list(want, "stale")), &Alert.to_value/1)}
+            ]
+          }
+
+        same(acc, "claimUndelivered #{i}", got, expected)
+      end)
+
+    fails =
+      d
+      |> list("holdRun")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        got = JobState.to_value(Evaluate.hold_run(state(field(c, "state")), field(c, "runId")))
+        same(acc, "holdRun #{i}", got, JobState.to_value(state(field(c, "result"))))
+      end)
+
+    fails =
+      d
+      |> list("releaseRun")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        got = JobState.to_value(Evaluate.release_run(state(field(c, "state")), field(c, "runId")))
+        same(acc, "releaseRun #{i}", got, JobState.to_value(state(field(c, "result"))))
+      end)
+
+    assert field(d, "maxPendingRuns") == Evaluate.max_pending_runs()
+
+    counts =
+      for k <-
+            ~w(alertKey normalizeState queueUndelivered holdAlerts releaseSending recordSent claimUndelivered holdRun releaseRun),
+          do: length(list(d, k))
+
+    assert counts == [6, 7, 5, 6, 7, 7, 10, 4, 4]
     check!(fails, "health")
   end
 

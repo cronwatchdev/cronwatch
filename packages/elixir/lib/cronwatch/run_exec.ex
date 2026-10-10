@@ -424,7 +424,7 @@ defmodule Cronwatch.Run.Exec do
           :deferred
 
         true ->
-          start_state(c, job)
+          start_state(c, job, run.id)
       end
 
     {run, recorded, started}
@@ -432,11 +432,11 @@ defmodule Cronwatch.Run.Exec do
 
   # Closes missed and stuck beside the job, in a task of the instance; nil
   # (nothing to wait for) when its task supervisor is restarting.
-  defp start_state(c, job) do
+  defp start_state(c, job, run_id) do
     {:ok, pid} =
       Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(c.name), fn ->
         try do
-          Core.update_state!(c, job.name, fn before -> {Evaluate.on_run_start(before), nil} end)
+          Core.update_state!(c, job.name, fn before -> {Evaluate.start_run(before, run_id), nil} end)
         rescue
           e -> Core.report(c, e, "starting #{job.name}")
         end
@@ -633,7 +633,7 @@ defmodule Cronwatch.Run.Exec do
       run = build.(run)
       Lines.close(lines, info.key)
       # A run not judged does not judge its start either.
-      unless not evaluate and info.started == :deferred, do: wait_for(c, job, info.started)
+      unless not evaluate and info.started == :deferred, do: wait_for(c, job, info.started, info.run.id)
 
       try do
         case Core.record_finish!(c, job, run, info.recorded, finished_at, evaluate) do
@@ -667,17 +667,17 @@ defmodule Cronwatch.Run.Exec do
     end
   end
 
-  defp wait_for(_c, _job, nil), do: :ok
+  defp wait_for(_c, _job, nil, _run_id), do: :ok
 
   # A run that might have been given back closes missed and stuck now that
   # it is known not to be.
-  defp wait_for(c, job, :deferred) do
-    Core.update_state!(c, job.name, fn before -> {Evaluate.on_run_start(before), nil} end)
+  defp wait_for(c, job, :deferred, run_id) do
+    Core.update_state!(c, job.name, fn before -> {Evaluate.start_run(before, run_id), nil} end)
   rescue
     e -> Core.report(c, e, "starting #{job.name}")
   end
 
-  defp wait_for(_c, _job, pid) do
+  defp wait_for(_c, _job, pid, _run_id) do
     ref = Process.monitor(pid)
 
     receive do

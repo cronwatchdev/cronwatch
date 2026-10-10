@@ -36,8 +36,28 @@ defmodule Cronwatch.Runs do
   @doc "Declares a job: stores it, not yet written to the store."
   def declare(instance, job), do: GenServer.call(server(instance), {:declare, job}, :infinity)
 
-  @doc "Forgets a declared job."
+  @doc """
+  Forgets a declared job (`Cronwatch.forget/2`), keeping its declaration so
+  that `declared/2` can declare it again as it was written.
+  """
   def undeclare(instance, name), do: GenServer.call(server(instance), {:undeclare, name}, :infinity)
+
+  @doc """
+  The declared job, else one forgotten here (`undeclare/2`), declared again
+  as it was, else nil: so `Cronwatch.run/3` and `Cronwatch.resume_run/3` by
+  name after a forget declare the job as it was written, not bare.
+  """
+  def declared(instance, name) do
+    case job(instance, name) do
+      nil ->
+        if :ets.member(table(instance, :forgotten), name),
+          do: GenServer.call(server(instance), {:redeclare, name}, :infinity),
+          else: nil
+
+      job ->
+        job
+    end
+  end
 
   @doc "The declared job, or nil."
   def job(instance, name) do
@@ -157,6 +177,7 @@ defmodule Cronwatch.Runs do
     :ets.new(table(instance, :lines), [:ordered_set, :named_table, :public, write_concurrency: true])
     :ets.new(table(instance, :handles), [:set | opts])
     :ets.new(table(instance, :flags), [:set | opts])
+    :ets.new(table(instance, :forgotten), [:set | opts])
     config = Config.get(instance)
     for job <- config.jobs, do: :ets.insert(table(instance, :jobs), {job.name, job, false})
     {:ok, %{instance: instance, runs: %{}, owners: %{}}}
@@ -165,12 +186,38 @@ defmodule Cronwatch.Runs do
   @impl true
   def handle_call({:declare, job}, _from, s) do
     :ets.insert(table(s.instance, :jobs), {job.name, job, false})
+    :ets.delete(table(s.instance, :forgotten), job.name)
     {:reply, :ok, s}
   end
 
   def handle_call({:undeclare, name}, _from, s) do
+    case :ets.lookup(table(s.instance, :jobs), name) do
+      [{_, job, _}] -> :ets.insert(table(s.instance, :forgotten), {name, job})
+      [] -> :ok
+    end
+
     :ets.delete(table(s.instance, :jobs), name)
     {:reply, :ok, s}
+  end
+
+  # A forgotten job declared again as it was, unless it was declared anew
+  # meanwhile: then that declaration.
+  def handle_call({:redeclare, name}, _from, s) do
+    job =
+      case {:ets.lookup(table(s.instance, :jobs), name), :ets.lookup(table(s.instance, :forgotten), name)} do
+        {[{_, job, _}], _} ->
+          job
+
+        {[], [{_, job}]} ->
+          :ets.insert(table(s.instance, :jobs), {name, job, false})
+          job
+
+        {[], []} ->
+          nil
+      end
+
+    :ets.delete(table(s.instance, :forgotten), name)
+    {:reply, job, s}
   end
 
   def handle_call({:synced, job}, _from, s) do

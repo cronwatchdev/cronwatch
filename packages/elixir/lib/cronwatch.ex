@@ -177,8 +177,8 @@ defmodule Cronwatch do
   defp resolve!(name, job_opts, run_opts) when is_binary(name) do
     inst = instance(run_opts)
 
-    case Runs.job(inst, name) do
-      %Job{} = job when job_opts == [] -> job
+    case if(job_opts == [], do: Runs.declared(inst, name)) do
+      %Job{} = job -> job
       _ -> job!(name, [{:instance, inst} | job_opts])
     end
   end
@@ -312,7 +312,7 @@ defmodule Cronwatch do
   @doc "`resume/2` by the job's name, which must be declared in this instance."
   @spec resume_run(String.t(), String.t(), keyword()) :: {:ok, RunHandle.t()} | {:error, Error.t()}
   def resume_run(name, run_id, opts \\ []) do
-    case Runs.job(instance(opts), name) do
+    case Runs.declared(instance(opts), name) do
       nil -> {:error, Error.invalid("resumeRun: job #{Cronwatch.JS.quote(name)} is not declared; call job() first")}
       job -> RunHandle.resume(job, run_id)
     end

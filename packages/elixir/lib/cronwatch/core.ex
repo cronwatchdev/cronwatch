@@ -248,8 +248,14 @@ defmodule Cronwatch.Core do
           {:ignored, why} ->
             why
 
+          {:ok, _late} when not evaluate ->
+            # Stored unjudged on purpose: a check must not evaluate it as one
+            # whose evaluation was lost.
+            release_run(c, run.job, run.id)
+            nil
+
           {:ok, late} ->
-            if evaluate and (not late or run.status == "ok"), do: finish_run(c, job.definition, run, finished_at)
+            if not late or run.status == "ok", do: finish_run(c, job.definition, run, finished_at)
             nil
         end
     end
@@ -270,6 +276,7 @@ defmodule Cronwatch.Core do
         {_, held} =
           update_state!(c, run.job, fn previous ->
             history = Process.get(key) || Process.put(key, history!(c, run)) || Process.get(key)
+            previous = Evaluate.release_run(previous, run.id)
             {:ok, e} = ok_or_raise(Evaluate.on_run_finish(definition, run, previous, history, now))
             {state, drafts} = Evaluate.apply_silence(previous, e, now)
             Delivery.outbox(c, state, drafts, definition, now)
@@ -292,6 +299,14 @@ defmodule Cronwatch.Core do
       :error ->
         []
     end
+  end
+
+  @doc "Takes a run out of the job's pending runs (`Cronwatch.Evaluate.release_run/2`). Never raises."
+  def release_run(c, job, run_id) do
+    update_state!(c, job, fn current -> {Evaluate.release_run(current, run_id), nil} end)
+    :ok
+  rescue
+    e -> report(c, e, "recording #{job}")
   end
 
   defp ok_or_raise({:ok, v}), do: {:ok, v}

@@ -5,7 +5,9 @@ defmodule Cronwatch.Test.Wrap do
   wrapped), `slow_state` (milliseconds each `get_state` waits after reading,
   as over a network, so two processes reading at about the same time both get
   the old state), `refuse_cas` (compare_and_set_state always answers false,
-  as if another process wrote between every read and write) and `init`
+  as if another process wrote between every read and write),
+  `refuse_cas_when` (a function: while it answers true, compare_and_set_state
+  answers false), `init`
   (a function called by `init/1`, answering `:ok` or `{:error, reason}`)
   and `before` (a map of a call's name to a function run before it is
   passed on), and `barrier` (a `Cronwatch.Test.Barrier`: while it is on,
@@ -73,7 +75,12 @@ defmodule Cronwatch.Test.Wrap do
 
   @impl true
   def compare_and_set_state(%{refuse_cas: true}, _s, _v), do: {:ok, false}
-  def compare_and_set_state(h, s, v), do: call(h, :compare_and_set_state, [s, v])
+
+  def compare_and_set_state(h, s, v) do
+    if f = h[:refuse_cas_when],
+      do: if(f.(), do: {:ok, false}, else: call(h, :compare_and_set_state, [s, v])),
+      else: call(h, :compare_and_set_state, [s, v])
+  end
 
   @impl true
   def prune(h, b), do: call(h, :prune, [b])
