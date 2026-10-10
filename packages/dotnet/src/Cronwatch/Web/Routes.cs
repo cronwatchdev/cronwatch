@@ -643,7 +643,7 @@ public sealed class Routes
                     }
                 }
                 string search = rest.Count == 0 ? "" : "?" + string.Join('&', rest);
-                return Redirect(pathname + search, SignInCookie(said, basePath));
+                return Redirect(OnThisSite(pathname) + search, SignInCookie(said, basePath));
             }
         }
 
@@ -745,6 +745,21 @@ public sealed class Routes
             return await ServeApiAsync(req, method, parts.GetRange(1, parts.Count - 1), said, ct).ConfigureAwait(false);
         }
         return Message("Not found", path, basePath, 404);
+    }
+
+    /// <summary>
+    /// A path with its leading slashes made one: a Location of <c>//host/...</c> is
+    /// protocol-relative, off this site, and browsers read a backslash there as a slash, so
+    /// <c>/\host</c> and <c>//\host</c> would leave it too.
+    /// </summary>
+    internal static string OnThisSite(string path)
+    {
+        int start = 0;
+        while (start < path.Length && path[start] is '/' or '\\')
+        {
+            start++;
+        }
+        return start == 0 ? path : "/" + path[start..];
     }
 
     /// <summary>The cookie a sign-in sets, by <c>?token=</c> or by the form.</summary>
