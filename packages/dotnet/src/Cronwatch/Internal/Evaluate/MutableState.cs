@@ -17,6 +17,7 @@ internal sealed class MutableState
     public List<Alert>? Undelivered;
     public List<SendingAlert>? Sending;
     public List<string>? UnderFloor;
+    public List<string>? PendingRuns;
     public long? Version;
     public readonly JsObject Extra;
 
@@ -35,6 +36,7 @@ internal sealed class MutableState
         Undelivered = s.Undelivered == null ? null : [.. s.Undelivered];
         Sending = s.Sending == null ? null : [.. s.Sending];
         UnderFloor = s.UnderFloor == null ? null : [.. s.UnderFloor];
+        PendingRuns = s.PendingRuns == null ? null : [.. s.PendingRuns];
         Version = s.Version;
         Extra = s.Extra;
     }
@@ -61,6 +63,7 @@ internal sealed class MutableState
         // Absent when empty: the key is there only while it holds an alert.
         Sending = Sending is { Count: > 0 } ? ValueList<SendingAlert>.Of(Sending) : null,
         UnderFloor = UnderFloor is { Count: > 0 } ? ValueList<string>.Of(UnderFloor) : null,
+        PendingRuns = PendingRuns is { Count: > 0 } ? ValueList<string>.Of(PendingRuns) : null,
         Version = Version,
         Extra = Extra,
     };

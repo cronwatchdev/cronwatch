@@ -414,7 +414,7 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
         }
         if (recorded)
         {
-            await CloseOnStartAsync(name).ConfigureAwait(false);
+            await CloseOnStartAsync(name, run.Id).ConfigureAwait(false);
         }
         return new RunHandle(this, def, run.Id, run, recorded, null);
     }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace Cronwatch.Internal;
 
@@ -302,6 +303,88 @@ internal static class Evaluate
             next.LastAlertAt = now;
         }
         return QueueUndelivered(next.ToState(), failed);
+    }
+
+    /// <summary>
+    /// A check's claim on the undelivered queue, written before it sends, so two processes checking
+    /// at once never retry the same alert: the queued alerts that still describe the job move into
+    /// <c>sending</c>, oldest first, each with its lease ending at <paramref name="until"/>, as many
+    /// as <c>sending</c> has room for under <see cref="MaxUndelivered"/> (the rest wait for the next
+    /// check); stale ones (<see cref="StaleAlert"/>) leave the queue. While the job is silenced only
+    /// recoveries are claimed. The process whose write lands sends <c>Claimed</c>. The state comes
+    /// back as it was given when nothing is stale or claimed.
+    /// </summary>
+    public static (JobState State, List<Alert> Claimed, List<Alert> Stale) ClaimUndelivered(JobState state, long now, long until)
+    {
+        var next = CloneState(state);
+        var queue = next.Queued();
+        var stale = new List<Alert>();
+        var claimed = new List<Alert>();
+        var left = new List<Alert>();
+        var probe = next.ToState();
+        bool silenced = IsSilenced(probe, now);
+        int room = Math.Max(0, MaxUndelivered - (next.Sending?.Count ?? 0));
+        foreach (var a in queue)
+        {
+            if (StaleAlert(a, probe))
+            {
+                stale.Add(a);
+            }
+            else if ((!silenced || a.Type == AlertType.Recovered) && claimed.Count < room)
+            {
+                claimed.Add(a);
+            }
+            else
+            {
+                left.Add(a);
+            }
+        }
+        if (stale.Count == 0 && claimed.Count == 0)
+        {
+            return (state, claimed, stale);
+        }
+        next.Undelivered = left;
+        if (claimed.Count > 0)
+        {
+            var sending = new List<SendingAlert>(next.Sending ?? []);
+            foreach (var a in claimed)
+            {
+                sending.Add(new SendingAlert { Until = until, Alert = a });
+            }
+            next.Sending = sending;
+        }
+        return (next.ToState(), claimed, stale);
+    }
+
+    /// <summary>Runs held in <c>pendingRuns</c> per job; past it the oldest go.</summary>
+    public const int MaxPendingRuns = 100;
+
+    /// <summary>
+    /// A run just started, held in <c>pendingRuns</c> until its finish is evaluated
+    /// (<see cref="ReleaseRun"/>), so a check can evaluate it if the process that finished it stops
+    /// before writing the evaluation. Written with <see cref="OnRunStart"/>'s state. Only the newest
+    /// <see cref="MaxPendingRuns"/> are kept.
+    /// </summary>
+    public static JobState HoldRun(JobState state, string runId)
+    {
+        var next = CloneState(state);
+        var held = (next.PendingRuns ?? []).FindAll(id => !string.Equals(id, runId, StringComparison.Ordinal));
+        held.Add(runId);
+        next.PendingRuns = Newest(held, MaxPendingRuns).Kept;
+        return next.ToState();
+    }
+
+    /// <summary>A run taken out of <c>pendingRuns</c>, as its evaluation is written or once it is gone from the store.</summary>
+    public static JobState ReleaseRun(JobState state, string runId)
+    {
+        var held = (IReadOnlyList<string>?)state.PendingRuns ?? [];
+        if (!held.Contains(runId, StringComparer.Ordinal))
+        {
+            return state;
+        }
+        var next = CloneState(state);
+        next.PendingRuns = next.PendingRuns!.FindAll(id => !string.Equals(id, runId, StringComparison.Ordinal));
+        return next.ToState();
     }
 
     private static bool OpenCondition(MutableState s, Condition c, long now)
@@ -837,7 +920,9 @@ internal static class Evaluate
 
     /// <summary>
     /// An evaluation as it is saved and sent: while the job was silenced when it began, nothing
-    /// opens and nothing is sent.
+    /// opens and no new alert is sent, but a recovery is. A condition can only close during a
+    /// silence if it opened (and alerted) before it, so its recovery closes an incident someone
+    /// was told about.
     /// </summary>
     public static Evaluation ApplySilence(JobState previous, Evaluation e, long now)
     {
@@ -845,7 +930,7 @@ internal static class Evaluate
         {
             return e;
         }
-        return new Evaluation(MuteOpens(previous, e.State), []);
+        return new Evaluation(MuteOpens(previous, e.State), e.Alerts.Where(a => a.Type == AlertType.Recovered).ToList());
     }
 
     /// <summary>

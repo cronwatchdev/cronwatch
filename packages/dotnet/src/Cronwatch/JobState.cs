@@ -12,7 +12,7 @@ public sealed record JobState
 {
     private static readonly HashSet<string> KnownKeys = new(StringComparer.Ordinal)
     {
-        "job", "open", "consecutiveFailures", "silencedUntil", "lastAlertAt", "pendingRecovery", "undelivered", "sending", "underFloor",
+        "job", "open", "consecutiveFailures", "silencedUntil", "lastAlertAt", "pendingRecovery", "undelivered", "sending", "underFloor", "pendingRuns",
     };
 
     /// <summary>The job's name.</summary>
@@ -53,6 +53,14 @@ public sealed record JobState
     /// state written before the field existed; an empty list is written as no key.
     /// </summary>
     public ValueList<string>? UnderFloor { get; init; }
+
+    /// <summary>
+    /// The ids of runs started and not yet judged, oldest first: a run leaves when its finish is
+    /// evaluated, and one a check finds finished and still here (the process that finished it
+    /// stopped before writing its evaluation) is evaluated by that check. Null when empty, and in
+    /// state written before the field existed; an empty list is written as no key.
+    /// </summary>
+    public ValueList<string>? PendingRuns { get; init; }
 
     /// <summary>
     /// The version as stored when it is a whole number (any other value reads as null); see
@@ -131,6 +139,10 @@ public sealed record JobState
         {
             o.Set("underFloor", new List<object?>(UnderFloor));
         }
+        if (PendingRuns is { Count: > 0 })
+        {
+            o.Set("pendingRuns", new List<object?>(PendingRuns));
+        }
         bool wroteVersion = false;
         foreach (var e in _extra)
         {
@@ -162,7 +174,7 @@ public sealed record JobState
     /// <summary>
     /// A state read from a JSON value, leniently, as the SDK's <c>normalizeState</c> reads a stored
     /// state: an <c>open</c> entry whose time is not a number is left out, as is a
-    /// <c>pendingRecovery</c> or <c>underFloor</c> entry that is not a string and an <c>undelivered</c> entry that is
+    /// <c>pendingRecovery</c>, <c>underFloor</c>, or <c>pendingRuns</c> entry that is not a string and an <c>undelivered</c> entry that is
     /// not an object; <c>silencedUntil</c> and <c>lastAlertAt</c> that are not numbers read as
     /// null. A value that is not an object is no state at all, which
     /// <c>Evaluate.NormalizeState</c> reads as a fresh one.
@@ -234,6 +246,17 @@ public sealed record JobState
                 }
             }
         }
+        List<string>? pendingRuns = null;
+        if (o.Get("pendingRuns") is List<object?> rl)
+        {
+            foreach (var id in rl)
+            {
+                if (id is string s)
+                {
+                    (pendingRuns ??= []).Add(s);
+                }
+            }
+        }
         long? version = null;
         var extra = new JsObject();
         foreach (var e in o)
@@ -261,6 +284,7 @@ public sealed record JobState
             Undelivered = undelivered == null ? null : ValueList<Alert>.Of(undelivered),
             Sending = sending == null ? null : ValueList<SendingAlert>.Of(sending),
             UnderFloor = underFloor == null ? null : ValueList<string>.Of(underFloor),
+            PendingRuns = pendingRuns == null ? null : ValueList<string>.Of(pendingRuns),
             Version = version,
             Extra = extra,
         };

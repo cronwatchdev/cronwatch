@@ -224,7 +224,7 @@ public sealed partial class CronwatchClient
         }
         // Closing missed and stuck happens beside the job, which never waits on it. A run that may
         // be given back closes them only once it is known not to be.
-        Task? closing = recorded && !options.TakesBack ? Spawn(() => CloseOnStartAsync(def.Name)) : null;
+        Task? closing = recorded && !options.TakesBack ? Spawn(() => CloseOnStartAsync(def.Name, run.Id)) : null;
 
         double timeout = TimeoutOrDefault(def.Stored);
         double delay = Math.Min(Math.Max(0, timeout), Evaluate.MaxDurationMs);
@@ -270,7 +270,7 @@ public sealed partial class CronwatchClient
         Task? closing = o.Closing;
         if (o.Recorded && o.Options.TakesBack)
         {
-            closing = Spawn(() => CloseOnStartAsync(def.Name));
+            closing = Spawn(() => CloseOnStartAsync(def.Name, run.Id));
         }
         string? failure;
         string? resultText = null;
@@ -393,11 +393,15 @@ public sealed partial class CronwatchClient
         }
     }
 
-    internal async Task CloseOnStartAsync(string name)
+    /// <summary>
+    /// A run's start as the job's state takes it: missed and stuck close, and the run is held in
+    /// <c>pendingRuns</c> (<see cref="Evaluate.HoldRun"/>) until its finish is evaluated.
+    /// </summary>
+    internal async Task CloseOnStartAsync(string name, string runId)
     {
         try
         {
-            await UpdateStateAsync(name, s => (Evaluate.OnRunStart(s), true)).ConfigureAwait(false);
+            await UpdateStateAsync(name, s => (Evaluate.HoldRun(Evaluate.OnRunStart(s), runId), true)).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -589,7 +593,11 @@ public sealed partial class CronwatchClient
                 run.Job,
                 () => HistoryAsync(run),
                 (previous, history) =>
-                    Outbox(Evaluate.ApplySilence(previous, Evaluate.OnRunFinish(def, run, previous, history, now), now), def, now)).ConfigureAwait(false);
+                {
+                    // The run's evaluation is written here, so it leaves pendingRuns in the same write.
+                    JobState before = Evaluate.ReleaseRun(previous, run.Id);
+                    return Outbox(Evaluate.ApplySilence(before, Evaluate.OnRunFinish(def, run, before, history, now), now), def, now);
+                }).ConfigureAwait(false);
             held = result.Result;
         }
         catch (Exception e)
@@ -705,7 +713,7 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        await UpdateStateAsync(run.Job, s => (Evaluate.OnRunStart(s), true)).ConfigureAwait(false);
+        await UpdateStateAsync(run.Job, s => (Evaluate.HoldRun(Evaluate.OnRunStart(s), run.Id), true)).ConfigureAwait(false);
         if (run.Status == RunStatus.Running)
         {
             return [];
@@ -732,7 +740,20 @@ public sealed partial class CronwatchClient
             Report("run " + run.Id + " of " + run.Job + " " + ignored + "; ignored", where);
             return [];
         }
-        if (!evaluate || (late && run.Status != RunStatus.Ok))
+        if (!evaluate)
+        {
+            // Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
+            try
+            {
+                await UpdateStateAsync(run.Job, s => (Evaluate.ReleaseRun(s, run.Id), true)).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                Report(e, where);
+            }
+            return [];
+        }
+        if (late && run.Status != RunStatus.Ok)
         {
             return [];
         }

@@ -241,8 +241,9 @@ public class OutboxTests
         JobState state = (await shared.GetStateAsync("backup"))!;
         Assert.Equal([AlertType.Failed], state.Undelivered!.Select(a => a.Type));
         Assert.Null(state.Sending);
-        // One write: the failure and its alert together.
-        Assert.Equal(1, counting.StateWrites);
+        Assert.Null(state.PendingRuns);
+        // The start holds the run; then one write: the failure, its alert, and the run's release together.
+        Assert.Equal(2, counting.StateWrites);
     }
 
     [Fact]
@@ -261,5 +262,121 @@ public class OutboxTests
         Assert.Equal(0, dropped);
         // An empty list is no key at all.
         Assert.Null(JobState.FromJson("{\"job\":\"j\",\"sending\":[]}").Sending);
+    }
+
+    /// <summary>A channel that fails while <see cref="Down"/> and keeps what it sends otherwise.</summary>
+    private sealed class Flaky : IChannel
+    {
+        public volatile bool Down = true;
+
+        public ConcurrentQueue<Alert> Sent { get; } = new();
+
+        public string Name => "flaky";
+
+        public Task SendAsync(Alert alert, ChannelContext context, CancellationToken cancellationToken)
+        {
+            if (Down)
+            {
+                throw new InvalidOperationException("down");
+            }
+            Sent.Enqueue(alert);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static CronwatchClient Client(IStore store, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, IChannel channel) =>
+        new(new CronwatchOptions
+        {
+            Store = store,
+            Clock = clock,
+            Alerts = [channel],
+            CronSecret = CronSecret.None,
+            OnError = (_, _) => { },
+            OnWarning = _ => { },
+            ProcessExitHook = false,
+        });
+
+    [Fact]
+    public async Task Two_processes_checking_at_once_retry_a_queued_alert_once()
+    {
+        var clock = Clock();
+        var shared = new MemoryStore();
+        var channel = new Flaky();
+        await using var a = Client(shared, clock, channel);
+        await using var b = Client(shared, clock, channel);
+        await Quietly(() => a.RunAsync("nightly", (j, ct) => throw new InvalidOperationException("disk full")));
+        Assert.Equal([AlertType.Failed], (await shared.GetStateAsync("nightly"))!.Undelivered!.Select(x => x.Type));
+        channel.Down = false;
+        clock.Advance(TimeSpan.FromMinutes(1));
+        // The one whose claim lands sends it.
+        await Task.WhenAll(a.CheckAsync(), b.CheckAsync());
+        Assert.Equal([AlertType.Failed], channel.Sent.Select(x => x.Type));
+        JobState state = (await shared.GetStateAsync("nightly"))!;
+        Assert.Empty(state.Undelivered!);
+        Assert.Null(state.Sending);
+    }
+
+    [Fact]
+    public async Task While_a_job_is_silenced_a_retry_claims_only_recoveries()
+    {
+        var clock = Clock();
+        var shared = new MemoryStore();
+        var channel = new Flaky();
+        await using var cw = Client(shared, clock, channel);
+        await Quietly(() => cw.RunAsync("nightly", (j, ct) => throw new InvalidOperationException("disk full")));
+        await cw.SilenceAsync("nightly", "1h");
+        channel.Down = false;
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await cw.CheckAsync();
+        Assert.Empty(channel.Sent);
+        Assert.Equal([AlertType.Failed], (await shared.GetStateAsync("nightly"))!.Undelivered!.Select(x => x.Type));
+        await cw.UnsilenceAsync("nightly");
+        await cw.CheckAsync();
+        Assert.Equal([AlertType.Failed], channel.Sent.Select(x => x.Type));
+    }
+
+    [Fact]
+    public async Task A_finished_run_whose_evaluation_was_never_written_is_evaluated_by_a_later_check_once()
+    {
+        // The finish's state write keeps losing, as if the process stopped between the run's write
+        // and its evaluation.
+        var contested = new Wrapped();
+        await using var m = Make(store: contested);
+        RunHandle handle = await m.Cw.Job("nightly").StartAsync();
+        contested.CasMode = Cas.Refused;
+        await handle.FailAsync(new InvalidOperationException("disk full"));
+        contested.CasMode = Cas.Normal;
+        Assert.Equal(RunStatus.Failed, (await contested.Inner.GetRunAsync(handle.Id))!.Status);
+        Assert.Empty(m.Alerts.Types());
+        Assert.Equal([handle.Id], (await contested.Inner.GetStateAsync("nightly"))!.PendingRuns!);
+        // Left alone at first, in case its finish is still being written elsewhere.
+        m.Clock.Advance(TimeSpan.FromMinutes(1));
+        await m.Cw.CheckAsync();
+        Assert.Empty(m.Alerts.Types());
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs));
+        await m.Cw.CheckAsync();
+        Assert.Equal(["failed"], m.Alerts.Types());
+        Assert.Null((await contested.Inner.GetStateAsync("nightly"))!.PendingRuns);
+        await m.Cw.CheckAsync();
+        Assert.Equal(["failed"], m.Alerts.Types());
+    }
+
+    [Fact]
+    public async Task A_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged_is_not_evaluated()
+    {
+        await using var m = Make();
+        m.Cw.Job("nightly");
+        await m.Store.SetStateAsync(JobState.Initial("nightly") with { PendingRuns = ValueList<string>.Of(["gone"]) });
+        await m.Cw.CheckAsync();
+        Assert.Null((await m.Store.GetStateAsync("nightly"))!.PendingRuns);
+        long now = m.Clock.Ms();
+        var run = new Run { Id = "imported", Job = "nightly", Status = RunStatus.Running, StartedAt = now, Trigger = "x" };
+        await m.Cw.RecordRunAsync(run);
+        Assert.Equal(["imported"], (await m.Store.GetStateAsync("nightly"))!.PendingRuns!);
+        await m.Cw.RecordRunAsync(run with { Status = RunStatus.Failed, FinishedAt = now, DurationMs = 0, Error = "x" }, evaluate: false);
+        Assert.Null((await m.Store.GetStateAsync("nightly"))!.PendingRuns);
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs + 60_000));
+        await m.Cw.CheckAsync();
+        Assert.Empty(m.Alerts.Types());
     }
 }

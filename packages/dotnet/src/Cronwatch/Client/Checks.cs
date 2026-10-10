@@ -237,7 +237,53 @@ public sealed partial class CronwatchClient
         ReportDropped(job.Name, held.Dropped);
         alerts.AddRange(await RetryUndeliveredAsync(job.Name, state, now, budget).ConfigureAwait(false));
         alerts.AddRange(await DispatchAsync(job.Name, held.Alerts, now).ConfigureAwait(false));
+        alerts.AddRange(await EvaluatePendingAsync(job, recent, state, now).ConfigureAwait(false));
         return Evaluated(() => Evaluate.Summarize(job, recent, state, nextExpectedAt, now));
+    }
+
+    /// <summary>
+    /// Runs the job's state still holds as pending (<see cref="Evaluate.HoldRun"/>) whose finish
+    /// was written but never evaluated: the process that finished them stopped, or its state write
+    /// failed, between the two writes. Each one finished more than
+    /// <see cref="Evaluate.SendLeaseMs"/> ago is evaluated now, as its finish would have been; one
+    /// still running is left to the stuck check, and one the store no longer has (given back, or
+    /// pruned) is let go. The wait leaves a finish under way in another process to write its own
+    /// evaluation.
+    /// </summary>
+    private async Task<IReadOnlyList<Alert>> EvaluatePendingAsync(StoredJob job, IReadOnlyList<Run> recent, JobState state, long now)
+    {
+        var alerts = new List<Alert>();
+        foreach (string id in (IReadOnlyList<string>?)state.PendingRuns ?? [])
+        {
+            try
+            {
+                Run? run = null;
+                foreach (var r in recent)
+                {
+                    if (r.Id == id)
+                    {
+                        run = r;
+                        break;
+                    }
+                }
+                run ??= await CallAsync(() => _store.GetRunAsync(id)).ConfigureAwait(false);
+                if (run == null || run.Job != job.Name)
+                {
+                    await UpdateStateAsync(job.Name, s => (Evaluate.ReleaseRun(s, id), true)).ConfigureAwait(false);
+                    continue;
+                }
+                if (run.Status == RunStatus.Running || run.FinishedAt is not long finishedAt || finishedAt > now - Evaluate.SendLeaseMs)
+                {
+                    continue;
+                }
+                alerts.AddRange(await FinishRunAsync(job.Definition, run, now).ConfigureAwait(false));
+            }
+            catch (Exception e)
+            {
+                Report(e, "evaluating run " + id + " of " + job.Name);
+            }
+        }
+        return alerts;
     }
 
     private async Task<JobWithRuns> SnapshotAsync(StoredJob job, long now, int limit)
