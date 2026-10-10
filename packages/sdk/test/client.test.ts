@@ -276,6 +276,26 @@ test("forget removes the job and its runs", async () => {
   assert.equal(await cw.jobSummary("gone"), null);
 });
 
+test("after a forget, cw.run() and cw.resumeRun() by name declare the job again as it was written, not bare", async () => {
+  const { cw, c, alerts } = make();
+  cw.job("nightly", { schedule: "0 2 * * *", description: "Nightly export" });
+  await cw.run("nightly", async () => {});
+  const handle = await cw.job("nightly", { schedule: "0 2 * * *", description: "Nightly export" }).start();
+  await cw.forget("nightly");
+  assert.equal(await cw.jobSummary("nightly"), null);
+  await cw.run("nightly", async () => {});
+  const summary = (await cw.jobSummary("nightly"))!;
+  assert.equal(summary.definition.schedule, "0 2 * * *");
+  assert.equal(summary.definition.description, "Nightly export");
+  await cw.forget("nightly");
+  const resumed = await cw.resumeRun("nightly", handle.id);
+  assert.equal(resumed.id, handle.id);
+  c.advance(HOUR);
+  await cw.check();
+  assert.equal((await cw.jobSummary("nightly"))!.definition.schedule, "0 2 * * *");
+  assert.ok(!alerts.types().includes("recovered"), "no 'no longer scheduled' recovery");
+});
+
 test("a failing alert channel does not break the run", async () => {
   const errors: string[] = [];
   const { cw } = make({ alerts: [{ name: "broken", send: async () => { throw new Error("no network"); } }], onError: (_e, where) => errors.push(where) });
