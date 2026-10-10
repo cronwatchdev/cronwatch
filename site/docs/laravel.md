@@ -246,4 +246,4 @@ In tests, keep runs in memory, or turn CronWatch off:
 <env name="CRONWATCH_ENABLED" value="false"/>
 ```
 
-`CRONWATCH_ENABLED=false` watches nothing, schedules no check, and mounts no dashboard; `app(Cronwatch::class)` still works, so code that runs jobs by hand runs the same. The `testing` environment counts as development, so the in-memory store does not warn. With the memory store, a test can run the schedule with `$this->artisan('schedule:run')` and assert on `app(Cronwatch::class)->runs('prune-orders')`.
+`CRONWATCH_ENABLED=false` watches nothing, schedules no check, and mounts no dashboard; `app(Cronwatch::class)` still works, so code that runs jobs by hand runs the same. The `testing` environment is not production, so the in-memory store does not warn. With the memory store, a test can run the schedule with `$this->artisan('schedule:run')` and assert on `app(Cronwatch::class)->runs('prune-orders')`.

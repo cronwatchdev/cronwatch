@@ -9577,7 +9577,7 @@
       ]
     },
     {
-      "name": "silence swallows alerts and opens nothing, closes still close, and alerts return after",
+      "name": "silence swallows new alerts and opens nothing, a close still sends its recovery, and alerts return after",
       "definition": {
         "name": "flaky",
         "schedule": "every 1h"

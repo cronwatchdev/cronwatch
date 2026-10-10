@@ -114,7 +114,7 @@ export const GET = nightlyReport.handler(async (job, request) => {
 
 The handler checks `Authorization: Bearer <CRON_SECRET>` (from `process.env.CRON_SECRET`) before running, answers 200 with the run id on success and 500 with the first line of the error on failure, and records the run either way. Return a `Response` yourself if you need to; a 4xx or 5xx counts as a failure.
 
-Set `CRON_SECRET`. Without one (an empty value counts as unset) the handler fails closed: it answers 503 and runs nothing, except [in development](/docs/dashboard/#development) (`NODE_ENV` of `development` or `test`, unless `CRONWATCH_ENV` or `APP_ENV` says otherwise). To accept unauthenticated requests on purpose, pass `{ secret: null }` as the handler's second argument, or `cronSecret: null` to `cronwatch()`; those responses leave out the error text.
+Set `CRON_SECRET`. Without one (an empty value counts as unset) the handler fails closed: it answers 503 and runs nothing, except [in development](/docs/dashboard/#development) (`NODE_ENV=development`, unless `CRONWATCH_ENV` or `APP_ENV` says otherwise; a test run is not development). To accept unauthenticated requests on purpose, pass `{ secret: null }` as the handler's second argument, or `cronSecret: null` to `cronwatch()`; those responses leave out the error text.
 
 For anything else, wrap a function:
 
