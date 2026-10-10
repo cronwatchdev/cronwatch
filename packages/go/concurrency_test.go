@@ -159,9 +159,10 @@ func TestConcurrentChecksShareOneCheck(t *testing.T) {
 	close(gate)
 	wg.Wait()
 	eq(t, "one check ran", store.count("RunningRuns")-before, 1)
+	// Each caller has its own copy of the one check's result.
 	for i := 1; i < 4; i++ {
-		if results[i] != results[0] {
-			t.Errorf("caller %d got a result of its own", i)
+		if results[i] == results[0] || jsonOf(results[i]) != jsonOf(results[0]) {
+			t.Errorf("caller %d got a copy of the shared check's result", i)
 		}
 	}
 	// And a later call runs a check of its own.

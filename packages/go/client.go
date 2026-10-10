@@ -660,4 +660,17 @@ func clampLimit(limit, min int) int {
 // running to be reported stuck.
 func storeCtx(ctx context.Context) context.Context { return context.WithoutCancel(ctx) }
 
+// storeTimeout bounds one step of recording a run (its start, a flush, its
+// finish with the alerts that follow): long enough for any store and the
+// channels' and triage's own timeouts, short enough that a store call that
+// never answers (a connection half open) cannot hold the caller for good.
+var storeTimeout = 2 * time.Minute
+
+// boundedStoreCtx is storeCtx with storeTimeout of its own: the caller's
+// cancellation still does not reach the store, but a store that never
+// answers does not hold the run forever.
+func boundedStoreCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(storeCtx(ctx), storeTimeout)
+}
+
 func isTimezone(name string) bool { return schedule.IsTimezone(name) }

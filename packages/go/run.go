@@ -219,7 +219,8 @@ func recorderMetrics(rec *output.Recorder) Metrics {
 // errors take the run back rather than finish it (DiscardWhen).
 func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Context, *JobContext) (any, error), trigger string, discard func(error) bool) executed {
 	name := def.name
-	sctx := storeCtx(ctx)
+	sctx, cancelStart := boundedStoreCtx(ctx)
+	defer cancelStart()
 	startedAt := c.now()
 	run := Run{ID: newID(), Job: name, Status: StatusRunning, StartedAt: startedAt, Metrics: Metrics{}, Trigger: trigger}
 	recorded := false
@@ -237,7 +238,7 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	// have missed closed by each attempt given back and opened again by the
 	// next check, an alert each time.
 	var started sync.WaitGroup
-	closeOnStart := func() {
+	closeOnStart := func(sctx context.Context) {
 		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) { return onRunStart(s), struct{}{}, nil }); err != nil {
 			c.report(err, "starting "+name)
 		}
@@ -253,7 +254,7 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 					c.report(fmt.Errorf("panicked: %v", p), "starting "+name)
 				}
 			}()
-			closeOnStart()
+			closeOnStart(sctx)
 		}()
 	}
 
@@ -274,16 +275,19 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 		out.result, out.err = fn(jobCtx, jc)
 	}()
 	cancel()
+	// The finish has a deadline of its own, from when the job returned.
+	fctx, cancelFinish := boundedStoreCtx(ctx)
+	defer cancelFinish()
 
 	if discard != nil && !out.panicked && out.err != nil && c.givenBack(name, discard, out.err) {
-		if !recorded || c.discardRun(sctx, run) {
+		if !recorded || c.discardRun(fctx, run) {
 			out.discarded = true
 			out.run = run
 			return out
 		}
 	}
 	if recorded && discard != nil {
-		closeOnStart()
+		closeOnStart(fctx)
 	}
 
 	finishedAt := c.now()
@@ -310,7 +314,7 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	out.run = run
 
 	started.Wait()
-	ignored, err := c.recordFinish(sctx, def, &run, recorded, finishedAt)
+	ignored, err := c.recordFinish(fctx, def, &run, recorded, finishedAt)
 	if err != nil {
 		c.report(err, "recording "+name)
 	} else if ignored != "" {

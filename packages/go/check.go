@@ -11,6 +11,11 @@ import (
 	"cronwatch.dev/go/internal/schedule"
 )
 
+// checkTimeout bounds the check callers share: a store call that never
+// answers (a connection half open) fails the check at this deadline rather
+// than holding it, every later Check that joins it, and Close for good.
+var checkTimeout = 10 * time.Minute
+
 // checkCall is a check in flight, which concurrent callers share.
 type checkCall struct {
 	done   chan struct{}
@@ -29,18 +34,29 @@ type checkCall struct {
 // (its values still reach the store), so a caller that gives up (a request
 // that ended) neither fails the check for the others nor leaves a job half
 // checked; each caller stops waiting when its own ctx ends, with its cause.
+// The shared check has a deadline of its own, ten minutes, so a store that
+// never answers fails it rather than holding it for good.
 func (c *Client) Check(ctx context.Context) (*CheckResult, error) {
 	c.checkMu.Lock()
 	call := c.checking
 	if call == nil {
 		call = &checkCall{done: make(chan struct{})}
 		c.checking = call
-		go c.runShared(context.WithoutCancel(ctx), call)
+		shared, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
+		go func() {
+			defer cancel()
+			c.runShared(shared, call)
+		}()
 	}
 	c.checkMu.Unlock()
 	select {
 	case <-call.done:
-		return call.result, call.err
+		// Each caller gets a copy of its own, so one that changes what it was
+		// given (sorts the jobs, say) never races another.
+		if call.result == nil {
+			return nil, call.err
+		}
+		return call.result.clone(), call.err
 	case <-ctx.Done():
 		return nil, context.Cause(ctx)
 	}
@@ -472,15 +488,30 @@ func (c *Client) stopTicking() chan struct{} {
 // the store, so that check neither writes after the store is closed nor
 // loses the alerts it would queue. Call it from outside a check (not from a
 // channel or a source), since it waits for the check to end.
+//
+// The wait is bounded: a check still under way after its own deadline (a
+// store that ignores its context) is left to fail as the store closes.
 func (c *Client) Close() error {
+	limit := time.NewTimer(checkTimeout + closeGrace)
+	defer limit.Stop()
 	if ticking := c.stopTicking(); ticking != nil {
-		<-ticking
+		select {
+		case <-ticking:
+		case <-limit.C:
+			return c.store.Close()
+		}
 	}
 	c.checkMu.Lock()
 	call := c.checking
 	c.checkMu.Unlock()
 	if call != nil {
-		<-call.done
+		select {
+		case <-call.done:
+		case <-limit.C:
+		}
 	}
 	return c.store.Close()
 }
+
+// closeGrace is how long past the check's own deadline Close waits for it.
+var closeGrace = 30 * time.Second
