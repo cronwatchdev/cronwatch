@@ -356,6 +356,37 @@ class BridgeTest {
   }
 
   @Test
+  void underAGenericAppNameUnscheduleTakesOnlyJobsThisProcessDeclared() throws Exception {
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        System.getenv("CRONWATCH_APP_ID") == null, "CRONWATCH_APP_ID names the app");
+    assertTrue(SchedulerBridge.genericAppName("app"));
+    assertTrue(SchedulerBridge.genericAppName("JarLauncher"));
+    assertFalse(SchedulerBridge.genericAppName("billing"));
+    MemoryStore store = new MemoryStore();
+    try (Cronwatch other = client(store)) {
+      // Another service, also run as app.jar, sharing the store.
+      other.job("reindex", JobOptions.builder().schedule("0 1 * * *").tags("quartz", "quartz:app"));
+      other.check();
+    }
+    List<String> errors = new CopyOnWriteArrayList<>();
+    try (Cronwatch cw = client(store, errors)) {
+      Watch w = new Watch(cw, "quartz", "app", "Quartz");
+      w.declare(List.of(entry("invoices", "a", "0 2 * * *"), entry("dunning", "b", "0 3 * * *")));
+      assertTrue(w.settle(Duration.ofSeconds(10)));
+      w.declare(List.of(entry("invoices", "a", "0 2 * * *")));
+      assertTrue(w.settle(Duration.ofSeconds(10)));
+      assertFalse(
+          stored(store, "dunning").contains("\"schedule\""), "its own entry gone, unscheduled");
+      assertEquals(List.of(), w.unschedule());
+      assertTrue(stored(store, "reindex").contains("\"schedule\":\"0 1 * * *\""), "the other's");
+      assertEquals(1, errors.size(), String.join("\n", errors));
+      assertTrue(errors.get(0).contains("reindex") && errors.get(0).contains("CRONWATCH_APP_ID"));
+      w.unschedule();
+      assertEquals(1, errors.size(), "reported once");
+    }
+  }
+
+  @Test
   void aFallbackKeepsTheStoredDefinition() throws Exception {
     MemoryStore store = new MemoryStore();
     String before;

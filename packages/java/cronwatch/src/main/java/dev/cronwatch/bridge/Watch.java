@@ -39,6 +39,15 @@ public final class Watch {
   private final Cronwatch cw;
   private final String tag;
   private final String appTag;
+  private final String appName;
+
+  /**
+   * Whether the app's name is one many apps would get alike ({@link
+   * SchedulerBridge#genericAppName}): {@link #unschedule} then takes the schedule only from jobs
+   * this process declared itself, never from another app's under the same tag.
+   */
+  private final boolean genericApp;
+
   private final String scheduler;
 
   /**
@@ -102,6 +111,8 @@ public final class Watch {
     this.tag = Objects.requireNonNull(tag, "tag");
     String name = app == null || app.isEmpty() ? SchedulerBridge.appName() : app;
     this.appTag = SchedulerBridge.appTag(tag, name);
+    this.appName = name;
+    this.genericApp = SchedulerBridge.genericAppName(name);
     this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
   }
 
@@ -549,8 +560,10 @@ public final class Watch {
    * and a missed alert already open closes. Call it just before a check. It first writes back this
    * process's own declarations wherever the store holds something else (an older release still up
    * during a deploy may have taken the schedule out of a job it does not run). A process that never
-   * declared an entry of its scheduler leaves every job alone. Everything is written before it
-   * returns. Returns the names declared again.
+   * declared an entry of its scheduler leaves every job alone, and under a name many apps get alike
+   * ({@link SchedulerBridge#genericAppName}) it takes the schedule only from jobs it declared
+   * itself, reporting the others once. Everything is written before it returns. Returns the names
+   * declared again.
    *
    * @throws CronwatchException naming every write or read that failed, after doing the rest
    */
@@ -594,6 +607,8 @@ public final class Watch {
     // In turn with declare and fallback, and with what is declared read again: a job declared
     // since the first read (a scheduler entry added while the store was read) keeps its schedule.
     List<String> names = new ArrayList<>();
+    Set<String> declaredHere = new HashSet<>(mine);
+    List<String> leftAlone = new ArrayList<>();
     declaring.lock();
     try {
       Set<String> now = defined();
@@ -604,6 +619,11 @@ public final class Watch {
             || schedule == null
             || schedule.isEmpty()
             || !def.tags().contains(appTag)) {
+          continue;
+        }
+        if (genericApp && !declaredHere.contains(job.name())) {
+          // Under a name many apps would get alike, this may be another app's job.
+          leftAlone.add(job.name());
           continue;
         }
         try {
@@ -626,6 +646,18 @@ public final class Watch {
       } catch (RuntimeException e) {
         failed.add("declaring " + name + ": " + e.getMessage());
       }
+    }
+    if (!leftAlone.isEmpty()) {
+      reportOnce(
+          "cronwatch: the app is named \""
+              + appName
+              + "\", a name many apps get alike, so "
+              + scheduler
+              + " jobs this process did not declare keep their schedules ("
+              + String.join(", ", leftAlone)
+              + "); set CRONWATCH_APP_ID (or the integration's app option) to a name of this"
+              + " app's own",
+          "unscheduling");
     }
     if (!failed.isEmpty()) {
       throw new CronwatchException(CronwatchException.Kind.OTHER, String.join("\n", failed));

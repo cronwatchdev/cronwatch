@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -69,6 +70,34 @@ public final class SchedulerBridge {
       return Js.trim(fallback);
     }
     return mainName();
+  }
+
+  /** Names many apps get when nothing names them: a jar or main class of a common name. */
+  private static final Set<String> GENERIC =
+      Set.of(
+          "app",
+          "application",
+          "main",
+          "java",
+          "server",
+          "service",
+          "launcher",
+          "jarlauncher",
+          "warlauncher",
+          "propertieslauncher");
+
+  /**
+   * Whether {@code name} is one many apps would get alike (the jar {@code app.jar} of a common
+   * Docker layout, {@code java}, Spring Boot's launcher), with {@code $CRONWATCH_APP_ID} unset. Two
+   * apps sharing a store under such a name would each take the other's jobs for entries gone, so a
+   * {@link Watch} under one takes the schedule only from jobs it declared itself.
+   */
+  public static boolean genericAppName(String name) {
+    String id = System.getenv("CRONWATCH_APP_ID");
+    if (id != null && !Js.trim(id).isEmpty()) {
+      return false;
+    }
+    return GENERIC.contains(Js.trim(name).toLowerCase(Locale.ROOT));
   }
 
   /** {@link #appName(String)} with no fallback. */
