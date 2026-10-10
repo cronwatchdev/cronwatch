@@ -145,13 +145,32 @@ defmodule Cronwatch do
   a returned `{:error, reason}` or a raised exception, the run is taken back
   rather than judged, for an attempt a queue gives back without failing; the
   failure is still handed back), `instance`.
+
+  Monitoring being down never stops the job: when the instance is not
+  running (not started yet, stopping, or restarting after a crash), `fun`
+  runs unrecorded, as it would without CronWatch, and that is reported once
+  through Logger.
   """
   @spec run(Job.t() | String.t(), (Context.t() -> result), keyword()) :: result when result: term()
   def run(job, fun, opts \\ []) when is_function(fun, 1) do
     {run_opts, job_opts} = Keyword.split(opts, @run_options)
-    job = resolve!(job, job_opts, run_opts)
-    Exec.run(job, fun, run_opts)
+
+    inst =
+      case job do
+        %Job{instance: i} -> i
+        _ -> instance(run_opts)
+      end
+
+    if Exec.available?(inst) do
+      job = resolve!(job, job_opts, run_opts)
+      Exec.run(job, fun, run_opts)
+    else
+      Exec.unrecorded(inst, job_name(job), fun, run_opts)
+    end
   end
+
+  defp job_name(%Job{name: name}), do: name
+  defp job_name(name) when is_binary(name), do: name
 
   defp resolve!(%Job{} = job, [], _), do: job
 

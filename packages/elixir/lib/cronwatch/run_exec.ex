@@ -20,18 +20,38 @@ defmodule Cronwatch.Run.Exec do
   alias Cronwatch.Store
   alias Cronwatch.Telemetry
 
+  require Logger
+
   @doc "Runs `fun` as a recorded run of `job` and hands back what it did."
   def run(%Job{} = job, fun, opts) do
+    case prepare(job, opts) do
+      {:ok, c, prepared} -> run(c, job, fun, opts, prepared)
+      :unavailable -> unrecorded(job.instance, job.name, fun, opts)
+    end
+  end
+
+  # Everything before the function: the running row and the run's lines.
+  # An instance stopping or restarting meanwhile runs the function
+  # unrecorded rather than stop the job.
+  defp prepare(job, opts) do
     c = Config.get(job.instance)
+    trigger = Keyword.get(opts, :trigger, "run")
+    {run, recorded, started} = start(c, job, trigger, nil, Keyword.get(opts, :discard_when) != nil)
+    Lines.open(Runs.table(c.name, :lines), run.id)
+    {:ok, c, {run, recorded, started}}
+  rescue
+    ArgumentError -> :unavailable
+  catch
+    :exit, _ -> :unavailable
+  end
+
+  defp run(c, job, fun, opts, {run, recorded, started}) do
     trigger = Keyword.get(opts, :trigger, "run")
     isolate = Keyword.get(opts, :isolate, false)
     kill = Keyword.get(opts, :kill_at_timeout, false)
     discard = Keyword.get(opts, :discard_when)
     {:ok, timeout} = Evaluate.timeout_ms(job.definition)
-
-    {run, recorded, started} = start(c, job, trigger, nil, discard != nil)
     lines = Runs.table(c.name, :lines)
-    Lines.open(lines, run.id)
     cancel = :atomics.new(1, [])
 
     ctx = %Context{
@@ -81,6 +101,83 @@ defmodule Cronwatch.Run.Exec do
       _ ->
         settle(c, job, info, outcome, discard, opts)
         hand_back(outcome, isolate)
+    end
+  end
+
+  @doc """
+  Whether the instance can record a run: its config is in place and
+  Cronwatch.Runs is up.
+  """
+  def available?(instance) do
+    :persistent_term.get({Cronwatch, instance}, nil) != nil and
+      is_pid(Process.whereis(Runs.server(instance)))
+  end
+
+  @doc """
+  Runs `fun` without recording it, for an instance that is not running (not
+  started yet, stopping, or restarting after a crash): monitoring being down
+  never stops the job. It is reported once per instance, through Logger. The
+  function gets a context whose log and metric calls go nowhere, and what it
+  answers, raises, throws, or exits comes back as `run/3` hands it back.
+  """
+  def unrecorded(instance, name, fun, opts) do
+    warn_unavailable(instance, name)
+    isolate = Keyword.get(opts, :isolate, false)
+
+    ctx = %Context{
+      instance: instance,
+      job: name,
+      run_id: Core.uuid(),
+      started_at: System.system_time(:millisecond),
+      key: {:unrecorded, make_ref()},
+      cancel: :atomics.new(1, []),
+      trigger: Keyword.get(opts, :trigger, "run")
+    }
+
+    outcome =
+      if isolate do
+        unrecorded_isolated(ctx, fun)
+      else
+        Context.push(ctx)
+
+        try do
+          invoke(fun, ctx)
+        after
+          Context.pop()
+        end
+      end
+
+    hand_back(outcome, isolate)
+  end
+
+  # Isolated with no instance to run it under: a process of its own, so a
+  # crash still does not take the caller down.
+  defp unrecorded_isolated(ctx, fun) do
+    callers = [self() | Process.get(:"$callers", [])]
+
+    {_pid, ref} =
+      spawn_monitor(fn ->
+        Process.put(:"$callers", callers)
+        Context.push(ctx)
+        exit({:cronwatch_outcome, invoke(fun, ctx)})
+      end)
+
+    receive do
+      {:DOWN, ^ref, :process, _, {:cronwatch_outcome, outcome}} -> outcome
+      {:DOWN, ^ref, :process, _, reason} -> {:exit, reason, []}
+    end
+  end
+
+  defp warn_unavailable(instance, name) do
+    key = {Cronwatch, :unavailable_reported, instance}
+
+    unless :persistent_term.get(key, false) do
+      :persistent_term.put(key, true)
+
+      Logger.warning(
+        "[cronwatch] #{inspect(instance)} is not running, so #{name} ran unrecorded. " <>
+          "Runs while the instance is down are not recorded; this is reported once."
+      )
     end
   end
 
@@ -327,19 +424,27 @@ defmodule Cronwatch.Run.Exec do
           :deferred
 
         true ->
-          {:ok, pid} =
-            Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(c.name), fn ->
-              try do
-                Core.update_state!(c, job.name, fn before -> {Evaluate.on_run_start(before), nil} end)
-              rescue
-                e -> Core.report(c, e, "starting #{job.name}")
-              end
-            end)
-
-          pid
+          start_state(c, job)
       end
 
     {run, recorded, started}
+  end
+
+  # Closes missed and stuck beside the job, in a task of the instance; nil
+  # (nothing to wait for) when its task supervisor is restarting.
+  defp start_state(c, job) do
+    {:ok, pid} =
+      Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(c.name), fn ->
+        try do
+          Core.update_state!(c, job.name, fn before -> {Evaluate.on_run_start(before), nil} end)
+        rescue
+          e -> Core.report(c, e, "starting #{job.name}")
+        end
+      end)
+
+    pid
+  catch
+    :exit, _ -> nil
   end
 
   defp call_here(c, ctx, info, fun, timeout) do
@@ -370,30 +475,52 @@ defmodule Cronwatch.Run.Exec do
     parent = self()
     id = ctx.run_id
 
-    task =
-      Task.Supervisor.async_nolink(Cronwatch.Supervisor.tasks(c.name), fn ->
-        Runs.register(c.name, id, self(), info, timeout)
-        send(parent, {:cronwatch_registered, id})
-        Context.push(ctx)
-        Logger.metadata(cronwatch_job: ctx.job, cronwatch_run: id)
-        outcome = invoke(fun, ctx)
-        # Closed here, before the task ends, so the monitor never takes a
-        # normal end for a death.
-        if Runs.close(c.name, id), do: hand_over(parent, id, outcome, orphan)
+    work = fn ->
+      # Which Cronwatch.Runs holds the run: one restarted meanwhile does not.
+      runs = GenServer.whereis(Runs.server(c.name))
+      Runs.register(c.name, id, self(), info, timeout)
+      send(parent, {:cronwatch_registered, id, runs})
+      Context.push(ctx)
+      Logger.metadata(cronwatch_job: ctx.job, cronwatch_run: id)
+      outcome = invoke(fun, ctx)
+      # Closed here, before the task ends, so the monitor never takes a
+      # normal end for a death. A run no longer open was closed by the
+      # caller at the timeout, which does not wait for an answer, or lost
+      # with Cronwatch.Runs's tables when it restarted: the outcome goes
+      # back as the task's answer, for the caller to record.
+      if Runs.close(c.name, id) do
+        hand_over(parent, id, outcome, orphan)
         :ok
-      end)
-
-    task_ref = task.ref
-
-    receive do
-      {:cronwatch_registered, ^id} ->
-        deadline = if kill, do: now_ms() + max(Cronwatch.JS.to_int(timeout), 0)
-        await_isolated(c, task, id, deadline, timeout)
-
-      # Gone before it was registered: no one else knows of the run.
-      {:DOWN, ^task_ref, :process, _, reason} ->
-        {:exit, reason, []}
+      else
+        {:lost, outcome}
+      end
     end
+
+    case start_isolated(c, work) do
+      {:ok, task} ->
+        task_ref = task.ref
+
+        receive do
+          {:cronwatch_registered, ^id, runs} ->
+            deadline = if kill, do: now_ms() + max(Cronwatch.JS.to_int(timeout), 0)
+            await_isolated(c, task, {id, runs}, deadline, timeout)
+
+          # Gone before it was registered: no one else knows of the run.
+          {:DOWN, ^task_ref, :process, _, reason} ->
+            {:exit, reason, []}
+        end
+
+      # The instance's task supervisor is restarting: the function runs in
+      # the caller, still recorded.
+      :unavailable ->
+        call_here(c, ctx, info, fun, timeout)
+    end
+  end
+
+  defp start_isolated(c, work) do
+    {:ok, Task.Supervisor.async_nolink(Cronwatch.Supervisor.tasks(c.name), work)}
+  catch
+    :exit, _ -> :unavailable
   end
 
   # The longest a receive can wait at once.
@@ -401,7 +528,7 @@ defmodule Cronwatch.Run.Exec do
 
   defp now_ms, do: System.monotonic_time(:millisecond)
 
-  defp await_isolated(c, task, id, deadline, timeout) do
+  defp await_isolated(c, task, {id, runs} = held, deadline, timeout) do
     wait = if deadline, do: min(max(deadline - now_ms(), 0), @max_wait), else: :infinity
     task_ref = task.ref
 
@@ -411,15 +538,29 @@ defmodule Cronwatch.Run.Exec do
         Task.yield(task, :infinity)
         outcome
 
+      # The run was lost with Cronwatch.Runs's tables (it restarted while the
+      # function ran): no one else will record it.
+      {^task_ref, {:lost, outcome}} ->
+        # The task ends as it answers: its :DOWN follows, and is taken too.
+        receive do
+          {:DOWN, ^task_ref, :process, _, _} -> outcome
+        end
+
+      # Closed here, the run is the caller's to record. Closed elsewhere, the
+      # monitor recorded it, unless it went with Cronwatch.Runs when that
+      # restarted (taking the instance's tasks, this one too, down with it):
+      # then no one else will.
       {:DOWN, ^task_ref, :process, _, reason} ->
-        if Runs.close(c.name, id),
-          do: {:exit, reason, []},
-          else: {:recorded_elsewhere, reason}
+        cond do
+          Runs.close(c.name, id) -> {:exit, reason, []}
+          GenServer.whereis(Runs.server(c.name)) != runs -> {:exit, reason, []}
+          true -> {:recorded_elsewhere, reason}
+        end
     after
       wait ->
         cond do
           deadline - now_ms() > 0 ->
-            await_isolated(c, task, id, deadline, timeout)
+            await_isolated(c, task, held, deadline, timeout)
 
           # Past the timeout: closed first, so the monitor does not record
           # the kill as a failure.
@@ -429,7 +570,7 @@ defmodule Cronwatch.Run.Exec do
 
           # The function returned meanwhile: its outcome is on its way.
           true ->
-            await_isolated(c, task, id, nil, timeout)
+            await_isolated(c, task, held, nil, timeout)
         end
     end
   end
@@ -457,65 +598,72 @@ defmodule Cronwatch.Run.Exec do
 
   # Everything after the function: in a task that outlives the caller.
   defp record(c, job, info, build, evaluate \\ true) do
-    task =
-      Task.Supervisor.async_nolink(Cronwatch.Supervisor.tasks(c.name), fn ->
-        lines = Runs.table(c.name, :lines)
+    case start_isolated(c, fn -> record_now(c, job, info, build, evaluate) end) do
+      {:ok, task} ->
+        # nil when the recording itself failed, so a caller's recorded:
+        # function is never handed something that is not a run.
+        case Task.yield(task, :infinity) do
+          {:ok, run} ->
+            run
 
-        try do
-          finished_at = Core.now(c)
-
-          run = %{
-            info.run
-            | finished_at: finished_at,
-              duration_ms: Evaluate.run_duration(info.run.started_at, finished_at)
-          }
-
-          run = build.(run)
-          Lines.close(lines, info.key)
-          # A run not judged does not judge its start either.
-          unless not evaluate and info.started == :deferred, do: wait_for(c, job, info.started)
-
-          try do
-            case Core.record_finish!(c, job, run, info.recorded, finished_at, evaluate) do
-              nil ->
-                :ok
-
-              why ->
-                Core.report(
-                  c,
-                  Cronwatch.Error.other("run #{run.id} of #{job.name} #{why}; ignored"),
-                  "finishing #{job.name}"
-                )
-            end
-          rescue
-            e -> Core.report(c, e, "recording #{job.name}")
-          end
-
-          run
-        rescue
-          e ->
-            Core.report(c, e, "recording #{job.name}")
+          {:exit, reason} ->
+            Core.report(c, {:exit, reason}, "recording #{job.name}")
             nil
-        catch
-          kind, reason ->
-            Core.report(c, {kind, reason}, "recording #{job.name}")
-            nil
-        after
-          # Whatever happened (an app's clock that raised), the run's lines
-          # do not outlive it.
-          Lines.close(lines, info.key)
         end
-      end)
 
-    # nil when the recording itself failed, so a caller's recorded: function
-    # is never handed something that is not a run.
-    case Task.yield(task, :infinity) do
-      {:ok, run} ->
-        run
+      # The instance's task supervisor is restarting: recorded here, in the
+      # caller.
+      :unavailable ->
+        record_now(c, job, info, build, evaluate)
+    end
+  end
 
-      {:exit, reason} ->
-        Core.report(c, {:exit, reason}, "recording #{job.name}")
+  defp record_now(c, job, info, build, evaluate) do
+    lines = Runs.table(c.name, :lines)
+
+    try do
+      finished_at = Core.now(c)
+
+      run = %{
+        info.run
+        | finished_at: finished_at,
+          duration_ms: Evaluate.run_duration(info.run.started_at, finished_at)
+      }
+
+      run = build.(run)
+      Lines.close(lines, info.key)
+      # A run not judged does not judge its start either.
+      unless not evaluate and info.started == :deferred, do: wait_for(c, job, info.started)
+
+      try do
+        case Core.record_finish!(c, job, run, info.recorded, finished_at, evaluate) do
+          nil ->
+            :ok
+
+          why ->
+            Core.report(
+              c,
+              Cronwatch.Error.other("run #{run.id} of #{job.name} #{why}; ignored"),
+              "finishing #{job.name}"
+            )
+        end
+      rescue
+        e -> Core.report(c, e, "recording #{job.name}")
+      end
+
+      run
+    rescue
+      e ->
+        Core.report(c, e, "recording #{job.name}")
         nil
+    catch
+      kind, reason ->
+        Core.report(c, {kind, reason}, "recording #{job.name}")
+        nil
+    after
+      # Whatever happened (an app's clock that raised), the run's lines
+      # do not outlive it.
+      Lines.close(lines, info.key)
     end
   end
 

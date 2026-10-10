@@ -85,11 +85,24 @@ defmodule Cronwatch.Runs do
   flag is set at `timeout_ms`.
   """
   def register(instance, run_id, pid, info, timeout_ms) do
-    GenServer.call(server(instance), {:register, run_id, pid, info, timeout_ms}, :infinity)
+    call(instance, {:register, run_id, pid, info, timeout_ms}, :unavailable)
   end
 
-  @doc "Closes a run, answering whether it was still open."
-  def close(instance, run_id), do: GenServer.call(server(instance), {:close, run_id}, :infinity)
+  @doc """
+  Closes a run, answering whether it was still open. While this process is
+  down (restarting after a crash), the run it held is gone with its tables,
+  so the answer is false.
+  """
+  def close(instance, run_id), do: call(instance, {:close, run_id}, false)
+
+  # A call on the run path, which must not take a job down while this
+  # process is restarting: `default` when it is not there to answer.
+  defp call(instance, message, default) do
+    GenServer.call(server(instance), message, :infinity)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown, :killed] -> default
+    :exit, {{:shutdown, _}, _} -> default
+  end
 
   @doc "The info of a run in flight, or nil."
   def info(instance, run_id) do
@@ -275,12 +288,6 @@ defmodule Cronwatch.Runs do
   end
 
   def handle_info(_msg, s), do: {:noreply, s}
-
-  @impl true
-  def terminate(_reason, s) do
-    Config.erase(s.instance)
-    :ok
-  end
 
   # A timeout no double holds (refused when a job is declared, so only a
   # store's foreign definition could hold one) never fires, rather than
