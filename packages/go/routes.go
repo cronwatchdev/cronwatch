@@ -68,8 +68,8 @@ type routesConfig struct {
 // `Authorization: Bearer <token>`, or open the dashboard once with
 // ?token=<token> and a cookie is set, or sign in through the form on the
 // sign-in page. The default is CRONWATCH_TOKEN; a token, given here or in
-// the variable, that is empty or only whitespace counts as unset, and any
-// other is used as it is. With no token in development (CRONWATCH_ENV, APP_ENV, or
+// the variable, is trimmed as JavaScript trims, and one that is empty or
+// only whitespace counts as unset. With no token in development (CRONWATCH_ENV, APP_ENV, or
 // GO_ENV naming it), the routes make a random one and print a sign-in link
 // to Stdout on their first request; with no token otherwise they answer
 // 503. /api/check also takes the client's cron secret as a bearer, so a
@@ -182,9 +182,9 @@ func (c *Client) Routes(options ...RoutesOption) (*Routes, error) {
 	rt := &Routes{c: c, optedOut: cfg.open, base: cfg.base, origin: origin, trustProxy: cfg.trustProxy}
 	configured := ""
 	if !cfg.open {
-		// A blank token, given or read, counts as unset.
-		configured = cfg.token
-		if blank(configured) {
+		// A token, given or read, is trimmed, and a blank one counts as unset.
+		configured = js.Trim(cfg.token)
+		if configured == "" {
 			configured = secretEnv("CRONWATCH_TOKEN")
 		}
 	}

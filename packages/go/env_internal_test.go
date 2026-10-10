@@ -1,33 +1,81 @@
 package cronwatch
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
 
-// The SDK's cases (packages/sdk/test/env.test.ts), GO_ENV in NODE_ENV's
-// place: CRONWATCH_ENV, then APP_ENV, then GO_ENV, the first one set to
-// more than spaces winning, lowercased, with the aliases.
-func TestEnvironmentOrder(t *testing.T) {
-	cases := []struct{ cronwatch, app, own, want string }{
-		{"", "", "", ""},
-		{"", "", "development", "development"},
-		{"", "", "test", "development"},
-		{"", "", "production", "production"},
-		{"", "local", "production", "development"},
-		{"production", "dev", "development", "production"},
-		{"staging", "", "development", "staging"},
-		{"  PROD ", "", "", "production"},
-		{"", "Testing", "", "development"},
-		{"", "DEV", "", "development"},
-		{"", "   ", "production", "production"},
-		{" ", "", "development", "development"},
-		{" \t", "", "", ""},
-		{"\ufeffdev\u00a0", "", "", "development"},
+	"cronwatch.dev/go/internal/js"
+)
+
+// clientCases are a section of conformance/client.json.
+func clientCases(t *testing.T, section string) []*js.Object {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "conformance", "client.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		t.Setenv("CRONWATCH_ENV", c.cronwatch)
-		t.Setenv("APP_ENV", c.app)
-		t.Setenv("GO_ENV", c.own)
-		if got := environment(); got != c.want {
-			t.Errorf("CRONWATCH_ENV=%q APP_ENV=%q GO_ENV=%q: %q, want %q", c.cronwatch, c.app, c.own, got, c.want)
+	root, err := js.Parse(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _ := root.(*js.Object).Get(section)
+	var out []*js.Object
+	for _, c := range list.([]any) {
+		out = append(out, c.(*js.Object))
+	}
+	if len(out) == 0 {
+		t.Fatalf("no %s cases", section)
+	}
+	return out
+}
+
+// envValue is a case's value for a variable: unset for null.
+func envValue(t *testing.T, c *js.Object, key, name string) {
+	t.Helper()
+	v, _ := c.Get(key)
+	if s, ok := v.(string); ok {
+		t.Setenv(name, s)
+		return
+	}
+	t.Setenv(name, "")
+	os.Unsetenv(name)
+}
+
+// client.json's environment: CRONWATCH_ENV, then APP_ENV, then the
+// language's own variable (GO_ENV here, NODE_ENV in the SDK).
+func TestConformanceEnvironment(t *testing.T) {
+	for i, c := range clientCases(t, "environment") {
+		envValue(t, c, "CRONWATCH_ENV", "CRONWATCH_ENV")
+		envValue(t, c, "APP_ENV", "APP_ENV")
+		envValue(t, c, "native", "GO_ENV")
+		want, _ := c.Get("environment")
+		development, _ := c.Get("development")
+		production, _ := c.Get("production")
+		got := environment()
+		if got != want || (got == "development") != development || (got == "production") != production {
+			t.Errorf("case %d (%s): %q", i, js.Stringify(c), got)
+		}
+	}
+}
+
+// client.json's secrets: CRONWATCH_TOKEN and CRON_SECRET, trimmed as
+// JavaScript trims, blank meaning unset; a secret given in code the same.
+func TestConformanceSecrets(t *testing.T) {
+	for i, c := range clientCases(t, "secrets") {
+		value, _ := c.Get("value")
+		want, _ := c.Get("secret")
+		wanted := ""
+		if s, ok := want.(string); ok {
+			wanted = s
+		}
+		t.Setenv("CRON_SECRET", value.(string))
+		if got := secretEnv("CRON_SECRET"); got != wanted {
+			t.Errorf("case %d env: %q, want %q", i, got, wanted)
+		}
+		cw := MustNew(WithStore(NewMemoryStore()), WithCronSecret(value.(string)))
+		if cw.cronSecret != wanted {
+			t.Errorf("case %d option: %q, want %q", i, cw.cronSecret, wanted)
 		}
 	}
 }
