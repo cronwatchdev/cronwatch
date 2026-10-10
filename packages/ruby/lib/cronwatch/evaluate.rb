@@ -83,8 +83,9 @@ module Cronwatch
     end
 
     # A stored state with every field present, or a fresh one. State written
-    # by an older version lacks the newer fields. `sending` and `under_floor`
-    # are the exceptions: each is there only while it holds something.
+    # by an older version lacks the newer fields. `sending`, `under_floor`, and
+    # `pending_runs` are the exceptions: each is there only while it holds
+    # something.
     #
     # Read leniently, since a foreign, hand-edited, or damaged row must affect
     # only its own job, and the next write puts it right: a state that is not
@@ -93,14 +94,15 @@ module Cronwatch
     # `last_alert_at` that are not numbers read as nil; `pending_recovery`
     # keeps only its conditions (strings as stored), and `undelivered` only
     # its entries that are objects (a list of neither shape reads as []),
-    # and `under_floor` only its strings (absent when none). Unknown fields
-    # are kept as written.
+    # and `under_floor` and `pending_runs` only their strings (each absent
+    # when none). Unknown fields are kept as written.
     def normalize_state(state, job)
       state = JobState.from_h(state)
       return empty_state(job) if state.nil?
 
       sending = state.sending
       under_floor = state.under_floor.is_a?(Array) ? state.under_floor.grep(String) : []
+      pending_runs = state.pending_runs.is_a?(Array) ? state.pending_runs.grep(String) : []
       open = state.open.is_a?(Hash) ? state.open.select { |_, at| json_number?(at) } : {}
       pending = state.pending_recovery.is_a?(Array) ? state.pending_recovery.grep(Symbol) : []
       undelivered = state.undelivered.is_a?(Array) ? state.undelivered.grep(Alert) : []
@@ -115,6 +117,7 @@ module Cronwatch
         version: state.version,
         sending: sending.is_a?(Array) && !sending.empty? ? sending.dup : nil,
         under_floor: under_floor.empty? ? nil : under_floor,
+        pending_runs: pending_runs.empty? ? nil : pending_runs,
         # Fields a newer release wrote, carried through every write.
         extra: state.extra,
       )
@@ -205,6 +208,61 @@ module Cronwatch
       following.sending = held.empty? ? nil : held
       following.last_alert_at = now if delivered.any?
       queue_undelivered(following, failed)
+    end
+
+    # A check's claim on the undelivered queue, written before it sends, so
+    # two processes checking at once never retry the same alert: the queued
+    # alerts that still describe the job move into `sending`, oldest first,
+    # each with its lease ending at `until_at`, as many as `sending` has room
+    # for under MAX_UNDELIVERED (the rest wait for the next check); stale
+    # ones (stale_alert?) leave the queue. While the job is silenced only
+    # recoveries are claimed. The process whose write lands sends `claimed`.
+    Claim = Struct.new(:state, :claimed, :stale, keyword_init: true) do
+      def to_h = { "state" => state.to_h, "claimed" => claimed.map(&:to_h), "stale" => stale.map(&:to_h) }
+    end
+
+    def claim_undelivered(state, now, until_at)
+      following = clone_state(state)
+      queue = following.undelivered
+      stale = queue.select { |alert| stale_alert?(alert, following) }
+      silenced = silenced?(following, now)
+      room = [0, MAX_UNDELIVERED - (following.sending || []).length].max
+      fresh = queue.reject { |alert| stale.any? { |old| old.equal?(alert) } }
+      claimed = fresh.select { |alert| !silenced || alert.type == :recovered }.first(room)
+      return Claim.new(state: state, claimed: claimed, stale: stale) if stale.empty? && claimed.empty?
+
+      following.undelivered = fresh.reject { |alert| claimed.any? { |sent| sent.equal?(alert) } }
+      unless claimed.empty?
+        following.sending = (following.sending || []) + claimed.map { |alert| { "until" => until_at, "alert" => alert } }
+      end
+      Claim.new(state: following, claimed: claimed, stale: stale)
+    end
+
+    # Runs held in `pending_runs` per job; past it the oldest go.
+    MAX_PENDING_RUNS = 100
+
+    # A run just started, held in `pending_runs` until its finish is
+    # evaluated (release_run), so a check can evaluate it if the process that
+    # finished it stops before writing the evaluation. Written with
+    # on_run_start's state. Only the newest MAX_PENDING_RUNS are kept.
+    def hold_run(state, run_id)
+      following = clone_state(state)
+      held = (following.pending_runs || []).reject { |id| id == run_id }
+      held << run_id
+      following.pending_runs = held.last(MAX_PENDING_RUNS)
+      following
+    end
+
+    # A run taken out of `pending_runs`, as its evaluation is written or once
+    # it is gone from the store.
+    def release_run(state, run_id)
+      held = state.pending_runs.is_a?(Array) ? state.pending_runs : []
+      return state unless held.include?(run_id)
+
+      following = clone_state(state)
+      left = held.reject { |id| id == run_id }
+      following.pending_runs = left.empty? ? nil : left
+      following
     end
 
     # The alert of an entry of `sending`, or nil when it has none, or one
@@ -504,11 +562,14 @@ module Cronwatch
     end
 
     # An evaluation as it is saved and sent: while the job was silenced when it
-    # began, nothing opens and nothing is sent.
+    # began, nothing opens and no new alert is sent, but a recovery is. A
+    # condition can only close during a silence if it opened (and alerted)
+    # before it, so its recovery closes an incident someone was told about.
     def apply_silence(previous, evaluation, now)
       return evaluation unless silenced?(previous, now)
 
-      Evaluation.new(state: mute_opens(previous, evaluation.state), alerts: [])
+      Evaluation.new(state: mute_opens(previous, evaluation.state),
+                     alerts: evaluation.alerts.select { |alert| alert.type == :recovered })
     end
 
     # Whether an alert waiting to be retried no longer describes the job, so it
