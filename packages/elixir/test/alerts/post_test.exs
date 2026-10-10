@@ -32,6 +32,31 @@ defmodule Cronwatch.Alerts.PostTest do
     assert Post.origin("no") == "(invalid URL)"
   end
 
+  defmodule Hanging do
+    @moduledoc false
+    def post(test, _request) do
+      send(test, {:request, self()})
+      Process.sleep(:infinity)
+    end
+  end
+
+  test "a request dies with a caller killed before its deadline" do
+    test = self()
+    caller = spawn(fn -> Post.fetch({Hanging, test}, 60_000, "https://h.example/x", [], "") end)
+    assert_receive {:request, request}
+    ref = Process.monitor(request)
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 1000
+  end
+
+  test "a request killed at its deadline does not take its caller with it" do
+    test = self()
+    assert {:error, e} = Post.fetch({Hanging, test}, 50, "https://h.example/x", [], "")
+    assert e == Post.timed_out()
+    assert_receive {:request, request}
+    refute Process.alive?(request)
+  end
+
   test "headers are checked as fetch checks them, naming the header and never its value" do
     assert Post.headers([{"a", " v \n"}, {"x-b", "c"}]) == {:ok, [{"a", "v"}, {"x-b", "c"}]}
     {:error, e} = Post.headers([{"authorization", "Bearer x\r\ninjected: 1"}])
