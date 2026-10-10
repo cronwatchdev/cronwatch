@@ -619,6 +619,19 @@ async fn a_body_cut_short_is_none() {
 }
 
 #[tokio::test]
+async fn the_token_sign_in_never_redirects_off_the_site() {
+    let k = Kit::new();
+    let routes = k.cw.routes(RoutesOptions::new().token("tok").base_path("/")).unwrap();
+    for path in ["//evil.example/x", "///evil.example", "/\\/evil.example", "/\\evil.example", "//\\evil.example"] {
+        let res = serve(&routes, "GET", &format!("http://app.test{path}?token=tok"), &[], "").await;
+        assert_eq!(res.status, 303, "{path}");
+        let location = res.header_str("location").unwrap();
+        assert!(location.starts_with('/') && !location.starts_with("//"), "{path} -> {location}");
+        assert!(!location[1..].starts_with(['/', '\\']), "{path} -> {location}");
+    }
+}
+
+#[tokio::test]
 async fn the_tls_marker_makes_an_http1_request_https() {
     // An app that terminates TLS itself serves HTTP/1.1 requests whose URI
     // has no scheme: the browser's Origin is https all the same.
