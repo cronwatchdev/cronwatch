@@ -430,6 +430,27 @@ final class WebTest extends TestCase
         }
     }
 
+    public function testTheDevelopmentTokenFileAppearsWholeOrNotAtAll(): void
+    {
+        $dir = sys_get_temp_dir() . '/cronwatch-test-dev-' . getmypid() . '-' . bin2hex(random_bytes(4));
+        mkdir($dir, 0700);
+        $file = "{$dir}/dev-token";
+        try {
+            [$token, $made] = \Cronwatch\Web\DevelopmentToken::obtain($file, '/cronwatch');
+            $this->assertTrue($made);
+            // Linked into place from a draft written first, so the name never holds an empty file another request could read.
+            $this->assertSame($token, file_get_contents($file));
+            $this->assertSame(0, fileperms($file) & 0077);
+            $this->assertSame(['dev-token'], array_values(array_diff(scandir($dir) ?: [], ['.', '..'])), 'no draft left behind');
+            $this->assertSame([$token, false], \Cronwatch\Web\DevelopmentToken::obtain($file, '/cronwatch'), 'the next request finds it');
+        } finally {
+            foreach (glob("{$dir}/*") ?: [] as $left) {
+                unlink($left);
+            }
+            rmdir($dir);
+        }
+    }
+
     public function testAFrameworksEnvironmentCountsWhenNoVariableNamesOne(): void
     {
         \Cronwatch\Env::setFallback(fn () => ' Local ');
