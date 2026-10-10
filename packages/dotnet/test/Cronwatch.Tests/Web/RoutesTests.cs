@@ -178,6 +178,24 @@ public class RoutesTests
         Assert.Equal("/cronwatch/jobs/x?view=all&a=b+c", other.Header("location"));
     }
 
+    [Theory]
+    [InlineData("//evil.example?token=tok", "/evil.example")]
+    [InlineData("///evil.example/x?token=tok&a=1", "/evil.example/x?a=1")]
+    [InlineData("/\\evil.example?token=tok", "/evil.example")]
+    [InlineData("//\\evil.example?token=tok", "/evil.example")]
+    [InlineData("/?token=tok", "/")]
+    public async Task The_token_sign_in_keeps_its_redirect_on_this_site(string target, string location)
+    {
+        // Mounted at the root, a path of several leading slashes (or a backslash, which browsers
+        // read as one) would be a protocol-relative Location, off this site.
+        await using var k = new WebKit();
+        Routes root = k.Cw.Routes(new RoutesOptions { Token = "tok", BasePath = "" });
+        CronwatchResponse res = await root.HandleAsync(new CronwatchRequest("GET", target) { Headers = Hs(H("host", "app.test")) });
+        Status("sign-in", res, 303);
+        Assert.Equal(location, res.Header("location"));
+        Assert.NotNull(res.Header("set-cookie"));
+    }
+
     [Fact]
     public async Task Pages_render_and_the_api_answers()
     {
