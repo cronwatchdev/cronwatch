@@ -172,16 +172,27 @@ class ObservedRunTest {
   }
 
   @Test
-  void aStoreThatCannotTakeARunBackRecordsItAsItEnded() throws Exception {
+  void aStoreThatCannotTakeARunBackRecordsItFailedNeverAsASuccess() throws Exception {
+    // Recorded ok, it closed an open failed condition with a recovery for an attempt that never
+    // finished.
     Support.Wrapped store = new Support.Wrapped();
     Support.Made m = Support.make(b -> b.store(store));
     try (Cronwatch cw = m.cw()) {
       Job job = cw.job("x", JobOptions.builder());
       ObservedRun run = job.open(RunOptions.defaults().mayTakeBack());
       assertFalse(run.takeBack());
-      assertEquals(List.of("discarding x"), m.errors().wheres());
+      assertEquals("discarding x", m.errors().wheres().get(0));
       assertTrue(m.errors().messages().get(0).contains("the store cannot take back a run"));
-      assertEquals(RunStatus.OK, cw.runs("x", 1).get(0).status(), "recorded as it ended");
+      Run recorded = cw.runs("x", 1).get(0);
+      assertEquals(RunStatus.FAILED, recorded.status());
+      assertTrue(
+          String.valueOf(recorded.error()).contains("could not take it back"), recorded.error());
+      // With the attempt's own error when the scheduler gave one.
+      ObservedRun deleted = job.open(RunOptions.defaults().mayTakeBack());
+      assertFalse(deleted.takeBack(new InterruptedException("deleted while it ran")));
+      Run second = cw.getRun(deleted.id());
+      assertEquals(RunStatus.FAILED, second.status());
+      assertTrue(String.valueOf(second.error()).contains("deleted while it ran"), second.error());
     }
   }
 

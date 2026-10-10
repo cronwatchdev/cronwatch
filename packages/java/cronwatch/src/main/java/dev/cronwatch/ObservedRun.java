@@ -74,13 +74,30 @@ public final class ObservedRun {
    * lock another instance held): its running row is deleted, nothing is judged or alerted, and the
    * job's state is left as it was. A row a check already marked stuck is left as it is. When the
    * store cannot take a run back (it has no {@code deleteRunIf}, or it failed), which is reported,
-   * the run is closed as a success instead. Says whether it was given back.
+   * the run is closed failed instead, saying it could not be given back: never as a success, which
+   * would send a recovery for an attempt that did not finish. Says whether it was given back.
    */
   public boolean takeBack() {
+    return takeBack(null);
+  }
+
+  /**
+   * {@link #takeBack()} for an attempt that ended in {@code thrown} (a scheduler's word that it was
+   * deleted, or never ran): when the run cannot be given back, it is closed failed with {@code
+   * thrown}, or, when that is null, with an error saying it could not be given back.
+   */
+  public boolean takeBack(@Nullable Throwable thrown) {
     if (runs.takeBack(opened)) {
       return true;
     }
-    runs.close(opened, null, null);
+    runs.close(
+        opened,
+        null,
+        thrown != null
+            ? thrown
+            : new CronwatchException(
+                CronwatchException.Kind.OTHER,
+                "the attempt was to be given back, but the store could not take it back"));
     return false;
   }
 

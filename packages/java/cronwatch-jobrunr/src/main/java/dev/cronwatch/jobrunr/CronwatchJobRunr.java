@@ -472,7 +472,7 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
       if (deletedWhileProcessing(job, e)) {
         // Deleted from JobRunr's dashboard while it ran: JobRunr interrupts it and drops the
         // attempt, so it is given back rather than judged a failure.
-        run.takeBack();
+        run.takeBack(unwrap(e));
         return;
       }
       run.close(unwrap(e));

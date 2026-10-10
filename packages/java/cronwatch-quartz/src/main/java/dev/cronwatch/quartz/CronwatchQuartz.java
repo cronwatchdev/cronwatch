@@ -863,7 +863,7 @@ public final class CronwatchQuartz implements AutoCloseable {
             && p.getJobExecutionContext().get(RUN_KEY) instanceof ObservedRun run) {
           p.getJobExecutionContext().put(RUN_KEY, null);
           try {
-            run.takeBack();
+            run.takeBack(cause);
           } finally {
             endFiring();
           }
