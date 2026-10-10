@@ -42,7 +42,7 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Run the deploy script on the server
         env:

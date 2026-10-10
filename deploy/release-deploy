@@ -4,11 +4,13 @@
 #
 #   ssh joncpu /var/www/cronwatch.dev/deploy/release-deploy [--force | --prepare] [<commit>]
 #
-# <commit> is a full 40-character commit id on main; without one it deploys
-# the tip of main. The GitHub Action runs it after CI passes on a push to
-# main, through a key whose authorized_keys entry forces this script, so the
-# commit arrives in SSH_ORIGINAL_COMMAND as "deploy <commit>": the commit CI
-# passed, deployed exactly, never whatever main has moved on to since. A
+# <commit> is a full 40-character commit id on main; run by hand without one,
+# it deploys the tip of main. The GitHub Action runs it after CI passes on a
+# push to main, through a key whose authorized_keys entry forces this script
+# with --forced, so the commit arrives in SSH_ORIGINAL_COMMAND as
+# "deploy <commit>": the commit CI passed, deployed exactly, never whatever
+# main has moved on to since. Through that key, anything else (no command,
+# "deploy" alone, extra words) is refused. A
 # commit that is already live, or older than the live one (CI runs finishing
 # out of order), is skipped. Each deploy builds a new
 # release beside the live one, so a build never touches what is serving:
@@ -44,13 +46,19 @@ KEEP=3
 
 MODE=""
 WANT=""
-if [ $# -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND+set}" ]; then
-    # The deploy key's forced command: what the client asked for is only
-    # read, never run. "deploy" alone (an older workflow) deploys main.
-    if [[ "$SSH_ORIGINAL_COMMAND" =~ ^deploy(\ ([0-9a-f]{40}))?$ ]]; then
-        WANT="${BASH_REMATCH[2]}"
+if [ "${1:-}" = "--forced" ] || { [ $# -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND+set}" ]; }; then
+    # The deploy key's forced command (authorized_keys passes --forced, so a
+    # session that sends no command at all is refused too): what the client
+    # asked for is only read, never run, and it must name the commit CI
+    # passed. Nothing sent over SSH deploys main's tip unchecked.
+    if [ $# -gt 1 ]; then
+        echo "Usage: release-deploy --forced (as the deploy key's forced command)" >&2
+        exit 1
+    fi
+    if [[ "${SSH_ORIGINAL_COMMAND:-}" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+        WANT="${BASH_REMATCH[1]}"
     else
-        echo "Refusing the command sent over SSH; expected 'deploy' or 'deploy <40-character commit id>'." >&2
+        echo "Refusing the command sent over SSH; expected 'deploy <40-character commit id>'." >&2
         exit 1
     fi
 else
@@ -184,12 +192,42 @@ if $PREPARE; then
     exit 0
 fi
 
+# From the switch on, the connection may have gone (the deploy waited for the
+# build lock, or the runner timed out), so nothing printed may end the script
+# before the release is confirmed or undone: say() writes to the session if
+# it still can, and always to a log beside the releases.
+LOG="$RELEASES/.deploy.log"
+say() {
+    printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG" 2>/dev/null || true
+    printf '%s\n' "$*" 2>/dev/null || true
+}
+switch_to() {
+    ln -sfn "$1" "$LIVE.next"
+    mv -T "$LIVE.next" "$LIVE"
+}
+# Until the new release is seen being served, any failure or signal goes back
+# to the release that was live.
+switch_back() {
+    [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit 1
+    trap - ERR INT TERM HUP
+    set +e
+    rm -f "$DIR/.release-ok"
+    if [ -n "$CURRENT_DIR" ]; then
+        switch_to "$CURRENT_DIR"
+        say "Deploy failed after the switch; went back to $(basename "$CURRENT_DIR")."
+    else
+        say "!!! Deploy failed after the switch and there is no previous release, so $(basename "$DIR") is STILL LIVE."
+        say "!!! Check nginx and https://$SITE/ by hand."
+    fi
+    exit 1
+}
+
 # Go live: the symlink moves in one rename, so each request sees either the
 # old release or the new one, never a mix.
 trap - ERR INT TERM HUP
-ln -sfn "$DIR" "$LIVE.next"
-mv -T "$LIVE.next" "$LIVE"
-echo "Live: $(git log -1 --format='%h %s')"
+trap switch_back ERR INT TERM HUP
+switch_to "$DIR"
+say "Live: $(git log -1 --format='%h %s')"
 
 # Confirm nginx serves the new release, not just something: the front page
 # must answer 200 with exactly the index.html this build wrote (its asset
@@ -203,23 +241,16 @@ if [ "$code" = "200" ] && cmp -s "$page" "$WEB_ROOT/index.html"; then
 fi
 rm -f "$page"
 if ! $served; then
-    echo "https://$SITE/ answered $code after the switch, not with the page this release built." >&2
-    rm -f "$DIR/.release-ok"
-    if [ -n "$CURRENT_DIR" ]; then
-        ln -sfn "$CURRENT_DIR" "$LIVE.next"
-        mv -T "$LIVE.next" "$LIVE"
-        echo "Went back to $(basename "$CURRENT_DIR")." >&2
-    else
-        echo "!!! There is no previous release to go back to, so $(basename "$DIR") is STILL LIVE" >&2
-        echo "!!! but was not seen being served. Check nginx and https://$SITE/ by hand." >&2
-    fi
-    exit 1
+    say "https://$SITE/ answered $code after the switch, not with the page this release built."
+    switch_back
 fi
+# Served: from here a failure leaves the new release live, which is right.
+trap - ERR INT TERM HUP
 
 # Tell search engines which pages changed since the release that was live
 # (IndexNow). The site is already live, so a failure here only warns.
 if ! node site/scripts/indexnow.mjs "$WEB_ROOT" ${CURRENT_DIR:+"$CURRENT_DIR/$WEB_ROOT"} 9>&-; then
-    echo "IndexNow submission failed; the deploy itself is fine." >&2
+    say "IndexNow submission failed; the deploy itself is fine."
 fi
 
 # Keep the newest releases that went live, for rollback; anything else goes.
@@ -239,7 +270,7 @@ git -C "$REPO" worktree prune || true
 # The contact form service keeps running the code it started with. This runs
 # without sudo, so it only says when a restart is needed.
 if [ -n "$CURRENT" ] && ! git -C "$REPO" diff --quiet "$CURRENT" "$NEW" -- deploy/contact 2>/dev/null; then
-    echo "deploy/contact changed: run 'sudo systemctl restart cronwatch-contact' to pick it up."
+    say "deploy/contact changed: run 'sudo systemctl restart cronwatch-contact' to pick it up."
 fi
 
-echo "Deployed $(git log -1 --format=%h)."
+say "Deployed $(git log -1 --format=%h)."
