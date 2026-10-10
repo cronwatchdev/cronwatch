@@ -172,28 +172,34 @@ func (c *Client) dispatch(ctx context.Context, name string, alerts []Alert, now 
 }
 
 // retryUndelivered sends the alerts no channel accepted last time, once
-// each, oldest first. state is the job's state as this check left it: an
-// alert that no longer describes it (staleAlert) is dropped instead.
-// Retries across a check share retryBudget of wall-clock time; once it is
-// spent the rest stay queued for the next check.
+// each, oldest first. They are claimed first (claimUndelivered): moved into
+// Sending with a lease, in one conditional write, so when several processes
+// check at once only the one whose write lands sends them. An alert that no
+// longer describes the job (staleAlert) is dropped instead. Retries across
+// a check share retryBudget of wall-clock time; claimed alerts it has no
+// time left for go back to the queue for the next check.
 func (c *Client) retryUndelivered(ctx context.Context, name string, state JobState, now int64, spent *time.Duration) []Alert {
-	pending := state.Undelivered
-	if len(pending) == 0 || isSilenced(state, now) || c.deferDelivery {
+	if len(state.Undelivered) == 0 || c.deferDelivery {
 		return []Alert{}
 	}
-	var delivered, failed, dropped []Alert
-	for _, a := range pending {
-		if staleAlert(a, state) {
-			dropped = append(dropped, a)
-		}
+	_, claimed, err := updateState(ctx, c, name, func(s JobState) (JobState, []Alert, error) {
+		next, claimed, _ := claimUndelivered(s, now, c.now()+sendLeaseMs)
+		return next, claimed, nil
+	})
+	if err != nil {
+		c.report(err, "claiming undelivered alerts for "+name)
+		return []Alert{}
 	}
-	for _, a := range pending {
-		if staleAlert(a, state) {
-			continue
-		}
+	if len(claimed) == 0 {
+		return []Alert{}
+	}
+	var delivered, failed []Alert
+	for _, a := range claimed {
 		left := retryBudget - *spent
 		if left <= 0 {
-			break
+			// Not tried: back to the queue as it was.
+			failed = append(failed, a)
+			continue
 		}
 		started := time.Now()
 		alert := a.clone()
@@ -209,7 +215,7 @@ func (c *Client) retryUndelivered(ctx context.Context, name string, state JobSta
 		}
 		*spent += max(0, time.Since(started))
 	}
-	c.recordDelivery(ctx, name, delivered, failed, dropped, now)
+	c.recordDelivery(ctx, name, delivered, failed, nil, now)
 	if delivered == nil {
 		return []Alert{}
 	}

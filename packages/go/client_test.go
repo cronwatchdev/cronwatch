@@ -122,7 +122,7 @@ func TestJobDeclaredAgainWithoutScheduleClosesMissed(t *testing.T) {
 	sameList(t, "the next run owes nothing", k.alerts.Types(), []string{"missed", "recovered"})
 }
 
-func TestScheduleRemovedWhileSilencedClosesMissedQuietly(t *testing.T) {
+func TestScheduleRemovedWhileSilencedClosesMissedWithItsRecovery(t *testing.T) {
 	k := newKit(t)
 	k.cw.MustJob("sync", cronwatch.Schedule("every 1h"), cronwatch.Grace("10m"))
 	checkNow(t, k.cw)
@@ -131,11 +131,12 @@ func TestScheduleRemovedWhileSilencedClosesMissedQuietly(t *testing.T) {
 	must[cronwatch.JobState](t)(k.cw.Silence(bg, "sync", hour))
 	k.cw.MustJob("sync")
 	k.c.Advance(MIN)
-	sameList(t, "quiet", alertTypes(checkNow(t, k.cw).Alerts), []string{})
+	// The silence does not hold back the recovery for an alert sent before it.
+	sameList(t, "the recovery", alertTypes(checkNow(t, k.cw).Alerts), []string{"recovered"})
 	eq(t, "open", len(summary(t, k.cw, "sync").Open), 0)
 	k.c.Advance(2 * HOUR)
-	sameList(t, "still quiet", alertTypes(checkNow(t, k.cw).Alerts), []string{})
-	sameList(t, "alerts", k.alerts.Types(), []string{"missed"})
+	sameList(t, "nothing after", alertTypes(checkNow(t, k.cw).Alerts), []string{})
+	sameList(t, "alerts", k.alerts.Types(), []string{"missed", "recovered"})
 }
 
 func TestCheckMarksARunThatNeverFinishedAsStuck(t *testing.T) {

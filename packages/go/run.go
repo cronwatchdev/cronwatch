@@ -239,7 +239,7 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	// next check, an alert each time.
 	var started sync.WaitGroup
 	closeOnStart := func(sctx context.Context) {
-		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) { return onRunStart(s), struct{}{}, nil }); err != nil {
+		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) { return holdRun(onRunStart(s), run.ID), struct{}{}, nil }); err != nil {
 			c.report(err, "starting "+name)
 		}
 	}
@@ -512,11 +512,13 @@ func (c *Client) finishRun(ctx context.Context, def Definition, run Run, now int
 		if historyErr != nil {
 			return JobState{}, held{}, historyErr
 		}
-		e, err := onRunFinish(def, run, previous, history, now)
+		// The run leaves pendingRuns in the same write as its evaluation.
+		before := releaseRun(previous, run.ID)
+		e, err := onRunFinish(def, run, before, history, now)
 		if err != nil {
 			return JobState{}, held{}, err
 		}
-		settled := applySilence(previous, e, now)
+		settled := applySilence(before, e, now)
 		state, out := c.outbox(settled.state, settled.alerts, def, now)
 		return state, out, nil
 	})
@@ -634,7 +636,7 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if !evaluate {
 		return []Alert{}, nil
 	}
-	if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) { return onRunStart(s), struct{}{}, nil }); err != nil {
+	if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) { return holdRun(onRunStart(s), run.ID), struct{}{}, nil }); err != nil {
 		return nil, err
 	}
 	if run.Status == StatusRunning {
@@ -660,7 +662,15 @@ func (c *Client) recordOver(ctx context.Context, def Definition, stored Run, run
 		c.report(fmt.Errorf("run %s of %s %s; ignored", run.ID, run.Job, ignored), "recording "+run.Job)
 		return []Alert{}, nil
 	}
-	if !evaluate || (late && run.Status != StatusOK) {
+	if !evaluate {
+		// Stored unjudged on purpose: a check must not evaluate it as one
+		// whose evaluation was lost.
+		if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) { return releaseRun(s, run.ID), struct{}{}, nil }); err != nil {
+			c.report(err, "recording "+run.Job)
+		}
+		return []Alert{}, nil
+	}
+	if late && run.Status != StatusOK {
 		return []Alert{}, nil
 	}
 	return c.finishRun(ctx, def, run, c.now()), nil
