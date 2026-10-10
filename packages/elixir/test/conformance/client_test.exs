@@ -48,6 +48,34 @@ defmodule Cronwatch.Conformance.ClientTest do
   defp message(%{__exception__: true} = e), do: Exception.message(e)
   defp message(e), do: inspect(e)
 
+  test "conformance/client.json: the environment, read from CRONWATCH_ENV, APP_ENV, and the language's own" do
+    cases = list(Conformance.fixture("client"), "environment")
+
+    failures =
+      Enum.flat_map(cases, fn c ->
+        name = Cronwatch.Env.environment_of([field(c, "CRONWATCH_ENV"), field(c, "APP_ENV"), field(c, "native")])
+        got = {name || "", name == "development", name == "production"}
+        want = {field(c, "environment"), field(c, "development"), field(c, "production")}
+        if got == want, do: [], else: ["#{JS.stringify(c)}: #{inspect(got)}"]
+      end)
+
+    assert failures == []
+    assert length(cases) >= 10
+  end
+
+  test "conformance/client.json: tokens and secrets, trimmed, blank as unset" do
+    cases = list(Conformance.fixture("client"), "secrets")
+
+    failures =
+      Enum.flat_map(cases, fn c ->
+        got = Cronwatch.Env.secret(field(c, "value"))
+        if got == field(c, "secret"), do: [], else: ["#{JS.stringify(c)}: #{inspect(got)}"]
+      end)
+
+    assert failures == []
+    assert length(cases) >= 9
+  end
+
   test "conformance/client.json: run ids" do
     cases = list(Conformance.fixture("client"), "runIds")
 

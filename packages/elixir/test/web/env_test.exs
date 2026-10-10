@@ -46,13 +46,16 @@ defmodule Cronwatch.Web.EnvTest do
     cases = [
       {nil, nil, nil, nil},
       {nil, nil, "development", "development"},
-      {nil, nil, "test", "development"},
+      {nil, nil, "test", "test"},
       {nil, nil, "production", "production"},
       {nil, "local", "production", "development"},
       {"production", "dev", "development", "production"},
       {"staging", nil, "development", "staging"},
+      # Trimmed and lowercased; "prod" is production, and "dev" and "local" are development.
+      # "test" and "testing" are not: a test run or CI needs a secret, as production does.
       {"  PROD ", nil, nil, "production"},
-      {nil, "Testing", nil, "development"},
+      {nil, "Testing", nil, "testing"},
+      {nil, " Development ", nil, "development"},
       {nil, "DEV", nil, "development"},
       {"", "   ", "production", "production"},
       {" \t", nil, nil, nil}
@@ -100,7 +103,7 @@ defmodule Cronwatch.Web.EnvTest do
     for var <- ["CRONWATCH_ENV", "APP_ENV", "MIX_ENV"] do
       %{cw: cw} = make()
 
-      with_env([{var, "test"}], fn ->
+      with_env([{var, "dev"}], fn ->
         opts = [instance: cw, base_path: "/cronwatch/"]
 
         out =
@@ -193,7 +196,8 @@ defmodule Cronwatch.Web.EnvTest do
     end
 
     assert Cronwatch.Env.secret("\u0085") == "\u0085"
-    assert Cronwatch.Env.secret(" padded ") == " padded ", "used untrimmed"
+    assert Cronwatch.Env.secret(" padded ") == "padded", "trimmed"
+    assert Cronwatch.Env.secret("padded\n") == "padded", "trimmed"
   end
 
   test "a CRONWATCH_TOKEN or token of only whitespace counts as unset, so the routes stay locked" do
@@ -239,11 +243,36 @@ defmodule Cronwatch.Web.EnvTest do
 
     System.delete_env("MY_TOKEN")
 
-    # Any other value is used as it is, untrimmed.
-    with_env([{"CRONWATCH_ENV", "production"}, {"CRONWATCH_TOKEN", " padded "}], fn ->
-      assert send([instance: cw], "GET", "http://app.test/cronwatch/?token=%20padded%20").status == 303
-      assert send([instance: cw], "GET", "http://app.test/cronwatch/?token=padded").status == 401
-    end)
+    # Anything else is trimmed, so a value read from a file with a trailing
+    # newline still matches the header a client sends, which HTTP trims.
+    for padded <- [" padded ", "padded\n"] do
+      with_env([{"CRONWATCH_ENV", "production"}, {"CRONWATCH_TOKEN", padded}], fn ->
+        for opts <- [[instance: cw], [instance: cw, token: padded]] do
+          res = send(opts, "GET", "http://app.test/cronwatch/api/jobs", [{"authorization", "Bearer padded"}])
+          assert res.status == 200, inspect(padded)
+          assert send(opts, "GET", "http://app.test/cronwatch/?token=padded").status == 303, inspect(padded)
+        end
+      end)
+    end
+  end
+
+  test "a test or testing environment is not development: no token of its own, and a handler with no secret refuses" do
+    %{cw: cw} = make(cron_secret: "")
+
+    for vars <- [
+          [{"MIX_ENV", "test"}],
+          [{"APP_ENV", "testing"}],
+          [{"CRONWATCH_ENV", " Test "}],
+          [{"APP_ENV", "test"}, {"MIX_ENV", "dev"}]
+        ] do
+      with_env(vars, fn ->
+        assert send([instance: cw], "GET", "http://localhost:3000/cronwatch/api/jobs").status == 503, inspect(vars)
+        assert Cronwatch.Web.token(instance: cw) == nil, inspect(vars)
+        assert Cronwatch.Env.development?() == false, inspect(vars)
+        assert call(handler(cw)).status == 503, inspect(vars)
+        refute_received :ran
+      end)
+    end
   end
 
   test "a CRON_SECRET or secret of only whitespace counts as unset" do
