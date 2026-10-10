@@ -53,10 +53,16 @@ def test_a_blank_token_given_in_code_falls_back_to_the_variable(monkeypatch: pyt
     assert send(web, "GET", "/cronwatch/api/jobs", {"authorization": "Bearer from-env"}).status == 200
 
 
-def test_a_token_that_is_not_blank_is_used_as_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRONWATCH_TOKEN", " padded ")
-    web = client(cron_secret=None).routes(base_path="/cronwatch")
-    assert send(web, "GET", "/cronwatch/?token=%20padded%20").status == 303
+@pytest.mark.parametrize("padded", [" padded ", "padded\n"])
+def test_a_token_that_is_not_blank_is_trimmed(monkeypatch: pytest.MonkeyPatch, padded: str) -> None:
+    # A value read from a file often ends in a newline, which HTTP strips from the header a client sends.
+    monkeypatch.setenv("CRONWATCH_TOKEN", padded)
+    for web in [client(cron_secret=None).routes(base_path="/cronwatch"), client(cron_secret=None).routes(token=padded, base_path="/cronwatch")]:
+        assert send(web, "GET", "/cronwatch/api/jobs", {"authorization": "Bearer padded"}).status == 200
+        assert send(web, "GET", "/cronwatch/?token=padded").status == 303
+
+
+def test_a_token_that_is_not_blank_keeps_what_javascript_does_not_trim() -> None:
     # U+0085 and U+001F are whitespace to str.strip() but not to JavaScript: a token of either is a token.
     for odd in ["\u0085", "\u001f"]:
         assert client(cron_secret=None).routes(token=odd).token == odd
@@ -127,3 +133,14 @@ def test_an_authorization_header_that_is_not_a_bearer_leaves_the_cookie_and_quer
     assert send(web, "GET", "/cronwatch/api/jobs", {"authorization": "Bearer wrong", **cookie}).status == 401
     assert send(web, "GET", "/cronwatch/api/jobs", {"authorization": "Bearer", **cookie}).status == 200
     assert send(web, "GET", "/cronwatch/api/jobs", {"authorization": "Bearertok", **cookie}).status == 200
+
+
+@pytest.mark.parametrize("values", [{"ENVIRONMENT": "test"}, {"APP_ENV": "testing"}, {"CRONWATCH_ENV": " Test "}, {"APP_ENV": "test", "ENVIRONMENT": "development"}])
+def test_a_test_or_testing_environment_is_not_development(monkeypatch: pytest.MonkeyPatch, values: dict[str, str]) -> None:
+    monkeypatch.delenv("ENVIRONMENT")
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    cw = cronwatch.Cronwatch(alerts=[Capture()])
+    assert send(cw.routes(base_path="/cronwatch"), "GET", "http://localhost:3000/cronwatch/api/jobs").status == 503
+    handler = cw.job("nightly").handler(lambda _ctx, _request: "ran")
+    assert handler(Request("GET", "/api/cron/nightly", "", {})).status == 503

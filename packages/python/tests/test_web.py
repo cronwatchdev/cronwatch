@@ -234,7 +234,7 @@ def test_without_a_token_outside_development_the_routes_are_locked(monkeypatch: 
     assert "CronWatch routes are locked" in locked.text
 
 
-@pytest.mark.parametrize("env", ["development", "test"])
+@pytest.mark.parametrize("env", ["development", "dev", "local"])
 def test_without_a_token_in_development_a_made_up_token_is_printed_once_and_required(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], env: str
 ) -> None:
