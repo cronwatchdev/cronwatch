@@ -26,6 +26,7 @@ use crate::web::{Request, Response, constant_time_eq, latin1};
 #[derive(Clone, Default)]
 pub struct HandlerOptions {
     secret: Option<Option<String>>,
+    cancel_with_request: bool,
 }
 
 /// Says whether a secret is set, never the secret.
@@ -36,7 +37,10 @@ impl fmt::Debug for HandlerOptions {
             Some(None) => "none",
             Some(Some(_)) => "set",
         };
-        f.debug_struct("HandlerOptions").field("secret", &secret).finish()
+        f.debug_struct("HandlerOptions")
+            .field("secret", &secret)
+            .field("cancel_with_request", &self.cancel_with_request)
+            .finish()
     }
 }
 
@@ -63,9 +67,21 @@ impl HandlerOptions {
         self.secret = Some(None);
         self
     }
+
+    /// Runs the job in the request's own future, so a request whose future
+    /// is dropped (its caller went away, a server's deadline) drops the
+    /// job's future too, and the run is recorded as failed. By default the
+    /// job runs in a task of its own and goes on to its end, as the SDK's
+    /// handler does.
+    pub fn cancel_with_request(mut self) -> Self {
+        self.cancel_with_request = true;
+        self
+    }
 }
 
-type Runner = Box<dyn Fn(Request) -> BoxFuture<'static, (Run, Option<Response>)> + Send + Sync>;
+/// The run and the answer the function gave, or `None` when the run's task
+/// ended without one (the runtime shutting down).
+type Runner = Box<dyn Fn(Request) -> BoxFuture<'static, Option<(Run, Option<Response>)>> + Send + Sync>;
 
 /// A job as an HTTP handler, made by [`Job::handler`]. Cheap to clone.
 #[derive(Clone)]
@@ -107,9 +123,12 @@ impl Job {
     /// as the SDK answers a throw. A `String` returned is the run's output
     /// when nothing was logged.
     ///
-    /// A request whose future is dropped while `f` runs (its caller went
-    /// away, a server's deadline) drops `f`'s future too, and the run is
-    /// recorded as failed, as for any run.
+    /// `f` runs in a task of its own, on the client's runtime, so a request
+    /// whose future is dropped while `f` runs (its caller went away, a
+    /// server's or platform's deadline) leaves the run going to its end, and
+    /// it is recorded as it really ends, as the SDK's handler does.
+    /// [`HandlerOptions::cancel_with_request`] runs it in the request's
+    /// future instead, cancelled with it.
     pub fn handler<F, Fut, T, E>(&self, f: F, options: HandlerOptions) -> Handler
     where
         F: Fn(JobContext, Request) -> Fut + Send + Sync + 'static,
@@ -125,9 +144,11 @@ impl Job {
         };
         let job = self.clone();
         let f = Arc::new(f);
+        let cancel_with_request = options.cancel_with_request;
         let run: Runner = Box::new(move |req: Request| {
             let (job, f) = (job.clone(), f.clone());
-            Box::pin(async move {
+            let runtime = job.client.inner.handle.clone();
+            let work = async move {
                 let done = job
                     .client
                     .execute_run(
@@ -143,6 +164,17 @@ impl Job {
                     _ => None,
                 };
                 (done.run, answer)
+            };
+            if cancel_with_request {
+                return Box::pin(async move { Some(work.await) });
+            }
+            let task = runtime.spawn(work);
+            Box::pin(async move {
+                match task.await {
+                    Ok(done) => Some(done),
+                    Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+                    Err(_) => None,
+                }
             })
         });
         Handler { inner: Arc::new(HandlerInner { job: self.clone(), secret, opted_out, run }) }
@@ -201,7 +233,9 @@ impl Handler {
                 return json(Object::new().with("ok", false).with("error", "Unauthorized"), 401);
             }
         }
-        let (run, answer) = (h.run)(req).await;
+        let Some((run, answer)) = (h.run)(req).await else {
+            return json(Object::new().with("ok", false).with("error", "the run's task ended before it did"), 500);
+        };
         if let Some(answer) = answer {
             return answer;
         }
