@@ -1109,3 +1109,25 @@ ELSEWHERE = {"triage.json"}
 def test_every_fixture_is_replayed() -> None:
     replayed = {"client.json", "duration.json", "schedule.json", "evaluate.json", "format.json", "health.json", "output.json", "store.json", "channels.json", "pgcron.json"}
     assert {p.name for p in DIR.glob("*.json")} == replayed | ELSEWHERE
+
+
+# The sections of each fixture this harness (or the test named) replays. A
+# section the SDK adds fails here until a replay is written for it.
+SECTIONS = {
+    "health.json": {"jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck", "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery"},
+    # environment and secrets: tests/test_env.py.
+    "client.json": {"runIds", "unknownFields", "environment", "secrets"},
+    # foreignRows: tests/test_foreign_rows.py (rows and check).
+    "store.json": {"prune", "compareAndSetState", "updateRunIf", "foreignVersion", "nul", "foreignRows"},
+    # urls is how fetch reads a URL, for ports with a URL parser of their own;
+    # this port posts through urllib and reads only origins (test_channels.py).
+    "channels.json": {"alerts", "sends", "failures", "webhookPayloads", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls"},
+}
+
+
+@pytest.mark.parametrize("name", sorted(SECTIONS))
+def test_every_section_of_a_fixture_is_known(name: str) -> None:
+    data = json.loads((DIR / name).read_text("utf-8"))
+    assert set(data) - {"generatedBy", "sdkVersion"} == SECTIONS[name]
+    if name == "store.json":
+        assert set(data["foreignRows"]) == {"rows", "check"}
