@@ -126,6 +126,32 @@ func Origin(raw string) string {
 	return scheme + "://" + host
 }
 
+// URLSecrets are the parts of a webhook URL that are its credential, to cut
+// from an error body that echoes the request (shared.ts's urlSecrets): its
+// path and query together, then the last segment of its path (Slack's and
+// Discord's token) on its own.
+func URLSecrets(raw string) []string {
+	u := parse(Clean(raw))
+	if u == nil {
+		return nil
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	search := ""
+	if u.RawQuery != "" {
+		search = "?" + u.RawQuery
+	}
+	var out []string
+	for _, part := range []string{path + search, path[strings.LastIndex(path, "/")+1:]} {
+		if part != "" && part != "/" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // Cut is at most max UTF-16 code units of text, never half a surrogate
 // pair (shared.ts's cut).
 func Cut(text string, max int) string {

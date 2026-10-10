@@ -65,7 +65,8 @@ func Discord(o DiscordOptions) (cronwatch.Channel, error) {
 			return err
 		}
 		if !resp.OK() {
-			return fmt.Errorf("%s webhook answered %d: %s", "Discord", resp.Status, js.Head16(resp.Body, 200))
+			// The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+			return fmt.Errorf("%s webhook answered %d: %s", "Discord", resp.Status, post.ErrorBody(resp.Body, post.URLSecrets(o.WebhookURL)...))
 		}
 		return nil
 	}}, nil
