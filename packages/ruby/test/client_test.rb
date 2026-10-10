@@ -176,7 +176,7 @@ class ClientTest < Minitest::Test
     assert_equal [{ after: [:failed] }], done.alerts.map(&:details)
   end
 
-  def test_a_schedule_removed_while_silenced_closes_missed_quietly
+  def test_a_schedule_removed_while_silenced_closes_missed_with_its_recovery_which_the_silence_does_not_hold_back
     cw, clock, alerts = make
     cw.job("sync", schedule: "every 1h", grace: "10m")
     cw.check
@@ -185,11 +185,11 @@ class ClientTest < Minitest::Test
     cw.silence("sync", for: "1h")
     cw.job("sync")
     clock.advance(MIN)
-    assert_equal [], cw.check.alerts
+    assert_equal [:recovered], cw.check.alerts.map(&:type)
     assert_equal [], cw.job_summary("sync").open
     clock.advance(2 * HOUR)
     assert_equal [], cw.check.alerts
-    assert_equal [:missed], alerts.types
+    assert_equal %i[missed recovered], alerts.types
   end
 
   def test_check_marks_a_run_that_never_finished_as_stuck
@@ -382,6 +382,37 @@ class ClientTest < Minitest::Test
     cw.forget("gone")
     assert_equal 0, cw.jobs.length
     assert_nil cw.job_summary("gone")
+  end
+
+  def test_after_a_forget_run_and_resume_run_by_name_declare_the_job_again_as_it_was_written
+    cw, clock, alerts = make
+    cw.job("nightly", schedule: "0 2 * * *", description: "Nightly export")
+    cw.run("nightly") { nil }
+    handle = cw.job("nightly", schedule: "0 2 * * *", description: "Nightly export").start
+    cw.forget("nightly")
+    assert_nil cw.job_summary("nightly")
+    cw.run("nightly") { nil }
+    summary = cw.job_summary("nightly")
+    assert_equal "0 2 * * *", summary.definition.schedule
+    assert_equal "Nightly export", summary.definition.description
+    cw.forget("nightly")
+    resumed = cw.resume_run("nightly", handle.id)
+    assert_equal handle.id, resumed.id
+    clock.advance(HOUR)
+    cw.check
+    assert_equal "0 2 * * *", cw.job_summary("nightly").definition.schedule
+    refute_includes alerts.types, :recovered, "no 'no longer scheduled' recovery"
+  end
+
+  def test_a_recovery_for_an_alert_sent_before_the_silence_is_sent_during_it
+    cw, _, alerts = make
+    job = cw.job("flaky")
+    assert_raises(RuntimeError) { job.run { raise "x" } }
+    cw.silence("flaky", for: "1h")
+    job.run { "ok" }
+    assert_equal %i[failed recovered], alerts.types
+    assert_raises(RuntimeError) { job.run { raise "y" } }
+    assert_equal %i[failed recovered], alerts.types, "a new problem during the silence is not sent"
   end
 
   def test_a_failing_alert_channel_does_not_break_the_run

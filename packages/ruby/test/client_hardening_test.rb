@@ -322,7 +322,9 @@ class ClientHardeningTest < Minitest::Test
     cw = Cronwatch.new(store: Contested.new(store), alerts: [Capture.new], cron_secret: nil,
                        on_error: ->(e, where) { errors << [where, e.message] })
     assert_raises(RuntimeError) { cw.run("busy") { raise "x" } }
-    assert_equal [["evaluating busy", "the state of busy changed under 10 attempts in a row to update it; gave up"]], errors
+    # The start's write (it holds the run as pending) loses too, and is reported the same way.
+    gave_up = "the state of busy changed under 10 attempts in a row to update it; gave up"
+    assert_equal [["starting busy", gave_up], ["evaluating busy", gave_up]], errors
     assert_equal :failed, cw.runs("busy").first.status
   end
 
@@ -475,9 +477,10 @@ class ClientHardeningTest < Minitest::Test
   def test_the_silence_endpoints_return_the_state_with_its_version
     cw, = make
     cw.run("v") { nil }
+    # The run's start (holding it as pending) and its finish wrote versions 1 and 2.
     silenced = cw.silence("v", for: "1h")
-    assert_equal 1, silenced.version
-    assert_equal 2, cw.unsilence("v").version
-    assert_equal 2, cw.store.get_state("v").version
+    assert_equal 3, silenced.version
+    assert_equal 4, cw.unsilence("v").version
+    assert_equal 4, cw.store.get_state("v").version
   end
 end

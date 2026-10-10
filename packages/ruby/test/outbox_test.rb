@@ -197,7 +197,8 @@ class OutboxTest < Minitest::Test
     state = counting.get_state("backup")
     assert_equal [:failed], state.undelivered.map(&:type)
     assert_nil state.sending
-    assert_equal 1, counting.writes, "one write: the failure and its alert together"
+    assert_nil state.pending_runs
+    assert_equal 2, counting.writes, "the start holds the run; then one write: the failure, its alert, and the run's release together"
   end
 
   def test_a_state_written_by_an_older_version_without_sending_still_reads_and_a_malformed_entry_does_not_stop_it
@@ -280,5 +281,114 @@ class OutboxTest < Minitest::Test
     assert_raises(RuntimeError) { job.run { raise "boom" } }
     assert_empty errors
     assert_equal [:failed], capture.types, "the job's own alerts still go out"
+  end
+
+  # A channel that refuses every alert while `down` is set.
+  class Flaky
+    attr_reader :name, :sent
+    attr_accessor :down
+
+    def initialize
+      @name = "flaky"
+      @sent = []
+      @down = true
+    end
+
+    def call(alert)
+      raise "down" if @down
+
+      @sent << alert
+    end
+  end
+
+  def test_two_processes_checking_at_once_retry_a_queued_alert_once
+    clock = Clock.new
+    shared = Cronwatch::Stores::Memory.new
+    channel = Flaky.new
+    a = Cronwatch.new(store: shared, now: clock.to_proc, alerts: [channel], cron_secret: nil, on_error: ->(*) {})
+    b = Cronwatch.new(store: shared, now: clock.to_proc, alerts: [channel], cron_secret: nil, on_error: ->(*) {})
+    assert_raises(RuntimeError) { a.run("nightly") { raise "disk full" } }
+    assert_equal [:failed], shared.get_state("nightly").undelivered.map(&:type)
+    channel.down = false
+    clock.advance(MIN)
+    [Thread.new { a.check }, Thread.new { b.check }].each(&:join)
+    assert_equal [:failed], channel.sent.map(&:type)
+    state = shared.get_state("nightly")
+    assert_equal [], state.undelivered
+    assert_nil state.sending
+  end
+
+  def test_while_a_job_is_silenced_a_retry_claims_only_recoveries
+    clock = Clock.new
+    shared = Cronwatch::Stores::Memory.new
+    channel = Flaky.new
+    cw = Cronwatch.new(store: shared, now: clock.to_proc, alerts: [channel], cron_secret: nil, on_error: ->(*) {})
+    assert_raises(RuntimeError) { cw.run("nightly") { raise "disk full" } }
+    cw.silence("nightly", for: "1h")
+    channel.down = false
+    clock.advance(MIN)
+    cw.check
+    assert_empty channel.sent
+    assert_equal [:failed], shared.get_state("nightly").undelivered.map(&:type)
+    cw.unsilence("nightly")
+    cw.check
+    assert_equal [:failed], channel.sent.map(&:type)
+  end
+
+  # Refuses every conditional state write while `refuse` is set, as if the
+  # process stopped between a run's write and its evaluation.
+  class Refusing < Cronwatch::Stores::Memory
+    attr_accessor :refuse
+
+    def compare_and_set_state(state, expected_version)
+      return false if @refuse
+
+      super
+    end
+  end
+
+  def test_a_finished_run_whose_evaluation_was_never_written_is_evaluated_by_a_later_check_once
+    clock = Clock.new
+    store = Refusing.new
+    sent = Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], cron_secret: nil, on_error: ->(*) {})
+    handle = cw.job("nightly").start
+    store.refuse = true
+    handle.finish(error: RuntimeError.new("disk full"))
+    store.refuse = false
+    assert_equal :failed, store.get_run(handle.id).status
+    assert_empty sent.types
+    assert_equal [handle.id], store.get_state("nightly").pending_runs
+    # Left alone at first, in case its finish is still being written elsewhere.
+    clock.advance(MIN)
+    cw.check
+    assert_empty sent.types
+    clock.advance(LEASE)
+    cw.check
+    assert_equal [:failed], sent.types
+    assert_nil store.get_state("nightly").pending_runs
+    cw.check
+    assert_equal [:failed], sent.types
+  end
+
+  def test_a_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged_is_not_evaluated
+    clock = Clock.new
+    shared = Cronwatch::Stores::Memory.new
+    sent = Capture.new
+    cw = Cronwatch.new(store: shared, now: clock.to_proc, alerts: [sent], cron_secret: nil)
+    cw.job("nightly")
+    shared.set_state(Cronwatch::JobState.from_h("job" => "nightly", "open" => {}, "consecutiveFailures" => 0,
+                                                "silencedUntil" => nil, "lastAlertAt" => nil, "pendingRuns" => ["gone"]))
+    cw.check
+    assert_nil shared.get_state("nightly").pending_runs
+    run = { id: "imported", job: "nightly", status: "running", started_at: clock.now, finished_at: nil, duration_ms: nil,
+            error: nil, output: nil, metrics: {}, trigger: "x" }
+    cw.record_run(run)
+    assert_equal ["imported"], shared.get_state("nightly").pending_runs
+    cw.record_run(run.merge(status: "failed", finished_at: clock.now, duration_ms: 0, error: "x"), evaluate: false)
+    assert_nil shared.get_state("nightly").pending_runs
+    clock.advance(LEASE + MIN)
+    cw.check
+    assert_empty sent.types
   end
 end
