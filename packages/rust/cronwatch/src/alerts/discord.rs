@@ -89,10 +89,13 @@ impl Channel for Discord {
             )
             .await?;
             if !answer.ok() {
+                // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
+                let secrets = post::url_secrets(&o.webhook_url);
+                let secrets: Vec<&str> = secrets.iter().map(String::as_str).collect();
                 return Err(post::fail(format!(
                     "Discord webhook answered {}: {}",
                     answer.status,
-                    js::head16(&answer.body, 200)
+                    post::error_body(&answer.body, &secrets)
                 )));
             }
             Ok(())
