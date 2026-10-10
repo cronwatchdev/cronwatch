@@ -68,14 +68,14 @@ final class ApiController extends Controller
     private static function signedIn(Request $request, string $token, ?string $cronSecret, bool $orCookie = true): bool
     {
         if (preg_match('/^Bearer\s+(.+)$/is', (string) $request->header('authorization'), $m) === 1) {
-            return hash_equals($token, $m[1]) || ($cronSecret !== null && hash_equals($cronSecret, $m[1]));
+            return Dashboard::secretMatches($m[1], $token) || ($cronSecret !== null && Dashboard::secretMatches($m[1], $cronSecret));
         }
         if (!$orCookie) {
             return false;
         }
         foreach (explode(';', (string) $request->header('cookie')) as $pair) {
             [$name, $value] = array_pad(explode('=', trim($pair), 2), 2, '');
-            if ($name === Dashboard::COOKIE && hash_equals(Dashboard::cookieValue($token), $value)) {
+            if ($name === Dashboard::COOKIE && Dashboard::secretMatches($value, Dashboard::cookieValue($token))) {
                 return true;
             }
         }
