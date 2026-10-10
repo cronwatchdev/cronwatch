@@ -788,7 +788,7 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
         string body = NulText.StripJsonNul(state.ToJson());
         if (_dialect == SqlDialect.MySql && expected == 0)
         {
-            return await CasFromZeroAsync(state.Job, body, cancellationToken).ConfigureAwait(false);
+            return await CasFromZeroAsync(state.Job, body, state.Version ?? 0, cancellationToken).ConfigureAwait(false);
         }
         if (expected != 0)
         {
@@ -801,12 +801,14 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
     /// MySQL's compare-and-set from version 0, in two steps that each decide alone: a row at
     /// version 0 (or without one) is updated, and failing that the row is inserted, which a row
     /// already there refuses. A refused insert is another process's write, unless the row holds
-    /// exactly what this write sent, when the write landed and only its answer was lost (a row at
-    /// version 0 that already held these values, which a connection counting changed rows answers
-    /// 0 for, or a connection dropped after the commit), as the PHP port's <c>stateLanded()</c>
-    /// reads it.
+    /// exactly what this write sent, when the write landed and only its answer was lost, as the
+    /// PHP port's <c>stateLanded()</c> reads it. That is a row at version 0 that already held these
+    /// values, which a connection counting changed rows answers 0 for, or an insert whose
+    /// connection dropped after the commit. A duplicate key refusing a write of a later version is
+    /// never this write's: another writer that sent the same bytes got there first, and only one
+    /// of them may win.
     /// </summary>
-    private async Task<bool> CasFromZeroAsync(string job, string body, CancellationToken ct)
+    private async Task<bool> CasFromZeroAsync(string job, string body, long version, CancellationToken ct)
     {
         if (await RunAsync(_sql.CasFromZero, [JsonParam(body), Text(job)], ct).ConfigureAwait(false) > 0)
         {
@@ -817,8 +819,12 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
             await RunAsync(_sql.CasInsert, [Text(job), JsonParam(body)], ct).ConfigureAwait(false);
             return true;
         }
-        catch (DbException)
+        catch (DbException e)
         {
+            if (Refused(e) && version != 0)
+            {
+                return false;
+            }
             JobState? stored = await GetStateAsync(job, ct).ConfigureAwait(false);
             if (stored == null)
             {
@@ -827,6 +833,9 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
             return stored.ToJson() == Js.WellFormed(body);
         }
     }
+
+    /// <summary>The server refused the statement as breaking a constraint (SQLSTATE class 23): it was not written.</summary>
+    private static bool Refused(DbException e) => e.SqlState is { } state && state.StartsWith("23", StringComparison.Ordinal);
 
     /// <inheritdoc/>
     public Task<long> PruneAsync(long before, CancellationToken cancellationToken = default) =>
