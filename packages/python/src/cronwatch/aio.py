@@ -178,9 +178,8 @@ class AsyncCronwatch:
 
     def run(self, name: str, fn: Callable[[JobContext], Any] | None = None, **options: Any) -> Any:
         """Run a job by name, declaring it on first use (or again, with options). Without a function, an async block."""
-        with self.sync._registry:
-            declared = self.sync._definitions.get(name)
-        handle = self.job(name, **options) if options or declared is None else AsyncJobHandle(JobHandle(self.sync, declared))
+        declared = None if options else self.sync._declared(name)
+        handle = AsyncJobHandle(JobHandle(self.sync, declared)) if declared is not None else self.job(name, **options)
         return handle.run(fn)
 
     def defined_jobs(self) -> list[JobDefinition]:

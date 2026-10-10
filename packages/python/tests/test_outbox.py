@@ -6,6 +6,7 @@ for several processes; a process "dies" when its store stops answering."""
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -225,7 +226,8 @@ def test_a_process_that_queues_its_alerts_for_a_check_elsewhere_writes_them_with
     state = shared.get_state("backup")
     assert [str(a.type) for a in state.undelivered] == ["failed"]
     assert state.sending is None
-    assert writes[0] == 1, "one write: the failure and its alert together"
+    assert state.pending_runs is None
+    assert writes[0] == 2, "the start holds the run; then one write: the failure, its alert, and the run's release together"
 
 
 def test_a_malformed_outbox_entry_neither_breaks_the_state_nor_is_ever_sent() -> None:
@@ -243,4 +245,117 @@ def test_a_malformed_outbox_entry_neither_breaks_the_state_nor_is_ever_sent() ->
     state = shared.get_state("nightly")
     assert state.sending is None
     assert state.undelivered == []
+    assert sent.types() == []
+
+
+class Flaky:
+    """A channel that refuses while `down`, and takes a moment to send, so two checks overlap."""
+
+    name = "flaky"
+
+    def __init__(self) -> None:
+        self.down = True
+        self.sent: list[Alert] = []
+        self._lock = threading.Lock()
+
+    def send(self, alert: Alert, context: Any = None) -> None:
+        if self.down:
+            raise RuntimeError("down")
+        time.sleep(0.2)
+        with self._lock:
+            self.sent.append(alert)
+
+
+def quiet(error: BaseException, where: str) -> None:
+    pass
+
+
+def test_two_processes_checking_at_once_retry_a_queued_alert_once() -> None:
+    c = Clock()
+    shared = MemoryStore()
+    channel = Flaky()
+    a = Cronwatch(store=shared, now=c.now, alerts=[channel], cron_secret=None, on_error=quiet)
+    b = Cronwatch(store=shared, now=c.now, alerts=[channel], cron_secret=None, on_error=quiet)
+    with pytest.raises(RuntimeError):
+        a.run("nightly", boom("disk full"))
+    assert [str(x.type) for x in shared.get_state("nightly").undelivered] == ["failed"]
+    channel.down = False
+    c.advance(MIN)
+    checks = [threading.Thread(target=cw.check) for cw in (a, b)]
+    for t in checks:
+        t.start()
+    for t in checks:
+        t.join()
+    assert [str(x.type) for x in channel.sent] == ["failed"]
+    state = shared.get_state("nightly")
+    assert state.undelivered == []
+    assert state.sending is None
+
+
+def test_while_a_job_is_silenced_a_retry_claims_only_recoveries() -> None:
+    c = Clock()
+    shared = MemoryStore()
+    channel = Flaky()
+    cw = Cronwatch(store=shared, now=c.now, alerts=[channel], cron_secret=None, on_error=quiet)
+    with pytest.raises(RuntimeError):
+        cw.run("nightly", boom("disk full"))
+    cw.silence("nightly", "1h")
+    channel.down = False
+    c.advance(MIN)
+    cw.check()
+    assert channel.sent == []
+    assert [str(x.type) for x in shared.get_state("nightly").undelivered] == ["failed"]
+    cw.unsilence("nightly")
+    cw.check()
+    assert [str(x.type) for x in channel.sent] == ["failed"]
+
+
+def test_a_finished_run_whose_evaluation_was_never_written_is_evaluated_by_a_later_check_once() -> None:
+    c = Clock()
+    shared = MemoryStore()
+    # The finish's state write keeps losing, as if the process stopped between the run's write and its evaluation.
+    refuse = [False]
+
+    def compare_and_set_state(state: Any, version: int) -> bool:
+        return False if refuse[0] else bool(shared.compare_and_set_state(state, version))
+
+    sent = Capture()
+    cw = Cronwatch(store=Wrapped(shared, compare_and_set_state=compare_and_set_state), now=c.now, alerts=[sent], cron_secret=None, on_error=quiet)
+    handle = cw.job("nightly").start()
+    refuse[0] = True
+    handle.finish(error=RuntimeError("disk full"))
+    refuse[0] = False
+    assert shared.get_run(handle.id).status == "failed"
+    assert sent.types() == []
+    assert shared.get_state("nightly").pending_runs == [handle.id]
+    # Left alone at first, in case its finish is still being written elsewhere.
+    c.advance(MIN)
+    cw.check()
+    assert sent.types() == []
+    c.advance(SEND_LEASE_MS)
+    cw.check()
+    assert sent.types() == ["failed"]
+    assert shared.get_state("nightly").pending_runs is None
+    cw.check()
+    assert sent.types() == ["failed"]
+
+
+def test_a_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged_is_not_evaluated() -> None:
+    from cronwatch.types import JobState
+
+    c = Clock()
+    shared = MemoryStore()
+    sent = Capture()
+    cw = Cronwatch(store=shared, now=c.now, alerts=[sent], cron_secret=None)
+    cw.job("nightly")
+    shared.set_state(JobState.from_dict({"job": "nightly", "open": {}, "consecutiveFailures": 0, "silencedUntil": None, "lastAlertAt": None, "pendingRuns": ["gone"]}))
+    cw.check()
+    assert shared.get_state("nightly").pending_runs is None
+    run = {"id": "imported", "job": "nightly", "status": "running", "startedAt": c.now(), "finishedAt": None, "durationMs": None, "error": None, "output": None, "metrics": {}, "trigger": "x"}
+    cw.record_run(run)
+    assert shared.get_state("nightly").pending_runs == ["imported"]
+    cw.record_run({**run, "status": "failed", "finishedAt": c.now(), "durationMs": 0, "error": "x"}, evaluate=False)
+    assert shared.get_state("nightly").pending_runs is None
+    c.advance(SEND_LEASE_MS + MIN)
+    cw.check()
     assert sent.types() == []

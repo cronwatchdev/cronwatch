@@ -38,17 +38,20 @@ __all__ = [
     "BASELINE_MIN_RUNS",
     "BASELINE_WINDOW",
     "CheckEvaluation",
+    "Claim",
     "DEFAULT_GRACE_MS",
     "DEFAULT_TIMEOUT_MS",
     "Delivery",
     "Evaluation",
     "MAX_DURATION_MS",
+    "MAX_PENDING_RUNS",
     "MAX_UNDELIVERED",
     "SEND_LEASE_MS",
     "SLOW_FLOOR_MS",
     "alert_key",
     "apply_silence",
     "budget_breaches",
+    "claim_undelivered",
     "empty_state",
     "failure_count",
     "floor_breaches",
@@ -56,6 +59,7 @@ __all__ = [
     "grace_ms",
     "has_full_baseline",
     "hold_alerts",
+    "hold_run",
     "is_silenced",
     "is_stuck",
     "job_health",
@@ -67,6 +71,7 @@ __all__ = [
     "open_conditions",
     "queue_undelivered",
     "record_sent",
+    "release_run",
     "release_sending",
     "run_duration",
     "silence_end",
@@ -162,8 +167,8 @@ def normalize_state(state: JobState | Mapping[str, Any] | Any, job: str) -> JobS
     keeps only its entries whose value is a number; `silenced_until` and
     `last_alert_at` that are not numbers read as None; `pending_recovery`
     keeps only its strings, and `undelivered` only its alerts (anything but
-    a list reads as []), and `under_floor` only its strings (None when
-    none). Unknown fields are kept as written."""
+    a list reads as []), and `under_floor` and `pending_runs` only their
+    strings (each None when none). Unknown fields are kept as written."""
     if isinstance(state, Mapping):
         state = JobState.from_dict(state)
     if not isinstance(state, JobState):
@@ -178,6 +183,7 @@ def normalize_state(state: JobState | Mapping[str, Any] | Any, job: str) -> JobS
     if not isinstance(out.sending, list) or not out.sending:
         out.sending = None
     out.under_floor = _read_metric_names(state.under_floor)
+    out.pending_runs = _read_metric_names(state.pending_runs)
     return out
 
 
@@ -300,6 +306,71 @@ def record_sent(state: JobState, delivered: Sequence[Alert], failed: Sequence[Al
     if delivered:
         following.last_alert_at = now
     return queue_undelivered(following, failed)
+
+
+@dataclass
+class Claim:
+    """A check's claim on the undelivered queue: the state to write, the
+    alerts this process sends once that write lands, and the stale ones that
+    left the queue."""
+
+    state: JobState
+    claimed: list[Alert]
+    stale: list[Alert]
+
+
+def claim_undelivered(state: JobState, now: int, until: int) -> Claim:
+    """A check's claim on the undelivered queue, written before it sends, so
+    two processes checking at once never retry the same alert: the queued
+    alerts that still describe the job move into `sending`, oldest first, each
+    with its lease ending at `until`, as many as `sending` has room for under
+    MAX_UNDELIVERED (the rest wait for the next check); stale ones
+    (stale_alert) leave the queue. While the job is silenced only recoveries
+    are claimed. The process whose write lands sends `claimed`."""
+    following = _clone_state(state)
+    queue = list(following.undelivered or [])
+    stale = [a for a in queue if stale_alert(a, following)]
+    silenced = is_silenced(following, now)
+    room = max(0, MAX_UNDELIVERED - len(following.sending or []))
+    claimed = [a for a in queue if not _among(a, stale) and (not silenced or a.type == AlertType.RECOVERED)][:room]
+    if not stale and not claimed:
+        return Claim(state, claimed, stale)
+    following.undelivered = [a for a in queue if not _among(a, stale) and not _among(a, claimed)]
+    if claimed:
+        following.sending = [*(following.sending or []), *(SendingAlert(until=until, alert=a) for a in claimed)]
+    return Claim(following, claimed, stale)
+
+
+def _among(alert: Alert, alerts: Sequence[Alert]) -> bool:
+    """Whether this very alert is one of `alerts` (by identity, as includes() compares objects)."""
+    return any(alert is a for a in alerts)
+
+
+#: Runs held in `pending_runs` per job; past it the oldest go.
+MAX_PENDING_RUNS = 100
+
+
+def hold_run(state: JobState, run_id: str) -> JobState:
+    """A run just started, held in `pending_runs` until its finish is
+    evaluated (release_run), so a check can evaluate it if the process that
+    finished it stops before writing the evaluation. Written with
+    on_run_start's state. Only the newest MAX_PENDING_RUNS are kept."""
+    following = _clone_state(state)
+    held = [i for i in following.pending_runs or [] if i != run_id]
+    held.append(run_id)
+    following.pending_runs = held[-MAX_PENDING_RUNS:]
+    return following
+
+
+def release_run(state: JobState, run_id: str) -> JobState:
+    """A run taken out of `pending_runs`, as its evaluation is written or once it is gone from the store."""
+    held = state.pending_runs or []
+    if run_id not in held:
+        return state
+    following = _clone_state(state)
+    left = [i for i in held if i != run_id]
+    following.pending_runs = left or None
+    return following
 
 
 def _open_condition(state: JobState, condition: Condition, now: int) -> bool:
@@ -580,10 +651,12 @@ def is_silenced(state: JobState, now: int) -> bool:
 
 def apply_silence(previous: JobState, evaluation: Evaluation, now: int) -> Evaluation:
     """An evaluation as it is saved and sent: while the job was silenced when it
-    began, nothing opens and nothing is sent."""
+    began, nothing opens and no new alert is sent, but a recovery is. A
+    condition can only close during a silence if it opened (and alerted)
+    before it, so its recovery closes an incident someone was told about."""
     if not is_silenced(previous, now):
         return evaluation
-    return Evaluation(mute_opens(previous, evaluation.state), [])
+    return Evaluation(mute_opens(previous, evaluation.state), [a for a in evaluation.alerts if a.type == AlertType.RECOVERED])
 
 
 def stale_alert(alert: Alert, state: JobState) -> bool:
