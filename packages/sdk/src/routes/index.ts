@@ -259,23 +259,75 @@ function stripBase(pathname: string, base: string): string {
   return path;
 }
 
-async function readBody(request: Request): Promise<Record<string, string>> {
-  const type = request.headers.get("content-type") ?? "";
+/** The most of a request body the routes read (1 MiB), as every port's; a body past it is answered 413. */
+const MAX_REQUEST_BODY = 1 << 20;
+
+/** A request body past MAX_REQUEST_BODY. */
+const TOO_LARGE = Symbol("too large");
+
+/**
+ * The request's body, at most MAX_REQUEST_BODY bytes: refused from its
+ * Content-Length when that says more, else read one byte past the cap at
+ * most, so a client cannot make the server hold a body of any size. Its
+ * forms and JSON are a few bytes.
+ */
+async function readLimited(request: Request): Promise<Uint8Array<ArrayBuffer> | typeof TOO_LARGE> {
+  const length = Number(request.headers.get("content-length"));
+  if (Number.isFinite(length) && length > MAX_REQUEST_BODY) return TOO_LARGE;
+  if (!request.body) return new Uint8Array(new ArrayBuffer(0));
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
   try {
-    if (type.includes("application/json")) {
-      const data = await request.json();
-      return typeof data === "object" && data !== null ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : {};
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_REQUEST_BODY) {
+        await reader.cancel().catch(() => {});
+        return TOO_LARGE;
+      }
+      chunks.push(value);
     }
-    if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
-      const form = await request.formData();
-      const out: Record<string, string> = {};
-      for (const [k, v] of form.entries()) out[k] = String(v);
-      return out;
-    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(new ArrayBuffer(size));
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
+/** The fields of a JSON or form body, {} for anything else; TOO_LARGE past the cap. */
+async function readBody(request: Request): Promise<Record<string, string> | typeof TOO_LARGE> {
+  const type = request.headers.get("content-type") ?? "";
+  const json = type.includes("application/json");
+  const form = type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data");
+  if (!json && !form) return {};
+  let bytes: Uint8Array<ArrayBuffer> | typeof TOO_LARGE;
+  try {
+    bytes = await readLimited(request);
   } catch {
     return {};
   }
-  return {};
+  if (bytes === TOO_LARGE) return TOO_LARGE;
+  // Parsed as the request itself would parse it, from the bytes read.
+  const copy = new Request(request.url, { method: "POST", headers: { "content-type": type }, body: bytes });
+  try {
+    if (json) {
+      const data = await copy.json();
+      return typeof data === "object" && data !== null ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : {};
+    }
+    const fields = await copy.formData();
+    const out: Record<string, string> = {};
+    for (const [k, v] of fields.entries()) out[k] = String(v);
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -386,7 +438,8 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
     // The sign-in form posts the token here, in the body, so it stays out of
     // the URL and every access log. Cross-site posts were refused above.
     if (token && method === "POST" && path === "/signin") {
-      const sent = (await readBody(request)).token;
+      const body = await readBody(request);
+      const sent = body === TOO_LARGE ? undefined : body.token;
       if (sent === undefined || !constantTimeEqual(sent, token)) return signInPage();
       return redirect(signInReturn(request.headers.get("referer"), publicOrigin, base), { "set-cookie": await signInCookie() });
     }
@@ -412,7 +465,8 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
         // browser's history. The request line that carried it may still be in
         // an access log, which is why the sign-in form posts instead.
         url.searchParams.delete("token");
-        return redirect(url.pathname + (url.search || ""), { "set-cookie": await signInCookie() });
+        // One leading slash: "//host/..." would be a protocol-relative Location, off this site.
+        return redirect(url.pathname.replace(/^\/+/, "/") + (url.search || ""), { "set-cookie": await signInCookie() });
       }
     }
 
@@ -455,9 +509,11 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
       if (parts[2] !== "silence" && parts[2] !== "unsilence") return html(messagePage("Not found", path, base), 404);
       if (!(await cw.jobSummary(name))) return html(messagePage("No such job", `${name} is not in the store.`, base), 404);
       if (parts[2] === "silence") {
+        const body = await readBody(request);
+        if (body === TOO_LARGE) return html(messagePage("Not silenced", "The request was too large.", base), 413);
         let duration: Duration;
         try {
-          duration = silenceDuration((await readBody(request)).for);
+          duration = silenceDuration(body.for);
         } catch (e) {
           return html(messagePage("Not silenced", (e as Error).message, base), 400);
         }
@@ -494,6 +550,7 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
         if (!(await cw.jobSummary(name))) return api({ ok: false, error: "No such job" }, 404);
         if (rest[2] === "silence") {
           const body = await readBody(request);
+          if (body === TOO_LARGE) return api({ ok: false, error: "Request body too large" }, 413);
           let duration: Duration;
           try {
             duration = silenceDuration(body.for ?? url.searchParams.get("for"));
