@@ -6,6 +6,8 @@
 #   ssh joncpu /var/www/cronwatch.dev/deploy/rollback <name>   # one listed in /var/www/cronwatch.dev-releases
 #
 # Only releases that passed their build check (marked .release-ok) qualify.
+# Like release-deploy, it confirms nginx serves the release it switched to,
+# and switches back if not.
 # The next push to main deploys as usual once CI passes, so push a fix (or a revert) next.
 
 set -euo pipefail
@@ -13,6 +15,13 @@ set -euo pipefail
 SITE=cronwatch.dev
 LIVE=/var/www/$SITE
 RELEASES=/var/www/$SITE-releases
+WEB_ROOT=site/dist
+
+# Never at the same time as a deploy, and the target is chosen under the
+# lock, so a deploy finishing meanwhile cannot change what "the release
+# before the live one" means.
+exec 9>"$RELEASES/.deploy.lock"   # not /tmp, where any local user could pre-create or symlink it
+flock -n 9 || { echo "A deploy is running; try again when it finishes." >&2; exit 1; }
 
 current=$(readlink -f "$LIVE")
 if [ -n "${1:-}" ]; then
@@ -29,10 +38,26 @@ if [ -z "$target" ] || [ ! -f "$target/.release-ok" ] || [ "$(readlink -f "$targ
     exit 1
 fi
 
-# Never at the same time as a deploy.
-exec 9>"$RELEASES/.deploy.lock"   # not /tmp, where any local user could pre-create or symlink it
-flock -n 9 || { echo "A deploy is running; try again when it finishes." >&2; exit 1; }
+switch_to() {
+    ln -sfn "$1" "$LIVE.next"
+    mv -T "$LIVE.next" "$LIVE"
+}
 
-ln -sfn "$target" "$LIVE.next"
-mv -T "$LIVE.next" "$LIVE"
+switch_to "$target"
+
+# The front page must answer 200 with exactly the index.html of the release
+# switched to (asset names are content hashes, so another release differs).
+page=$(mktemp)
+code=$(curl -s -o "$page" -w '%{http_code}' --max-time 10 -H 'Cache-Control: no-cache' "https://$SITE/" || true)
+served=false
+if [ "$code" = "200" ] && cmp -s "$page" "$target/$WEB_ROOT/index.html"; then
+    served=true
+fi
+rm -f "$page"
+if ! $served; then
+    switch_to "$current"
+    echo "https://$SITE/ answered $code after switching to $(basename "$target"), not with its page; went back to $(basename "$current")." >&2
+    exit 1
+fi
+
 echo "Rolled back to $(basename "$target"): $(git -C "$target" log -1 --format='%h %s')"
