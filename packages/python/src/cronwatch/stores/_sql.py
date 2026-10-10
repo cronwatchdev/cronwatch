@@ -291,7 +291,8 @@ def row_to_job(row: Any) -> StoredJob:
 def row_to_run(row: Any) -> Run:
     """A run's row. A start that is not a finite number reads as 0, a finish or
     duration as None; an error or output that is not text as None; metrics
-    that do not parse to an object as {}; a trigger that is not text as "run"."""
+    that do not parse to an object as {}, and of an object only the finite
+    numbers; a trigger that is not text as "run"."""
     metrics = _json(row["metrics"])
     error, output, trigger = row["error"], row["output"], row["trigger"]
     return Run(
@@ -303,7 +304,7 @@ def row_to_run(row: Any) -> Run:
         duration_ms=_read_number(row["duration_ms"]),
         error=error if isinstance(error, str) else None,
         output=output if isinstance(output, str) else None,
-        metrics=dict(metrics) if isinstance(metrics, Mapping) else {},
+        metrics=_js.finite_metrics(metrics) if isinstance(metrics, Mapping) else {},
         trigger=trigger if isinstance(trigger, str) else "run",
     )
 
