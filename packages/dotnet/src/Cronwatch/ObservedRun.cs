@@ -11,7 +11,7 @@ namespace Cronwatch;
 /// opened when the scheduler says the function starts (<see cref="Job.OpenAsync"/>) and closed
 /// when it says the function has ended. The two halves of <c>RunAsync</c>, so the running row, the
 /// activity, the timeout, and the process-exit hook's record are a run's. The first of
-/// <see cref="CloseAsync"/>, <see cref="CloseWithAsync"/>, and <see cref="TakeBackAsync"/> ends it,
+/// <see cref="CloseAsync"/>, <see cref="CloseWithAsync"/>, and <see cref="TakeBackAsync()"/> ends it,
 /// and later calls do nothing. Safe to use from any thread.
 /// </summary>
 [DebuggerDisplay("{ToString(),nq}")]
@@ -104,17 +104,24 @@ public sealed class ObservedRun
     /// (a job its server's shutdown put back in its queue): the running row is deleted, nothing is
     /// judged or alerted, and the job's state is left as it was. A row a check already marked
     /// stuck is left as it is. When the store cannot take a run back (it has no
-    /// <see cref="IDeleteRunIfStore"/>, or it failed), which is reported, the run is closed as a
-    /// success instead. Says whether it was given back.
+    /// <see cref="IDeleteRunIfStore"/>, or it failed), which is reported, the run is closed as
+    /// failed instead, since it did not finish. Says whether it was given back.
     /// </summary>
-    public async Task<bool> TakeBackAsync()
+    public Task<bool> TakeBackAsync() => TakeBackAsync(null);
+
+    /// <summary>
+    /// <see cref="TakeBackAsync()"/>, with what ended the attempt: when the run cannot be given
+    /// back, it is closed failed with <paramref name="failure"/>, or with a
+    /// <see cref="CronwatchException"/> saying it could not be given back when that is null.
+    /// </summary>
+    public async Task<bool> TakeBackAsync(Exception? failure)
     {
         if (await _client.TakeBackAsync(_opened).ConfigureAwait(false))
         {
             Stop("given back");
             return true;
         }
-        await FinishAsync(null, null, CancellationToken.None).ConfigureAwait(false);
+        await FinishAsync(null, failure ?? new CronwatchException("the run could not be given back"), CancellationToken.None).ConfigureAwait(false);
         return false;
     }
 

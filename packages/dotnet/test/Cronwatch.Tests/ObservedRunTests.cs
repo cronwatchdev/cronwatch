@@ -63,6 +63,31 @@ public class ObservedRunTests
     }
 
     [Fact]
+    public async Task A_run_that_cannot_be_given_back_is_closed_failed_not_ok()
+    {
+        // A store with no IDeleteRunIfStore cannot take a run back.
+        await using var m = Make(new Plain(new MemoryStore()));
+        Job job = m.Cw.Job("nightly");
+        ObservedRun run = await job.OpenAsync(new RunOptions { MayTakeBack = true });
+        Assert.False(await run.TakeBackAsync(new OperationCanceledException("shutdown")));
+        Assert.False(run.IsOpen);
+        Run stored = (await m.Cw.GetRunAsync(run.Id))!;
+        Assert.Equal(RunStatus.Failed, stored.Status);
+        Assert.StartsWith("OperationCanceledException: shutdown", stored.Error, StringComparison.Ordinal);
+
+        // A store whose delete fails, given no exception: failed, saying why, never a success.
+        var wrapped = new Wrapped();
+        await using var n = Make(wrapped);
+        Job other = n.Cw.Job("nightly");
+        ObservedRun second = await other.OpenAsync(new RunOptions { MayTakeBack = true });
+        wrapped.Break("deleteRunIf");
+        Assert.False(await second.TakeBackAsync());
+        Run recorded = (await n.Cw.GetRunAsync(second.Id))!;
+        Assert.Equal(RunStatus.Failed, recorded.Status);
+        Assert.Contains("could not be given back", recorded.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Discard_when_takes_an_observed_run_back()
     {
         await using var m = Make();

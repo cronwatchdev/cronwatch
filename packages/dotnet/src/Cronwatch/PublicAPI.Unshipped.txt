@@ -789,6 +789,7 @@ Cronwatch.ObservedRun.IsOpen.get -> bool
 Cronwatch.ObservedRun.Job.get -> string!
 Cronwatch.ObservedRun.MakeCurrent() -> System.IDisposable!
 Cronwatch.ObservedRun.TakeBackAsync() -> System.Threading.Tasks.Task<bool>!
+Cronwatch.ObservedRun.TakeBackAsync(System.Exception? failure) -> System.Threading.Tasks.Task<bool>!
 Cronwatch.PgCron.PgCronJob
 Cronwatch.PgCron.PgCronJob.<Clone>$() -> Cronwatch.PgCron.PgCronJob!
 Cronwatch.PgCron.PgCronJob.Active.get -> bool

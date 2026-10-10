@@ -92,10 +92,11 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
                 context.Items.Remove(CurrentKey);
                 restore.Dispose();
             }
-            Exception? thrown = context.Exception;
-            if (context.Canceled || GivenBack(thrown, context))
+            Exception? raw = context.Exception;
+            Exception? thrown = raw is JobPerformanceException { InnerException: { } inner } ? inner : raw;
+            if (context.Canceled || GivenBack(raw, context))
             {
-                run.TakeBackAsync().GetAwaiter().GetResult();
+                run.TakeBackAsync(thrown).GetAwaiter().GetResult();
             }
             else if (thrown == null)
             {
@@ -103,7 +104,7 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
             }
             else
             {
-                run.CloseAsync(thrown is JobPerformanceException { InnerException: { } inner } ? inner : thrown).GetAwaiter().GetResult();
+                run.CloseAsync(thrown).GetAwaiter().GetResult();
             }
         }
         catch (Exception e)
