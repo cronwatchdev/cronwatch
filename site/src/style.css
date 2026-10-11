@@ -125,12 +125,20 @@ pre b.bad { color: var(--bad); } pre b.warn { color: var(--warn); } pre b.ok { c
    Java's coordinates at their colons (a <wbr> after each). */
 .install code.dep::before { content: attr(data-file) ": "; }
 .install code.dep span { white-space: nowrap; }
-/* One install box per language, side by side, each under a small label. */
-.installs { display: flex; flex-wrap: wrap; gap: 14px 18px; margin-top: 26px; }
+/* Two sets of install boxes, the languages and then the CMS plugins: in
+   each, one box per language or CMS, side by side, each under a small label. */
+.installs { margin-top: 26px; }
+.installs .set { display: flex; flex-wrap: wrap; gap: 14px 18px; }
+.installs .set + .set { margin-top: 14px; }
 .installs .for { font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 7px; }
 .installs .install { margin-top: 0; }
-@media (min-width: 800px) { .installs { display: grid; grid-template-columns: repeat(2, max-content); } .installs .install { display: flex; justify-content: space-between; } }
-@media (min-width: 1160px) { .installs { grid-template-columns: repeat(3, max-content); } }
+.installs .alt { margin: 10px 0 0; max-width: 62ch; color: var(--muted); font-size: 16px; text-wrap: pretty; }
+.installs .alt code { font: 400 14px/1.4 var(--mono); color: var(--body); }
+/* Without script the boxes sit in a grid sized to the commands; a help line
+   wraps to its box's width rather than widening the column. */
+html:not(.js) .installs .alt { width: 0; min-width: 100%; }
+@media (min-width: 800px) { .installs .set { display: grid; grid-template-columns: repeat(2, max-content); } .installs .install { display: flex; justify-content: space-between; } }
+@media (min-width: 1160px) { .installs .set { grid-template-columns: repeat(3, max-content); } }
 /* With site.js the boxes become tabs, one per language, each with its logo:
    grey until hovered or chosen, then in its own colour (the owner's one
    exception to colour for states only, like the logo mark's gradient).
@@ -141,10 +149,22 @@ figure.browser, figure.timeline { font-variant-numeric: lining-nums; }
 /* theme.js marks <html> with .js before the first paint, so the boxes are
    set as tabs from the start, the first one showing, and nothing below them
    moves when site.js wires the tabs up and shows the remembered one. */
-.installs.tabbed, .js .installs { display: block; max-width: 800px; }
+.installs.tabbed, .js .installs { max-width: 800px; }
+.installs.tabbed .set, .js .installs .set { display: block; margin-top: 0; }
+.installs .set[hidden] { display: none; }
 .installs.tabbed .for, .js .installs .for { display: none; }
 .installs.tabbed .install, .js .installs .install { display: flex; justify-content: space-between; width: 100%; }
-.js .installs:not(.tabbed) .way:not(#way-ts) { display: none; }
+.js .installs:not(.tabbed) .way:not(#way-ts), .js .installs:not(.tabbed) #set-cms { display: none; }
+/* Above the tabs, the choice between a library in your app and a CMS
+   plugin: two plain outlined buttons (squared like the prompt button, not
+   pills), the chosen one inked. */
+.kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.kinds[hidden] { display: none; }
+.js .kinds[hidden] { display: flex; }
+.kind { font: 500 11.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 8px 11px; background: none; border: 1px solid var(--rule); border-radius: 3px; cursor: pointer; }
+.kind:hover { color: var(--body); }
+.kind[aria-selected="true"] { color: var(--ink); border-color: var(--ink); }
+.kind:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; margin: 0 0 14px; border-bottom: 1px solid var(--rule); }
 .tabs[hidden] { display: none; }
 .js .tabs[hidden] { display: flex; }
@@ -174,7 +194,7 @@ figure.browser, figure.timeline { font-variant-numeric: lining-nums; }
 .tab-wordpress:hover .logo, .tab-wordpress[aria-selected="true"] .logo { fill: #21759b; }
 .tab-drupal:hover .logo, .tab-drupal[aria-selected="true"] .logo { fill: #0678be; }
 .tab-craft:hover .logo, .tab-craft[aria-selected="true"] .logo { fill: #e5422b; }
-/* Below about 860px twelve names do not fit in a row, so the logos stand
+/* Below about 860px nine names do not fit in a row, so the logos stand
    alone, each tab a share of the row, and the names stay for screen readers. */
 @media (max-width: 860px) {
   .tabs { flex-wrap: nowrap; gap: 0; }
@@ -693,7 +713,7 @@ dialog.search::backdrop { background: rgba(9, 9, 11, .42); }
   .top { padding-top: 20px; }
   .opening { padding: 36px 0 32px; }
   .install { display: flex; width: 100%; }
-  .installs { display: grid; }
+  .installs .set { display: grid; }
   .installs .install { justify-content: space-between; }
   .catches li { grid-template-columns: minmax(0, 1fr); gap: 3px; }
   .row { padding: 56px 0; }

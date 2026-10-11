@@ -83,40 +83,45 @@
     room();
   }
 
-  // The install boxes as tabs, one per language. The last one chosen is
+  // The install boxes as tabs: a choice between the library in your app and
+  // a CMS plugin, then within each a tab per language or CMS. Each choice is
   // remembered in this browser; without script every box shows.
   document.querySelectorAll(".installs").forEach(function (installs) {
-    var list = installs.querySelector("[role=tablist]");
-    if (!list) return;
-    var tabs = Array.prototype.slice.call(list.querySelectorAll("[role=tab]"));
-    var choose = function (tab, focus) {
-      tabs.forEach(function (t) {
-        var on = t === tab;
-        t.setAttribute("aria-selected", on ? "true" : "false");
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-      });
-      if (focus) tab.focus();
-    };
-    var stored = null;
-    try { stored = localStorage.getItem("cronwatch-install"); } catch (e) {}
-    var remembered = tabs.filter(function (t) { return t.id === stored; })[0];
-    choose(remembered || tabs[0], false);
-    list.hidden = false;
-    installs.classList.add("tabbed");
-    tabs.forEach(function (tab, i) {
-      tab.addEventListener("click", function () {
-        choose(tab, false);
-        try { localStorage.setItem("cronwatch-install", tab.id); } catch (e) {}
-      });
-      tab.addEventListener("keydown", function (event) {
-        var next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[event.key];
-        if (next === undefined) return;
-        event.preventDefault();
-        tabs[(next + tabs.length) % tabs.length].click();
-        tabs[(next + tabs.length) % tabs.length].focus();
+    var lists = installs.querySelectorAll("[role=tablist]");
+    if (!lists.length) return;
+    // The language's key is the one used before the CMS plugins had a set.
+    var keys = ["cronwatch-install-kind", "cronwatch-install", "cronwatch-install-cms"];
+    Array.prototype.forEach.call(lists, function (list, n) {
+      var key = keys[n];
+      var tabs = Array.prototype.slice.call(list.querySelectorAll("[role=tab]"));
+      var choose = function (tab) {
+        tabs.forEach(function (t) {
+          var on = t === tab;
+          t.setAttribute("aria-selected", on ? "true" : "false");
+          t.tabIndex = on ? 0 : -1;
+          document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+        });
+      };
+      var stored = null;
+      try { stored = localStorage.getItem(key); } catch (e) {}
+      var remembered = tabs.filter(function (t) { return t.id === stored; })[0];
+      choose(remembered || tabs[0]);
+      list.hidden = false;
+      tabs.forEach(function (tab, i) {
+        tab.addEventListener("click", function () {
+          choose(tab);
+          try { localStorage.setItem(key, tab.id); } catch (e) {}
+        });
+        tab.addEventListener("keydown", function (event) {
+          var next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[event.key];
+          if (next === undefined) return;
+          event.preventDefault();
+          tabs[(next + tabs.length) % tabs.length].click();
+          tabs[(next + tabs.length) % tabs.length].focus();
+        });
       });
     });
+    installs.classList.add("tabbed");
   });
 
   // A docs page's markdown, fetched from beside it. Safari only writes to the
