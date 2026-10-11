@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cronwatch, memory } from "../src/index.js";
 import type { Alert, AlertChannel, Store } from "../src/index.js";
-import { SEND_LEASE_MS } from "../src/evaluate.js";
+import { heldRun, SEND_LEASE_MS } from "../src/evaluate.js";
 import { capture, clock, MIN, settle, T0 } from "./helpers.js";
 
 /**
@@ -221,4 +221,104 @@ test("a pending run the store no longer has is let go, and a run stored unjudged
   c.advance(SEND_LEASE_MS + MIN);
   await cw.check();
   assert.deepEqual(sent.types(), []);
+});
+
+/** A channel that refuses while `down.value` is true, and records what it took. */
+function switchable(name: string) {
+  const down = { value: false };
+  const sent: Alert[] = [];
+  const channel: AlertChannel = { name, send: async (alert) => { if (down.value) throw new Error(`${name} down`); sent.push(alert); } };
+  return { channel, down, sent };
+}
+
+test("a channel that refuses an alert is the only one it is retried to, until it takes it", async () => {
+  const c = clock();
+  const shared = memory();
+  const slack = switchable("slack");
+  const email = switchable("email");
+  const errors: string[] = [];
+  const cw = cronwatch({ store: shared, now: c.now, alerts: [slack.channel, email.channel], cronSecret: null, onError: (_e, where) => errors.push(where) });
+  slack.down.value = true;
+  await assert.rejects(cw.run("nightly", async () => { throw new Error("x"); }));
+  assert.deepEqual(errors, ["alert channel slack"]);
+  assert.equal(email.sent.length, 1);
+  let state = (await shared.getState("nightly"))!;
+  assert.deepEqual(state.undelivered!.map((a) => a.owed), [["slack"]]);
+  assert.equal(state.lastAlertAt, T0, "email took it");
+  // Still down: the retry goes to Slack alone, and email never sees it twice.
+  c.advance(MIN);
+  await cw.check();
+  assert.equal(email.sent.length, 1);
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered!.map((a) => a.owed), [["slack"]]);
+  // Back up: Slack takes it, and the entry is done.
+  slack.down.value = false;
+  c.advance(MIN);
+  const checked = await cw.check();
+  assert.deepEqual(checked.alerts.map((a) => a.type), ["failed"]);
+  assert.equal(slack.sent.length, 1);
+  assert.equal(email.sent.length, 1);
+  assert.equal("owed" in slack.sent[0]!, false, "a channel never sees owed");
+  state = (await shared.getState("nightly"))!;
+  assert.deepEqual(state.undelivered, []);
+  assert.equal(state.lastAlertAt, T0 + 2 * MIN);
+});
+
+test("owed names channels by name and position, and a channel no longer configured is dropped from it", async () => {
+  const c = clock();
+  const shared = memory();
+  const first = switchable("webhook");
+  const second = switchable("webhook");
+  const email = switchable("email");
+  second.down.value = true;
+  email.down.value = true;
+  const cw = cronwatch({ store: shared, now: c.now, alerts: [first.channel, second.channel, email.channel], cronSecret: null, onError: () => {} });
+  await assert.rejects(cw.run("nightly", async () => { throw new Error("x"); }));
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered!.map((a) => a.owed), [["webhook#2", "email"]]);
+  // A later process has only the first webhook and email: webhook#2 is gone.
+  email.down.value = false;
+  const later = cronwatch({ store: shared, now: c.now, alerts: [first.channel, email.channel], cronSecret: null, onError: () => {} });
+  c.advance(MIN);
+  await later.check();
+  assert.equal(first.sent.length, 1, "the first webhook took it the first time, and is not sent it again");
+  assert.equal(email.sent.length, 1);
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered, []);
+});
+
+test("an alert queued without owed, by an older release, is retried to every channel configured now", async () => {
+  const c = clock();
+  const shared = memory();
+  const down: AlertChannel = { name: "down", send: async () => { throw new Error("down"); } };
+  const old = cronwatch({ store: shared, now: c.now, alerts: [down], cronSecret: null, onError: () => {} });
+  await assert.rejects(old.run("nightly", async () => { throw new Error("x"); }));
+  const state = (await shared.getState("nightly"))!;
+  const legacy = state.undelivered!.map(({ owed: _owed, ...alert }) => alert);
+  await shared.setState({ ...state, undelivered: legacy as typeof state.undelivered });
+  const a = switchable("a");
+  const b = switchable("b");
+  const now = cronwatch({ store: shared, now: c.now, alerts: [a.channel, b.channel], cronSecret: null, onError: () => {} });
+  c.advance(MIN);
+  await now.check();
+  assert.equal(a.sent.length, 1);
+  assert.equal(b.sent.length, 1);
+  assert.deepEqual((await shared.getState("nightly"))!.undelivered, []);
+});
+
+test("the first send has the whole run; the copy held in state, and so a retry, has it trimmed", async () => {
+  const c = clock();
+  const shared = memory();
+  const sent: Alert[] = [];
+  let down = true;
+  const spy: AlertChannel = { name: "spy", send: async (alert) => { sent.push(alert); if (down) throw new Error("spy down"); } };
+  const cw = cronwatch({ store: shared, now: c.now, alerts: [spy], cronSecret: null, onError: () => {} });
+  await assert.rejects(cw.run("big", async (job) => { job.log("o".repeat(10_000)); throw new Error("e".repeat(10_000)); }));
+  assert.ok(sent[0]!.run!.output!.length >= 10_000, "first send: the whole output");
+  assert.ok(sent[0]!.run!.error!.length >= 10_000, "first send: the whole error");
+  const held = (await shared.getState("big"))!.undelivered![0]!;
+  assert.deepEqual(held.run, heldRun(sent[0]!.run!));
+  assert.match(held.run!.error!, /^Error: e{2041}\n\[\d+ more characters trimmed\]$/);
+  assert.match(held.run!.output!, /^\[\d+ earlier characters trimmed\]\n/);
+  down = false;
+  c.advance(MIN);
+  await cw.check();
+  assert.deepEqual(sent[1]!.run, held.run, "the retry sends the held copy");
 });

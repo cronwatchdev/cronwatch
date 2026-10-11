@@ -445,7 +445,7 @@ The client:
 |---|---|
 | `job(name, **options)` | declare a job and get its handle |
 | `run(name, fn=None, **options)` | run without keeping a handle; without `fn`, a context manager |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `start_checking(every="1m")`, `stop()` | check in a daemon thread; the interval is at least 5 seconds. (A job's `start()` opens a run; this starts the checks.) |
 | `jobs()`, `jobs_with_runs(limit=20)`, `job_summary(name)` | summaries, without alerting |
 | `runs(name, limit=50)`, `get_run(run_id)` | newest first; `limit` is 1 to 500 |

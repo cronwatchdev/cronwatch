@@ -8,8 +8,8 @@ use Cronwatch\Alert;
 
 /**
  * Where alerts go. send() returns once the alert went out (to at least one
- * recipient) and throws when it went nowhere; the client retries an alert
- * no channel accepted at its next check.
+ * recipient) and throws when it went nowhere; the client retries the alert
+ * to the channels that threw, and only those, at its next check.
  */
 interface AlertChannel
 {

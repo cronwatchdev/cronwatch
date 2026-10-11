@@ -24,7 +24,8 @@ final class JobState
      * @param array<string, int|float> $open conditions currently open, with the time each one opened
      * @param int|float|null $lastAlertAt when an alert last reached at least one channel
      * @param list<string>|null $pendingRecovery conditions that alerted and have since closed, waiting for the recovered message
-     * @param list<Alert>|null $undelivered alerts that no channel accepted; each check retries them once
+     * @param list<Alert>|null $undelivered alerts some channel still owes (their `owed`, see
+     *        Evaluate::owedChannels()), held trimmed (Evaluate::heldAlert()); each check retries them once, to those channels only
      * @param list<SendingAlert>|null $sending the outbox: alerts written with the state that opened their
      *        condition, while the process that wrote them sends them (see Evaluate::holdAlerts); null when empty
      * @param list<string>|null $underFloor the metrics under their floor at the job's last successful run (see

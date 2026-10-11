@@ -92,16 +92,160 @@ pub(crate) fn alert_key(a: &Alert) -> String {
     format!("{}|{}|{}", a.alert_type, a.at, a.run.as_ref().map_or("", |r| r.id.as_str()))
 }
 
+/// How much of a held alert's run error and output is kept: 2048 UTF-16
+/// units of each.
+pub(crate) const HELD_TEXT_CAP: usize = 2048;
+
+/// How far past its cap a held text may run and still be kept whole: longer
+/// than any marker, so a text trimmed once (its kept part and its marker) is
+/// never trimmed again, and the count in its marker stays true.
+pub(crate) const HELD_TEXT_SLACK: usize = 64;
+
+/// How much of a held alert's message is kept: its first 4096 UTF-16 units.
+pub(crate) const HELD_MESSAGE_CAP: usize = 4096;
+
+fn is_high_surrogate(u: u16) -> bool {
+    (0xd800..=0xdbff).contains(&u)
+}
+
+fn is_low_surrogate(u: u16) -> bool {
+    (0xdc00..=0xdfff).contains(&u)
+}
+
+/// The first `cap` units of a text longer than `cap + HELD_TEXT_SLACK`, not
+/// splitting a surrogate pair, and a line saying how many were left out;
+/// a shorter text as it is.
+fn keep_head(text: &str, cap: usize) -> Option<String> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.len() <= cap + HELD_TEXT_SLACK {
+        return None;
+    }
+    let mut end = cap;
+    if is_high_surrogate(units[end - 1]) {
+        end -= 1;
+    }
+    Some(format!("{}\n[{} more characters trimmed]", js::from_units(&units[..end]), units.len() - end))
+}
+
+/// The last `HELD_TEXT_CAP` units of a text longer than that plus
+/// `HELD_TEXT_SLACK`, not splitting a surrogate pair, after a line saying
+/// how many came before; a shorter text as it is.
+fn keep_tail(text: &str) -> Option<String> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.len() <= HELD_TEXT_CAP + HELD_TEXT_SLACK {
+        return None;
+    }
+    let mut start = units.len() - HELD_TEXT_CAP;
+    if is_low_surrogate(units[start]) && is_high_surrogate(units[start - 1]) {
+        start += 1;
+    }
+    Some(format!("[{start} earlier characters trimmed]\n{}", js::from_units(&units[start..])))
+}
+
+/// The SDK's `heldRun`: a run as an alert held in a job's state keeps it
+/// (`sending` and `undelivered`), so the state stays small however much a
+/// run logged. Its error keeps its first `HELD_TEXT_CAP` units and its
+/// output its last, each with a line saying how many units were left out;
+/// a text of at most `HELD_TEXT_CAP + HELD_TEXT_SLACK` units is kept as it
+/// is, and so is every other field. The first send of an alert uses the
+/// alert as composed; only a retry reads the held copy.
+pub(crate) fn held_run(run: &Run) -> Run {
+    let mut out = run.clone();
+    if let Some(error) = run.error.as_deref().and_then(|e| keep_head(e, HELD_TEXT_CAP)) {
+        out.error = Some(error);
+    }
+    if let Some(output) = run.output.as_deref().and_then(keep_tail) {
+        out.output = Some(output);
+    }
+    out
+}
+
+/// The SDK's `heldAlert`: an alert as it is held in state, its run trimmed
+/// (`held_run`) and its message, when longer than `HELD_MESSAGE_CAP +
+/// HELD_TEXT_SLACK` units, cut to its first `HELD_MESSAGE_CAP` like a run's
+/// error. Everything else, the title and `owed` included, as it is.
+pub(crate) fn held_alert(alert: &Alert) -> Alert {
+    let mut out = alert.clone();
+    out.run = alert.run.as_ref().map(held_run);
+    if let Some(message) = keep_head(&alert.message, HELD_MESSAGE_CAP) {
+        out.message = message;
+    }
+    out
+}
+
+/// The SDK's `channelKeys`: each configured channel's key, in the order
+/// configured: its name, with "#2", "#3", and so on for the second and
+/// later channels of the same name. A key already given to an earlier
+/// channel is skipped for the next number up, so every key is different. A
+/// held alert names the channels that still owe it by these keys.
+pub(crate) fn channel_keys(names: &[&str]) -> Vec<String> {
+    let mut seen: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    names
+        .iter()
+        .map(|&name| {
+            let count = seen.entry(name).or_insert(0);
+            *count += 1;
+            let mut n = *count;
+            let mut key = if n == 1 { name.to_string() } else { format!("{name}#{n}") };
+            while taken.contains(&key) {
+                n += 1;
+                key = format!("{name}#{n}");
+            }
+            taken.insert(key.clone());
+            key
+        })
+        .collect()
+}
+
+/// The SDK's `owedChannels`: the channels a held alert is still owed by, of
+/// those configured now (`configured`, `channel_keys` order): those in its
+/// `owed` that are still configured, or every configured one when it has no
+/// `owed` list (an alert held by a release before per-channel delivery, or
+/// one never sent). An entry of `owed` that is not a string is ignored.
+pub(crate) fn owed_channels(alert: &Alert, configured: &[String]) -> Vec<String> {
+    match alert.owed() {
+        Some(Value::Array(owed)) => {
+            configured.iter().filter(|k| owed.iter().any(|o| o.as_str() == Some(k.as_str()))).cloned().collect()
+        }
+        _ => configured.to_vec(),
+    }
+}
+
+/// The SDK's `afterSend`: an alert after a send to the channels in `tried`,
+/// of which those in `failed` refused it: None when none is left owing it,
+/// else the alert with `owed` set to those that refused, in `tried` order.
+pub(crate) fn after_send(alert: &Alert, tried: &[String], failed: &[String]) -> Option<Alert> {
+    let owed: Vec<Value> = tried.iter().filter(|k| failed.contains(k)).map(|k| Value::from(k.as_str())).collect();
+    if owed.is_empty() {
+        return None;
+    }
+    let mut out = alert.clone();
+    out.set_owed(Value::Array(owed));
+    Some(out)
+}
+
+/// The SDK's `withoutOwed`: an alert without its `owed` list, as a channel
+/// is given it.
+pub(crate) fn without_owed(alert: &Alert) -> Alert {
+    let mut out = alert.clone();
+    out.take_owed();
+    out
+}
+
 /// Keeps the newest `MAX_UNDELIVERED` of `list`, and says how many went.
 fn newest<T>(mut list: Vec<T>) -> (Vec<T>, usize) {
     let dropped = list.len().saturating_sub(MAX_UNDELIVERED);
     (list.split_off(dropped), dropped)
 }
 
-/// `alerts` added to the undelivered queue: one with the same key as a
-/// queued alert replaces it where it stands, the rest go at the end, and
-/// only the newest `MAX_UNDELIVERED` stay. Also says how many were let go.
+/// `alerts` added to the undelivered queue, each held (`held_alert`) with
+/// its `owed` list as given: one with the same key as a queued alert
+/// replaces it where it stands, the rest go at the end, and only the newest
+/// `MAX_UNDELIVERED` stay. Also says how many were let go.
 pub(crate) fn queue_undelivered(state: &JobState, alerts: &[Alert]) -> (JobState, usize) {
+    let alerts: Vec<Alert> = alerts.iter().map(held_alert).collect();
+    let alerts = alerts.as_slice();
     let mut next = clone_state(state);
     // The last of `alerts` with a key wins, as a Map built from them keeps it.
     let mut queue: Vec<Alert> = next
@@ -126,7 +270,10 @@ pub(crate) fn queue_undelivered(state: &JobState, alerts: &[Alert]) -> (JobState
 /// does not lose them: into `sending`, each with its lease ending at
 /// `until`, when this process sends them, or (`deferred`, for
 /// `Deliver::AtCheck`) straight into the undelivered queue for a check
-/// elsewhere. Also says how many were let go past `MAX_UNDELIVERED`.
+/// elsewhere. Either way the copy held is `held_alert`'s, with no `owed`
+/// list, so every configured channel owes it; the first send uses the
+/// alerts as composed. Also says how many were let go past
+/// `MAX_UNDELIVERED`.
 pub(crate) fn hold_alerts(state: &JobState, alerts: &[Alert], until: i64, deferred: bool) -> (JobState, usize) {
     if alerts.is_empty() {
         return (state.clone(), 0);
@@ -136,7 +283,7 @@ pub(crate) fn hold_alerts(state: &JobState, alerts: &[Alert], until: i64, deferr
     }
     let mut next = clone_state(state);
     let mut sending = next.sending.take().unwrap_or_default();
-    sending.extend(alerts.iter().map(|a| SendingAlert::new(Some(until), Some(a.clone()))));
+    sending.extend(alerts.iter().map(|a| SendingAlert::new(Some(until), Some(held_alert(a)))));
     let (kept, dropped) = newest(sending);
     next.sending = Some(kept);
     (next, dropped)
@@ -145,7 +292,8 @@ pub(crate) fn hold_alerts(state: &JobState, alerts: &[Alert], until: i64, deferr
 /// Alerts in `sending` whose lease ran out by `now`: the process sending
 /// them stopped before it recorded how the send went. They go to the
 /// undelivered queue, where the retry sends them (with triage, which is
-/// never stored with them here) or drops them as stale. An entry without an
+/// never stored with them here) or drops them as stale, owed by the
+/// channels its `owed` names. An entry without an
 /// alert is dropped; one without a numeric `until` counts as run out.
 pub(crate) fn release_sending(state: &JobState, now: i64) -> (JobState, usize) {
     let sending = state.sending.as_deref().unwrap_or_default();
@@ -160,17 +308,20 @@ pub(crate) fn release_sending(state: &JobState, now: i64) -> (JobState, usize) {
     queue_undelivered(&next, &released)
 }
 
-/// How a send went. Delivered and stale alerts leave the queue; failed ones
-/// replace their queued copy, so a triage made on this attempt is kept, or
-/// join the queue. Every one of them leaves `sending`. `last_alert_at` moves
-/// only on a delivery. Also says how many were let go past
-/// `MAX_UNDELIVERED`.
+/// How a send went. Delivered alerts (no channel owes them any more) and
+/// stale ones leave the queue; failed ones (some channel still owes them,
+/// named by their `owed`) replace their queued copy, so a triage made on
+/// this attempt and the shrunken `owed` are kept, or join the queue. Every
+/// one of them leaves `sending`. `last_alert_at` moves to `now` when
+/// `reached` (some channel accepted an alert on this attempt). Also says how
+/// many were let go past `MAX_UNDELIVERED`.
 pub(crate) fn record_sent(
     state: &JobState,
     delivered: &[Alert],
     failed: &[Alert],
     stale: &[Alert],
     now: i64,
+    reached: bool,
 ) -> (JobState, usize) {
     let mut next = clone_state(state);
     let done: std::collections::HashSet<String> = delivered.iter().chain(stale).map(alert_key).collect();
@@ -186,7 +337,7 @@ pub(crate) fn record_sent(
         .filter(|e| !e.alert.as_ref().is_some_and(|a| sent.contains(&alert_key(a))))
         .collect();
     next.sending = (!held.is_empty()).then_some(held);
-    if !delivered.is_empty() {
+    if reached {
         next.last_alert_at = Some(now);
     }
     queue_undelivered(&next, failed)
@@ -894,6 +1045,32 @@ fn summary(
 mod tests {
     use super::*;
     use crate::types::Metrics;
+
+    #[test]
+    fn a_held_copy_is_trimmed_once_whatever_the_text() {
+        let mut run = Run::new("r1", "j", RunStatus::Failed, 0);
+        run.error = Some(format!("{}\u{1F600}{}", "e".repeat(2047), "e".repeat(5000)));
+        run.output = Some("\u{1F600}".repeat(3000));
+        let mut alert =
+            Alert::new(AlertType::Failed, "j", AlertDetails::Failure { consecutive_failures: 1, threshold: 1 }, 0);
+        alert.run = Some(run);
+        alert.message = "m".repeat(9000);
+        let once = held_alert(&alert);
+        assert_eq!(held_alert(&once), once, "trimming again changes nothing");
+        let run = once.run.as_ref().unwrap();
+        assert!(run.error.as_deref().unwrap().ends_with("\n[5002 more characters trimmed]"), "the pair is not split");
+        assert!(run.output.as_deref().unwrap().starts_with("[3952 earlier characters trimmed]\n\u{1F600}"));
+        assert!(once.message.ends_with("\n[4904 more characters trimmed]"));
+    }
+
+    #[test]
+    fn channels_of_one_name_are_told_apart_by_position() {
+        assert_eq!(
+            channel_keys(&["webhook", "webhook", "email", "webhook"]),
+            ["webhook", "webhook#2", "email", "webhook#3"]
+        );
+        assert_eq!(channel_keys(&["a", "a", "a#2"]), ["a", "a#2", "a#2#2"]);
+    }
 
     const T0: i64 = 1_767_607_200_000;
     const HOUR: i64 = 3_600_000;

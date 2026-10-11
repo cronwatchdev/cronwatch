@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"cronwatch.dev/go/internal/js"
 )
 
 // shorten sets a wait for one test.
@@ -84,9 +86,10 @@ func TestHungChannelTimesOutWithoutHoldingUpTheOthers(t *testing.T) {
 	_ = cw.Run(context.Background(), "h", failing)
 	sameStrings(t, "the other channel has it", good.types(), []string{"failed"})
 	sameStrings(t, "errors", errs.wheres(), []string{"alert channel hung"})
+	// The other channel took it, so only the hung one owes it a retry.
 	s, _ := cw.Store().GetState(context.Background(), "h")
-	if len(s.Undelivered) != 0 {
-		t.Error("one channel took it: delivered")
+	if len(s.Undelivered) != 1 || js.Stringify(s.Undelivered[0].owed) != `["hung"]` || s.LastAlertAt == nil {
+		t.Errorf("owed by the hung channel alone: %s", js.Stringify(s))
 	}
 }
 

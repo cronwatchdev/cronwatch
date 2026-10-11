@@ -113,7 +113,7 @@ A PHP process does not stay up between runs, so nothing inside a crontab script 
 */5 * * * *  cd /var/www/app && vendor/bin/cronwatch check
 ```
 
-`vendor/bin/cronwatch check` loads Composer's autoloader, then the bootstrap file, a PHP file that returns the client with its jobs declared (or a callable that returns it), such as `cronwatch.php` above. It looks for `--bootstrap <file>`, then `CRONWATCH_BOOTSTRAP`, then `cronwatch.php`, then `config/cronwatch.php` in the working directory. It runs `check()`, which finds missed and stuck runs, sends their alerts, retries alerts no channel accepted, prunes old runs, and prints one line:
+`vendor/bin/cronwatch check` loads Composer's autoloader, then the bootstrap file, a PHP file that returns the client with its jobs declared (or a callable that returns it), such as `cronwatch.php` above. It looks for `--bootstrap <file>`, then `CRONWATCH_BOOTSTRAP`, then `cronwatch.php`, then `config/cronwatch.php` in the working directory. It runs `check()`, which finds missed and stuck runs, sends their alerts, retries alerts a channel has not yet accepted, prunes old runs, and prints one line:
 
 ```
 cronwatch: checked 3 jobs, sent 0 alerts
@@ -394,7 +394,7 @@ The client:
 |---|---|
 | `job($name, $options)` | declare a job and get its handle: `run()`, `monitor()`, `handler()`, `start()`, `resume()` |
 | `run($name, $fn, $options)` | run without keeping a handle |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `jobs()`, `jobsWithRuns($limit = 20)`, `jobSummary($name)` | summaries, without alerting |
 | `runs($name, $limit = 50)`, `getRun($id)` | newest first; `limit` is 1 to 500 |
 | `silence($name, '2h')`, `unsilence($name)` | stop alerts for a while; state keeps updating underneath. The silence ends on a whole millisecond, held at 2^53 - 1 ms however long it asks for |

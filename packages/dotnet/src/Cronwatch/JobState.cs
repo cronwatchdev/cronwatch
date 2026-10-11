@@ -36,7 +36,11 @@ public sealed record JobState
     /// </summary>
     public ValueList<Condition>? PendingRecovery { get; init; }
 
-    /// <summary>Alerts no channel accepted, retried at each check; null in a state written before the field existed.</summary>
+    /// <summary>
+    /// Alerts some channel still owes, each retried at each check to those channels only
+    /// (<see cref="Alert.Owed"/>), its run and message trimmed (held copies); null in a state
+    /// written before the field existed.
+    /// </summary>
     public ValueList<Alert>? Undelivered { get; init; }
 
     /// <summary>

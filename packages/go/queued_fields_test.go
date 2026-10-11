@@ -43,6 +43,12 @@ func queuedAlert(typ, details string, at int64) string {
 		`,"job":"keep","definition":{"name":"keep"},"title":"t","message":"m","at":` + strconv.FormatInt(at, 10) + `,"later":[1,"x"]}`
 }
 
+// owedBy is a queued alert's JSON once the channel key refused it: its owed
+// list goes last.
+func owedBy(alert, key string) string {
+	return strings.TrimSuffix(alert, "}") + `,"owed":["` + key + `"]}`
+}
+
 func TestQueuedAlertsKeepFieldsTheyDoNotKnow(t *testing.T) {
 	at := strconv.FormatInt(T0, 10)
 	future := queuedAlert("future_condition", `{"futureDetail":7,"nested":{}}`, T0)
@@ -71,9 +77,10 @@ func TestQueuedAlertsKeepFieldsTheyDoNotKnow(t *testing.T) {
 	for _, a := range got.Undelivered {
 		byType[string(a.Type)] = jsonOf(a)
 	}
-	eq(t, "the unknown alert, kept", byType["future_condition"], future)
-	eq(t, "the failed alert, kept", byType["failed"], failed)
-	eq(t, "the over_budget alert, kept", byType["over_budget"], over)
+	// Kept as read, with the channel that still owes it named last.
+	eq(t, "the unknown alert, kept", byType["future_condition"], owedBy(future, "refusing"))
+	eq(t, "the failed alert, kept", byType["failed"], owedBy(failed, "refusing"))
+	eq(t, "the over_budget alert, kept", byType["over_budget"], owedBy(over, "refusing"))
 	// The entry of sending still leased is held as it was.
 	if len(got.Sending) != 1 {
 		t.Fatalf("sending: %s", jsonOf(got))
@@ -121,6 +128,6 @@ func TestAQueuedAlertsRunKeepsFieldsItDoesNotKnow(t *testing.T) {
 	if len(got.Undelivered) != 1 {
 		t.Fatalf("undelivered: %s", jsonOf(got))
 	}
-	eq(t, "the queued alert, its run's fields kept", jsonOf(got.Undelivered[0]), failed)
+	eq(t, "the queued alert, its run's fields kept", jsonOf(got.Undelivered[0]), owedBy(failed, "refusing"))
 	sameList(t, "retried as stored", channel.list(), []string{failed})
 }

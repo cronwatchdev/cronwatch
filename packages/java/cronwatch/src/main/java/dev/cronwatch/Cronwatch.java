@@ -603,10 +603,10 @@ public final class Cronwatch implements AutoCloseable {
   // ---- checks and reads
 
   /**
-   * Looks for missed and stuck runs across every job, sends alerts, retries alerts no channel
-   * accepted, and prunes old runs. Call it from an interval ({@link #startChecking()}), a cron, or
-   * by hand. Concurrent calls share one check. A job that cannot be evaluated is reported to the
-   * error handler and shown as failing.
+   * Looks for missed and stuck runs across every job, sends alerts, retries alerts to the channels
+   * that refused them, and prunes old runs. Call it from an interval ({@link #startChecking()}), a
+   * cron, or by hand. Concurrent calls share one check. A job that cannot be evaluated is reported
+   * to the error handler and shown as failing.
    *
    * @throws CronwatchException when the store fails as the check starts, the client is closed, or
    *     the caller is interrupted while it waits (its interrupt status set again)

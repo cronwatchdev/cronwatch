@@ -146,8 +146,244 @@ final class Evaluate
         return $alert->type . '|' . Js::number($alert->at) . '|' . ($alert->run?->id ?? '');
     }
 
+    /** How much of a held alert's run error and output is kept: 2048 UTF-16 units of each. */
+    public const HELD_TEXT_CAP = 2048;
+
     /**
-     * `alerts` added to the undelivered queue: one with the same key as a
+     * How far past its cap a held text may run and still be kept whole:
+     * longer than any marker, so a text trimmed once (its kept part and its
+     * marker) is never trimmed again, and the count in its marker stays true.
+     */
+    public const HELD_TEXT_SLACK = 64;
+
+    /** How much of a held alert's message is kept: its first 4096 UTF-16 units. */
+    public const HELD_MESSAGE_CAP = 4096;
+
+    /**
+     * A run as an alert held in a job's state keeps it (`sending` and
+     * `undelivered`), so the state stays small however much a run logged.
+     * Its error keeps its first HELD_TEXT_CAP UTF-16 units and its output its
+     * last, each cut so as not to split a surrogate pair, with a line saying
+     * how many units were left out: "<head>\n[N more characters trimmed]" and
+     * "[N earlier characters trimmed]\n<tail>". A text of at most
+     * HELD_TEXT_CAP + HELD_TEXT_SLACK units, or that is not a string (a
+     * foreign row's), is kept as it is, and so is every other field. Takes a
+     * Run, or a run's JSON as a state holds it, and gives back the same kind.
+     * The first send of an alert uses the alert as composed; only a retry
+     * reads the held copy.
+     *
+     * @template T of Run|array|\stdClass
+     * @param T $run
+     * @return T
+     */
+    public static function heldRun(Run|array|\stdClass $run): Run|array|\stdClass
+    {
+        $fields = $run instanceof Run ? ['error' => $run->error, 'output' => $run->output] : Js::fields($run);
+        $error = $fields['error'] ?? null;
+        $output = $fields['output'] ?? null;
+        $trimmedError = is_string($error) && Js::length16($error) > self::HELD_TEXT_CAP + self::HELD_TEXT_SLACK ? self::keepHead($error, self::HELD_TEXT_CAP) : $error;
+        $trimmedOutput = is_string($output) && Js::length16($output) > self::HELD_TEXT_CAP + self::HELD_TEXT_SLACK ? self::keepTail($output) : $output;
+        if ($trimmedError === $error && $trimmedOutput === $output) {
+            return $run;
+        }
+        if ($run instanceof Run) {
+            $copy = clone $run;
+            $copy->error = $trimmedError;
+            $copy->output = $trimmedOutput;
+            return $copy;
+        }
+        if ($trimmedError !== $error) {
+            $fields['error'] = $trimmedError;
+        }
+        if ($trimmedOutput !== $output) {
+            $fields['output'] = $trimmedOutput;
+        }
+        return $run instanceof \stdClass ? (object) $fields : $fields;
+    }
+
+    /**
+     * An alert as it is held in state: its run trimmed (heldRun()), and its
+     * message, when longer than HELD_MESSAGE_CAP + HELD_TEXT_SLACK units, cut
+     * to its first HELD_MESSAGE_CAP like a run's error ("<head>\n[N more
+     * characters trimmed]"). Everything else, the title and `owed` included,
+     * as it is. The first send uses the alert as composed.
+     */
+    public static function heldAlert(Alert $alert): Alert
+    {
+        $json = $alert->stateJson();
+        $fields = $json instanceof \stdClass ? get_object_vars($json) : $json;
+        $run = $fields['run'] ?? null;
+        $isObject = $run instanceof \stdClass || (is_array($run) && $run !== [] && !array_is_list($run));
+        $trimmedRun = $isObject ? self::heldRun($run) : $run;
+        $message = $fields['message'] ?? null;
+        $trimmedMessage = is_string($message) && Js::length16($message) > self::HELD_MESSAGE_CAP + self::HELD_TEXT_SLACK ? self::keepHead($message, self::HELD_MESSAGE_CAP) : $message;
+        if ($trimmedRun === $run && $trimmedMessage === $message) {
+            return $alert;
+        }
+        return $alert->withJson(function (array $f) use ($trimmedRun, $trimmedMessage): array {
+            $f['run'] = $trimmedRun;
+            $f['message'] = $trimmedMessage;
+            return $f;
+        });
+    }
+
+    /** The first `cap` UTF-16 units of `text` (one fewer when a surrogate pair would be split) and a line counting the rest. */
+    private static function keepHead(string $text, int $cap): string
+    {
+        $head = self::wholeHead($text, $cap);
+        return $head . "\n[" . (Js::length16($text) - Js::length16($head)) . ' more characters trimmed]';
+    }
+
+    /** The last HELD_TEXT_CAP UTF-16 units of `text` (one fewer when a surrogate pair would be split) after a line counting the rest. */
+    private static function keepTail(string $text): string
+    {
+        $tail = self::wholeTail($text, self::HELD_TEXT_CAP);
+        return '[' . (Js::length16($text) - Js::length16($tail)) . " earlier characters trimmed]\n" . $tail;
+    }
+
+    /** The longest start of `text` of at most `units` UTF-16 units that splits no character. */
+    private static function wholeHead(string $text, int $units): string
+    {
+        if (Js::isAscii($text)) {
+            return substr($text, 0, $units);
+        }
+        $n = strlen($text);
+        $i = 0;
+        $u = 0;
+        while ($i < $n) {
+            $lead = ord($text[$i]);
+            $width = $lead < 0x80 ? 1 : ($lead < 0xE0 ? 2 : ($lead < 0xF0 ? 3 : 4));
+            $size = $width === 4 ? 2 : 1;
+            if ($u + $size > $units) {
+                break;
+            }
+            $u += $size;
+            $i += $width;
+        }
+        return substr($text, 0, $i);
+    }
+
+    /** The longest end of `text` of at most `units` UTF-16 units that splits no character. */
+    private static function wholeTail(string $text, int $units): string
+    {
+        if (Js::isAscii($text)) {
+            return strlen($text) <= $units ? $text : substr($text, -$units);
+        }
+        $i = strlen($text);
+        $u = 0;
+        while ($i > 0) {
+            $start = $i - 1;
+            while ($start > 0 && (ord($text[$start]) & 0xC0) === 0x80) {
+                $start--;
+            }
+            $size = ord($text[$start]) >= 0xF0 ? 2 : 1;
+            if ($u + $size > $units) {
+                break;
+            }
+            $u += $size;
+            $i = $start;
+        }
+        return substr($text, $i);
+    }
+
+    /**
+     * Each configured channel's key, in the order configured: its name, with
+     * "#2", "#3", and so on for the second and later channels of the same
+     * name, so two webhooks are "webhook" and "webhook#2". A key already
+     * given to an earlier channel (a channel named "webhook#2" itself, say)
+     * is skipped for the next number up, so every key is different. A held
+     * alert names the channels that still owe it by these keys (`owed`).
+     *
+     * @param list<string> $names
+     * @return list<string>
+     */
+    public static function channelKeys(array $names): array
+    {
+        $seen = [];
+        $taken = [];
+        $keys = [];
+        foreach ($names as $name) {
+            $n = ($seen[$name] ?? 0) + 1;
+            $seen[$name] = $n;
+            $key = $n === 1 ? $name : "{$name}#{$n}";
+            while (isset($taken[$key])) {
+                $key = $name . '#' . ++$n;
+            }
+            $taken[$key] = true;
+            $keys[] = $key;
+        }
+        return $keys;
+    }
+
+    /**
+     * The channels a held alert is still owed by, of those configured now
+     * (`configured`, channelKeys() order): those in its `owed` that are
+     * still configured, or every configured one when it has no `owed` list
+     * (an alert held by a release before per-channel delivery, or one never
+     * sent). An entry of `owed` that is not a string is ignored. None left
+     * means the alert is done.
+     *
+     * @param list<string> $configured
+     * @return list<string>
+     */
+    public static function owedChannels(Alert $alert, array $configured): array
+    {
+        $owed = self::owedOf($alert);
+        if ($owed === null) {
+            return $configured;
+        }
+        return array_values(array_filter($configured, fn (string $key) => in_array($key, $owed, true)));
+    }
+
+    /**
+     * An alert after a send to the channels in `tried`, of which those in
+     * `failed` refused it: null when none is left owing it, else the alert
+     * with `owed` set to those that refused, in configured order.
+     *
+     * @param list<string> $tried
+     * @param list<string> $failed
+     */
+    public static function afterSend(Alert $alert, array $tried, array $failed): ?Alert
+    {
+        $owed = array_values(array_filter($tried, fn (string $key) => in_array($key, $failed, true)));
+        if ($owed === []) {
+            return null;
+        }
+        return $alert->withJson(function (array $f) use ($owed): array {
+            $f['owed'] = $owed;
+            return $f;
+        });
+    }
+
+    /** An alert without its `owed` list, as a channel is given it. */
+    public static function withoutOwed(Alert $alert): Alert
+    {
+        $json = $alert->stateJson();
+        if (!array_key_exists('owed', $json instanceof \stdClass ? get_object_vars($json) : $json)) {
+            return $alert;
+        }
+        return $alert->withJson(function (array $f): array {
+            unset($f['owed']);
+            return $f;
+        });
+    }
+
+    /**
+     * A held alert's `owed` list, or null when it has none (or what it holds
+     * is not a list, as a damaged row's may be).
+     *
+     * @return list<mixed>|null
+     */
+    private static function owedOf(Alert $alert): ?array
+    {
+        $json = $alert->stateJson();
+        $owed = ($json instanceof \stdClass ? get_object_vars($json) : $json)['owed'] ?? null;
+        return is_array($owed) && array_is_list($owed) ? $owed : null;
+    }
+
+    /**
+     * `alerts` added to the undelivered queue, each held as heldAlert()
+     * keeps it, with its `owed` list as given: one with the same key as a
      * queued alert replaces it where it stands, the rest go at the end, and
      * only the newest MAX_UNDELIVERED stay. `dropped` counts those let go.
      *
@@ -159,7 +395,7 @@ final class Evaluate
         $next = self::cloneState($state);
         $byKey = [];
         foreach ($alerts as $alert) {
-            $byKey[self::alertKey($alert)] = $alert;
+            $byKey[self::alertKey($alert)] = self::heldAlert($alert);
         }
         $queue = [];
         $known = [];
@@ -168,8 +404,8 @@ final class Evaluate
             $queue[] = $byKey[$key] ?? $alert;
             $known[$key] = true;
         }
-        foreach ($alerts as $alert) {
-            if (!isset($known[self::alertKey($alert)])) {
+        foreach ($byKey as $key => $alert) {
+            if (!isset($known[(string) $key])) {
                 $queue[] = $alert;
             }
         }
@@ -182,8 +418,10 @@ final class Evaluate
      * their condition, before any is sent, so a process that stops part way
      * does not lose them: into `sending`, each with its lease ending at
      * `until`, when this process sends them, or (deliver: "check") straight
-     * into the undelivered queue for a check elsewhere. `dropped` counts
-     * alerts let go past MAX_UNDELIVERED.
+     * into the undelivered queue for a check elsewhere. Either way the copy
+     * held has its run trimmed (heldAlert()) and no `owed` list, so every
+     * configured channel owes it; the first send uses the alerts as composed.
+     * `dropped` counts alerts let go past MAX_UNDELIVERED.
      *
      * @param list<Alert> $alerts
      * @return array{state: JobState, dropped: int}
@@ -197,7 +435,7 @@ final class Evaluate
             return self::queueUndelivered($state, $alerts);
         }
         $next = self::cloneState($state);
-        $held = [...($next->sending ?? []), ...array_map(fn (Alert $alert) => new SendingAlert($until, $alert), $alerts)];
+        $held = [...($next->sending ?? []), ...array_map(fn (Alert $alert) => new SendingAlert($until, self::heldAlert($alert)), $alerts)];
         [$next->sending, $dropped] = self::newest($held);
         return ['state' => $next, 'dropped' => $dropped];
     }
@@ -206,7 +444,8 @@ final class Evaluate
      * Alerts in `sending` whose lease ran out by `now`: the process sending
      * them stopped before it recorded how the send went. They go to the
      * undelivered queue, where the retry sends them (with triage, which is
-     * never stored with them here) or drops them as stale. An entry without
+     * never stored with them here) or drops them as stale, owed by the
+     * channels its `owed` names. An entry without
      * an alert is dropped; one without a numeric `until` counts as run out.
      *
      * @return array{state: JobState, dropped: int}
@@ -237,18 +476,21 @@ final class Evaluate
     }
 
     /**
-     * How a send went. Delivered and stale alerts leave the queue; failed
-     * ones replace their queued copy, so a triage made on this attempt is
-     * kept, or join the queue. Every one of them leaves `sending`.
-     * lastAlertAt moves only on a delivery. `dropped` in the result counts
-     * alerts let go past MAX_UNDELIVERED.
+     * How a send went. Delivered alerts (no channel owes them any more) and
+     * stale ones leave the queue; failed ones (some channel still owes them,
+     * named by their `owed`) replace their queued copy, so a triage made on
+     * this attempt and the shrunken `owed` are kept, or join the queue.
+     * Every one of them leaves `sending`. lastAlertAt moves to `now` when
+     * `reached` (some channel accepted an alert on this attempt; by default,
+     * when any was delivered). `dropped` in the result counts alerts let go
+     * past MAX_UNDELIVERED.
      *
      * @param list<Alert> $delivered
      * @param list<Alert> $failed
      * @param list<Alert> $stale
      * @return array{state: JobState, dropped: int}
      */
-    public static function recordSent(JobState $state, array $delivered, array $failed, array $stale, int|float $now): array
+    public static function recordSent(JobState $state, array $delivered, array $failed, array $stale, int|float $now, ?bool $reached = null): array
     {
         $next = self::cloneState($state);
         $done = [];
@@ -262,7 +504,7 @@ final class Evaluate
         }
         $held = array_values(array_filter($next->sending ?? [], fn (SendingAlert $entry) => $entry->alert === null || !isset($sent[self::alertKey($entry->alert)])));
         $next->sending = $held === [] ? null : $held;
-        if ($delivered !== []) {
+        if ($reached ?? $delivered !== []) {
             $next->lastAlertAt = $now;
         }
         return self::queueUndelivered($next, $failed);

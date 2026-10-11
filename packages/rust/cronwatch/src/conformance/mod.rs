@@ -29,7 +29,6 @@ const REPLAYED: [&str; 11] = [
 ];
 
 /// SHA-256 as lowercase hex, for the fixtures' digests of long texts.
-#[cfg(any(feature = "alerts", feature = "triage"))]
 pub(crate) fn sha256_hex(data: &[u8]) -> String {
     use sha2::Digest;
     use std::fmt::Write;
@@ -41,7 +40,6 @@ pub(crate) fn sha256_hex(data: &[u8]) -> String {
 
 /// The fixtures' form of a request body: itself up to 400 UTF-16 code
 /// units, else its length and the SHA-256 of its UTF-8.
-#[cfg(any(feature = "alerts", feature = "triage"))]
 pub(crate) fn digest(s: &str) -> Value {
     if js::len16(s) <= 400 {
         return Value::Object(Object::new().with("text", s));

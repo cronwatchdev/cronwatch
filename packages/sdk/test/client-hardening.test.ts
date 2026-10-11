@@ -87,7 +87,8 @@ test("a hung channel times out without holding up the others", async (t) => {
   t.mock.timers.tick(15_000);
   await pending;
   assert.deepEqual(errors, ["alert channel hung"]);
-  assert.deepEqual((await cw.store.getState("h"))!.undelivered, [], "one channel took it: delivered");
+  const held = (await cw.store.getState("h"))!.undelivered!;
+  assert.deepEqual(held.map((alert) => alert.owed), [["hung"]], "kept for the hung channel alone");
 });
 
 test("triage is aborted when the client stops waiting for it", async (t) => {

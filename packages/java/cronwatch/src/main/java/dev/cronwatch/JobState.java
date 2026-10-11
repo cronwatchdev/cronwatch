@@ -29,7 +29,8 @@ import org.jspecify.annotations.Nullable;
  * @param lastAlertAt when an alert last reached at least one channel, or null
  * @param pendingRecovery conditions that alerted and have since closed, waiting for the recovered
  *     alert the next successful run sends; null for a state written before the field existed
- * @param undelivered alerts no channel accepted, each retried once per check; null when absent
+ * @param undelivered alerts some channel still owes, each retried once per check to those channels
+ *     only, with their runs trimmed; null when absent
  * @param version goes up by one on every write (see {@code Store.compareAndSetState}); null for a
  *     state written before versions, or one whose stored version is not a whole number, which
  *     counts as 0 ({@link #countedVersion})

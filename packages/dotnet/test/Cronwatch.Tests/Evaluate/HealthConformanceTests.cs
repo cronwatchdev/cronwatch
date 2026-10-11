@@ -60,7 +60,8 @@ public class HealthConformanceTests
         DurationConformanceTests.Known(f, "jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck",
             "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery");
         Known(Fixtures.Object(f, "delivery"), "maxUndelivered", "sendLeaseMs", "maxPendingRuns", "alertKey", "normalizeState",
-            "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun");
+            "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun",
+            "heldTextCap", "heldTextSlack", "heldRun", "heldMessageCap", "heldAlert", "channelKeys", "owedChannels", "afterSend", "withoutOwed");
     }
 
     /// <summary>Fails when a nested section has a key a replay does not know.</summary>
@@ -197,7 +198,7 @@ public class HealthConformanceTests
             fails.Same("silenceEnd " + i++, Evaluate.SilenceEnd(Fixtures.Integer(c, "now"), ms), c.Get("silencedUntil"));
         }
         cases += Delivery(Fixtures.Object(f, "delivery"), fails);
-        Assert.Equal(254, cases);
+        Assert.Equal(354, cases);
         fails.Check("health");
     }
 
@@ -283,7 +284,8 @@ public class HealthConformanceTests
         foreach (var c in Fixtures.Objects(d, "recordSent"))
         {
             cases++;
-            var got = Evaluate.RecordSent(State(c.Get("state")), Alerts(c.Get("delivered")), Alerts(c.Get("failed")), Alerts(c.Get("stale")), Fixtures.Integer(c, "now"));
+            bool? reached = c.Has("reached") ? c.Get("reached") is true : null;
+            var got = Evaluate.RecordSent(State(c.Get("state")), Alerts(c.Get("delivered")), Alerts(c.Get("failed")), Alerts(c.Get("stale")), Fixtures.Integer(c, "now"), reached);
             fails.Same("recordSent " + i++, Result(got), AlertsAsWritten(c.Get("result")));
         }
         i = 0;
@@ -308,6 +310,97 @@ public class HealthConformanceTests
         {
             cases++;
             fails.Same("releaseRun " + i++, Evaluate.ReleaseRun(State(c.Get("state")), Fixtures.String(c, "runId")!).ToValue(), AlertsAsWritten(c.Get("result")));
+        }
+        return cases + Held(d, fails);
+    }
+
+    /// <summary>A text spec: null, a string, a <c>{parts}</c> recipe, or <c>{value}</c> for a value that is not a string.</summary>
+    private static object? Spec(object? spec) => spec switch
+    {
+        null or string => spec,
+        JsObject o when o.Has("value") => o.Get("value"),
+        _ => Fixtures.Expand(spec),
+    };
+
+    /// <summary>A text as the fixture writes a result's: <c>digest()</c> for a string, else <c>{value}</c>.</summary>
+    private static object Written(object? v) => v is string s ? Fixtures.Digest(s)! : new JsObject().Set("value", v);
+
+    /// <summary>A run's JSON with its error and output written as the fixture writes them.</summary>
+    private static JsObject RunWritten(JsObject run)
+    {
+        var copy = run.Copy();
+        copy.Set("error", Written(run.Get("error")));
+        copy.Set("output", Written(run.Get("output")));
+        return copy;
+    }
+
+    private static List<string> Strings(object? v) => v is List<object?> list ? list.Select(k => (string)k!).ToList() : [];
+
+    /// <summary>The held copies (trimmed runs and messages) and the per-channel bookkeeping.</summary>
+    private static int Held(JsObject d, Fixtures.Failures fails)
+    {
+        Assert.Equal(Evaluate.HeldTextCap, Fixtures.Integer(d, "heldTextCap"));
+        Assert.Equal(Evaluate.HeldTextSlack, Fixtures.Integer(d, "heldTextSlack"));
+        Assert.Equal(Evaluate.HeldMessageCap, Fixtures.Integer(d, "heldMessageCap"));
+        int cases = 0;
+        int i = 0;
+        foreach (var c in Fixtures.Objects(d, "heldRun"))
+        {
+            cases++;
+            var want = Fixtures.Object(c, "result");
+            // The run is the fixture's sample, every other field as the result has it.
+            var run = want.Copy().Set("error", Spec(c.Get("error"))).Set("output", Spec(c.Get("output")));
+            JsObject held = Evaluate.HeldRunValue(run) ?? run;
+            fails.Same("heldRun " + i, RunWritten(held), want);
+            // Trimming again changes nothing.
+            fails.Same("heldRun again " + i++, Json.Stringify(Evaluate.HeldRunValue(held) ?? held), Json.Stringify(held));
+            if (run.Get("error") is null or string && run.Get("output") is null or string)
+            {
+                // The typed run gives the same.
+                fails.Same("HeldRun " + (i - 1), RunWritten(Evaluate.HeldRun(Run.FromValue(run)).ToValue()), want);
+            }
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "heldAlert"))
+        {
+            cases++;
+            var raw = Fixtures.Object(c, "alert").Copy();
+            raw.Set("message", Spec(raw.Get("message")));
+            Alert held = Evaluate.HeldAlert(Alert.FromValue(raw));
+            JsObject got = held.ToValue();
+            got.Set("message", Written(got.Get("message")));
+            if (got.Get("run") is JsObject r)
+            {
+                got.Set("run", RunWritten(r));
+            }
+            fails.Same("heldAlert " + i, got, Fixtures.Object(c, "result"));
+            fails.Same("heldAlert again " + i++, Evaluate.HeldAlert(held).ToJson(), held.ToJson());
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "channelKeys"))
+        {
+            cases++;
+            fails.Same("channelKeys " + i++, Evaluate.ChannelKeys(Strings(c.Get("names"))).Select(k => (object?)k).ToList(), c.Get("keys"));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "owedChannels"))
+        {
+            cases++;
+            var got = Evaluate.OwedChannels(Alert.FromValue(c.Get("alert")), Strings(c.Get("configured")));
+            fails.Same("owedChannels " + i++, got.Select(k => (object?)k).ToList(), c.Get("owed"));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "afterSend"))
+        {
+            cases++;
+            Alert? got = Evaluate.AfterSend(Alert.FromValue(c.Get("alert")), Strings(c.Get("tried")), Strings(c.Get("failed")));
+            fails.Same("afterSend " + i++, got?.ToValue(), c.Get("result") == null ? null : AlertsAsWritten(c.Get("result")));
+        }
+        i = 0;
+        foreach (var c in Fixtures.Objects(d, "withoutOwed"))
+        {
+            cases++;
+            fails.Same("withoutOwed " + i++, Evaluate.WithoutOwed(Alert.FromValue(c.Get("alert"))).ToValue(), AlertsAsWritten(c.Get("result")));
         }
         return cases;
     }

@@ -4,6 +4,7 @@ Nothing here touches a store or a network, which is what makes it testable."""
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -43,15 +44,20 @@ __all__ = [
     "DEFAULT_TIMEOUT_MS",
     "Delivery",
     "Evaluation",
+    "HELD_MESSAGE_CAP",
+    "HELD_TEXT_CAP",
+    "HELD_TEXT_SLACK",
     "MAX_DURATION_MS",
     "MAX_PENDING_RUNS",
     "MAX_UNDELIVERED",
     "SEND_LEASE_MS",
     "SLOW_FLOOR_MS",
+    "after_send",
     "alert_key",
     "apply_silence",
     "budget_breaches",
     "catches_up",
+    "channel_keys",
     "claim_undelivered",
     "empty_state",
     "failure_count",
@@ -60,6 +66,8 @@ __all__ = [
     "format_number",
     "grace_ms",
     "has_full_baseline",
+    "held_alert",
+    "held_run",
     "hold_alerts",
     "hold_run",
     "is_silenced",
@@ -71,6 +79,7 @@ __all__ = [
     "on_run_finish",
     "on_run_start",
     "open_conditions",
+    "owed_channels",
     "queue_undelivered",
     "record_sent",
     "release_run",
@@ -83,6 +92,7 @@ __all__ = [
     "summarize",
     "timeout_ms",
     "unevaluable_summary",
+    "without_owed",
 ]
 
 DEFAULT_GRACE_MS = 10 * 60_000
@@ -234,6 +244,149 @@ def _template(value: Any) -> str:
     return "[object Object]"
 
 
+#: How much of a held alert's run error and output is kept: 2048 UTF-16 units of each.
+HELD_TEXT_CAP = 2048
+
+#: How far past its cap a held text may run and still be kept whole: longer
+#: than any marker, so a text trimmed once (its kept part and its marker) is
+#: never trimmed again, and the count in its marker stays true.
+HELD_TEXT_SLACK = 64
+
+#: How much of a held alert's message is kept: its first 4096 UTF-16 units.
+HELD_MESSAGE_CAP = 4096
+
+
+def _units(text: str) -> bytes:
+    return text.encode("utf-16-le", "surrogatepass")
+
+
+def _text(units: bytes) -> str:
+    return units.decode("utf-16-le", "surrogatepass")
+
+
+def _unit(units: bytes, i: int) -> int:
+    return int.from_bytes(units[2 * i : 2 * i + 2], "little") if 0 <= i < len(units) // 2 else -1
+
+
+def _keep_head(text: str, cap: int) -> str:
+    units = _units(text)
+    end = cap
+    if 0xD800 <= _unit(units, end - 1) <= 0xDBFF:
+        end -= 1
+    return f"{_text(units[: 2 * end])}\n[{len(units) // 2 - end} more characters trimmed]"
+
+
+def _keep_tail(text: str) -> str:
+    units = _units(text)
+    start = len(units) // 2 - HELD_TEXT_CAP
+    if 0xDC00 <= _unit(units, start) <= 0xDFFF and 0xD800 <= _unit(units, start - 1) <= 0xDBFF:
+        start += 1
+    return f"[{start} earlier characters trimmed]\n{_text(units[2 * start :])}"
+
+
+def _too_long(value: Any, cap: int) -> bool:
+    return isinstance(value, str) and _js.length16(value) > cap + HELD_TEXT_SLACK
+
+
+def held_run(run: Run) -> Run:
+    """A run as an alert held in a job's state keeps it (`sending` and
+    `undelivered`), so the state stays small however much a run logged. Its
+    error keeps its first HELD_TEXT_CAP UTF-16 units and its output its last,
+    each cut so as not to split a surrogate pair, with a line saying how many
+    units were left out: "<head>\n[N more characters trimmed]" and
+    "[N earlier characters trimmed]\n<tail>". A text of at most HELD_TEXT_CAP
+    + HELD_TEXT_SLACK units, or that is not a string, is kept as it is, and
+    so is every other field. The first send of an alert uses the alert as
+    composed; only a retry reads the held copy."""
+    error = _keep_head(run.error, HELD_TEXT_CAP) if _too_long(run.error, HELD_TEXT_CAP) else run.error  # type: ignore[arg-type]
+    output = _keep_tail(run.output) if _too_long(run.output, HELD_TEXT_CAP) else run.output  # type: ignore[arg-type]
+    if error is run.error and output is run.output:
+        return run
+    trimmed = run.copy()
+    trimmed.error = error
+    trimmed.output = output
+    return trimmed
+
+
+def held_alert(alert: Alert) -> Alert:
+    """An alert as it is held in state: its run trimmed (held_run), and its
+    message, when longer than HELD_MESSAGE_CAP + HELD_TEXT_SLACK units, cut
+    to its first HELD_MESSAGE_CAP like a run's error ("<head>\n[N more
+    characters trimmed]"). Everything else, the title and `owed` included,
+    as it is. The first send uses the alert as composed."""
+    run = held_run(alert.run) if isinstance(alert.run, Run) else alert.run
+    message = _keep_head(alert.message, HELD_MESSAGE_CAP) if _too_long(alert.message, HELD_MESSAGE_CAP) else alert.message
+    if run is alert.run and message is alert.message:
+        return alert
+    held = copy.copy(alert)
+    held.run = run
+    held.message = message
+    return held
+
+
+def channel_keys(names: Sequence[str]) -> list[str]:
+    """Each configured channel's key, in the order configured: its name, with
+    "#2", "#3", and so on for the second and later channels of the same name,
+    so two webhooks are "webhook" and "webhook#2". A key already given to an
+    earlier channel (a channel named "webhook#2" itself, say) is skipped for
+    the next number up, so every key is different. A held alert names the
+    channels that still owe it by these keys (its `owed`)."""
+    seen: dict[str, int] = {}
+    taken: set[str] = set()
+    keys: list[str] = []
+    for name in names:
+        n = seen.get(name, 0) + 1
+        seen[name] = n
+        key = name if n == 1 else f"{name}#{n}"
+        while key in taken:
+            n += 1
+            key = f"{name}#{n}"
+        taken.add(key)
+        keys.append(key)
+    return keys
+
+
+def _owed_list(alert: Alert) -> list[Any] | None:
+    """A held alert's `owed` list as stored, or None when it has none (or what it has is not a list)."""
+    owed = alert._extra.get("owed")
+    return owed if isinstance(owed, list) else None
+
+
+def owed_channels(alert: Alert, configured: Sequence[str]) -> list[str]:
+    """The channels a held alert is still owed by, of those configured now
+    (`configured`, channel_keys order): those in its `owed` that are still
+    configured, or every configured one when it has no `owed` list (an alert
+    held by a release before per-channel delivery, or one never sent). An
+    entry of `owed` that is not a string is ignored. None left means the
+    alert is done."""
+    owed = _owed_list(alert)
+    if owed is None:
+        return list(configured)
+    named = {key for key in owed if isinstance(key, str)}
+    return [key for key in configured if key in named]
+
+
+def after_send(alert: Alert, tried: Sequence[str], failed: Sequence[str]) -> Alert | None:
+    """An alert after a send to the channels in `tried`, of which those in
+    `failed` refused it: None when none is left owing it, else a copy with
+    `owed` set to those that refused, in configured order."""
+    owed = [key for key in tried if key in failed]
+    if not owed:
+        return None
+    left = copy.copy(alert)
+    left._extra = {**alert._extra, "owed": owed}
+    return left
+
+
+def without_owed(alert: Alert) -> Alert:
+    """An alert without its `owed` list, as a channel is given it."""
+    if "owed" not in alert._extra:
+        return alert
+    plain = copy.copy(alert)
+    plain._extra = {k: v for k, v in alert._extra.items() if k != "owed"}
+    return plain
+
+
 def _newest(items: list[Any], most: int) -> tuple[list[Any], int]:
     """The newest `most` of `items`, and how many went."""
     return items[-most:], max(0, len(items) - most)
@@ -244,14 +397,15 @@ def _held_alert(entry: Any) -> bool:
 
 
 def queue_undelivered(state: JobState, alerts: Sequence[Alert]) -> Delivery:
-    """`alerts` added to the undelivered queue: one with the same key as a
+    """`alerts` added to the undelivered queue, each with its run trimmed
+    (held_alert) and its `owed` list as given: one with the same key as a
     queued alert replaces it where it stands, the rest go at the end, and only
     the newest MAX_UNDELIVERED stay. `dropped` counts those let go."""
     following = _clone_state(state)
-    by_key = {alert_key(a): a for a in alerts}
+    by_key = {alert_key(a): held_alert(a) for a in alerts}
     queue = [by_key.get(alert_key(a), a) for a in following.undelivered or []]
     known = {alert_key(a) for a in queue}
-    queue.extend(a for a in alerts if alert_key(a) not in known)
+    queue.extend(a for a in by_key.values() if alert_key(a) not in known)
     following.undelivered, dropped = _newest(queue, MAX_UNDELIVERED)
     return Delivery(following, dropped)
 
@@ -261,14 +415,16 @@ def hold_alerts(state: JobState, alerts: Sequence[Alert], until: int, deferred: 
     their condition, before any is sent, so a process that stops part way
     does not lose them: into `sending`, each with its lease ending at
     `until`, when this process sends them, or (deliver="check") straight into
-    the undelivered queue for a check elsewhere. `dropped` counts alerts let
-    go past MAX_UNDELIVERED."""
+    the undelivered queue for a check elsewhere. Either way the copy held has
+    its run trimmed (held_alert) and no `owed` list, so every configured
+    channel owes it; the first send uses the alerts as composed. `dropped`
+    counts alerts let go past MAX_UNDELIVERED."""
     if not alerts:
         return Delivery(state, 0)
     if deferred:
         return queue_undelivered(state, alerts)
     following = _clone_state(state)
-    kept, dropped = _newest([*(following.sending or []), *(SendingAlert(until=until, alert=a) for a in alerts)], MAX_UNDELIVERED)
+    kept, dropped = _newest([*(following.sending or []), *(SendingAlert(until=until, alert=held_alert(a)) for a in alerts)], MAX_UNDELIVERED)
     following.sending = kept
     return Delivery(following, dropped)
 
@@ -277,7 +433,8 @@ def release_sending(state: JobState, now: int) -> Delivery:
     """Alerts in `sending` whose lease ran out by `now`: the process sending
     them stopped before it recorded how the send went. They go to the
     undelivered queue, where the retry sends them (with triage, which is
-    never stored with them here) or drops them as stale. An entry that is not
+    never stored with them here) or drops them as stale, owed by the channels
+    its `owed` names. An entry that is not
     an object with an alert is dropped; one without a numeric `until` counts
     as run out."""
     sending = state.sending or []
@@ -294,18 +451,28 @@ def release_sending(state: JobState, now: int) -> Delivery:
     return queue_undelivered(following, [e.alert for e in gone if _held_alert(e)])
 
 
-def record_sent(state: JobState, delivered: Sequence[Alert], failed: Sequence[Alert], stale: Sequence[Alert], now: int) -> Delivery:
-    """How a send went. Delivered and stale alerts leave the queue; failed
-    ones replace their queued copy, so a triage made on this attempt is kept,
-    or join the queue. Every one of them leaves `sending`. last_alert_at moves
-    only on a delivery. `dropped` counts alerts let go past MAX_UNDELIVERED."""
+def record_sent(
+    state: JobState,
+    delivered: Sequence[Alert],
+    failed: Sequence[Alert],
+    stale: Sequence[Alert],
+    now: int,
+    reached: bool | None = None,
+) -> Delivery:
+    """How a send went. Delivered alerts (no channel owes them any more) and
+    stale ones leave the queue; failed ones (some channel still owes them,
+    named by their `owed`) replace their queued copy, so a triage made on
+    this attempt and the shrunken `owed` are kept, or join the queue. Every
+    one of them leaves `sending`. last_alert_at moves to `now` when `reached`
+    (some channel accepted an alert on this attempt; by default, when any was
+    delivered). `dropped` counts alerts let go past MAX_UNDELIVERED."""
     following = _clone_state(state)
     done = {alert_key(a) for a in [*delivered, *stale]}
     following.undelivered = [a for a in following.undelivered or [] if alert_key(a) not in done]
     sent = {alert_key(a) for a in [*delivered, *failed, *stale]}
     held = [e for e in following.sending or [] if not (_held_alert(e) and alert_key(e.alert) in sent)]
     following.sending = held or None
-    if delivered:
+    if (len(delivered) > 0) if reached is None else reached:
         following.last_alert_at = now
     return queue_undelivered(following, failed)
 

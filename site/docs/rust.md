@@ -417,7 +417,7 @@ The client (every call that can reach the store is `async` and returns a `Result
 |---|---|
 | `job(name, options)` | declare a job and get its handle |
 | `run(name, options, f)` | run without keeping a handle |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `start_checking(every)`, `stop()` | check in a task; the interval is at least five seconds. `start(every)` is its old name, deprecated |
 | `jobs()`, `jobs_with_runs(limit)`, `job_summary(name)` | summaries, without alerting |
 | `runs(name, limit)`, `get_run(id)` | newest first; `limit` is 1 to 500 |

@@ -13,6 +13,7 @@ Cronwatch.Alert.Job.get -> string!
 Cronwatch.Alert.Job.init -> void
 Cronwatch.Alert.Message.get -> string!
 Cronwatch.Alert.Message.init -> void
+Cronwatch.Alert.Owed.get -> Cronwatch.ValueList<string!>?
 Cronwatch.Alert.Run.get -> Cronwatch.Run?
 Cronwatch.Alert.Run.init -> void
 Cronwatch.Alert.Title.get -> string!

@@ -901,5 +901,1083 @@
       "value": "﻿s3cret",
       "secret": "s3cret"
     }
+  ],
+  "outbox": [
+    {
+      "name": "a channel that refuses is the only one retried to, until it takes it",
+      "channels": [
+        "slack",
+        "email"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "slack"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "slack",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "email",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "slack"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel slack"
+            ]
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "slack",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "slack"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel slack"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "slack"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "slack"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605520000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "slack",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605520000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605580000,
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605520000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "owed shrinks as channels take it",
+      "channels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "b",
+            "c"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "c",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b",
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel b",
+              "alert channel c"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "b"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b",
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "c",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": [
+              "alert channel c"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "c"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605520000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "c",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605520000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "every channel refuses, then all take it, then the recovery goes to all",
+      "channels": [
+        "a",
+        "b"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "a",
+            "b"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a",
+                  "b"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": [
+              "alert channel a",
+              "alert channel b"
+            ]
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a",
+                  "b"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": [
+              "alert channel a",
+              "alert channel b"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "a",
+            "b"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a",
+                  "b"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605520000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605520000,
+            "errors": []
+          }
+        },
+        {
+          "op": "ok",
+          "id": "r2",
+          "at": 1767605580000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "recovered",
+                "run": "r2",
+                "accepted": true,
+                "errorLength": null,
+                "outputLength": 4
+              },
+              {
+                "channel": "b",
+                "type": "recovered",
+                "run": "r2",
+                "accepted": true,
+                "errorLength": null,
+                "outputLength": 4
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605581000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "channels of the same name are told apart by position",
+      "channels": [
+        "webhook",
+        "webhook",
+        "email"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "webhook#2"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "webhook",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "webhook#2",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "email",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "webhook#2"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel webhook"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "webhook#2"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "webhook#2"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "webhook#2",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "an alert held without owed, by an older release, goes to every channel configured now",
+      "channels": [
+        "a"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "a"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": [
+              "alert channel a"
+            ]
+          }
+        },
+        {
+          "op": "legacy",
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1"
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "configure",
+          "channels": [
+            "a",
+            "b"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1"
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "a"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1"
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "a channel no longer configured is dropped from owed",
+      "channels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "b",
+            "c"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "c",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b",
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel b",
+              "alert channel c"
+            ]
+          }
+        },
+        {
+          "op": "configure",
+          "channels": [
+            "a",
+            "c"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b",
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "c"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b",
+                  "c"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "c",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "an alert whose owed channels are all gone is done, sent to none",
+      "channels": [
+        "a",
+        "b"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "b"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 4,
+                "outputLength": null
+              },
+              {
+                "channel": "b",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 4,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": [
+              "alert channel b"
+            ]
+          }
+        },
+        {
+          "op": "configure",
+          "channels": [
+            "a"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "b"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605401000,
+            "errors": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "the first send has the whole run, a retry the trimmed one held in state",
+      "channels": [
+        "a"
+      ],
+      "steps": [
+        {
+          "op": "down",
+          "channels": [
+            "a"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "fail",
+          "id": "r1",
+          "at": 1767605400000,
+          "error": {
+            "parts": [
+              [
+                "e",
+                5000
+              ]
+            ]
+          },
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": false,
+                "errorLength": 5000,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": [
+              "alert channel a"
+            ]
+          }
+        },
+        {
+          "op": "up",
+          "channels": [
+            "a"
+          ],
+          "expect": {
+            "sent": [],
+            "undelivered": [
+              {
+                "type": "failed",
+                "run": "r1",
+                "owed": [
+                  "a"
+                ]
+              }
+            ],
+            "sending": [],
+            "lastAlertAt": null,
+            "errors": []
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767605460000,
+          "expect": {
+            "sent": [
+              {
+                "channel": "a",
+                "type": "failed",
+                "run": "r1",
+                "accepted": true,
+                "errorLength": 2079,
+                "outputLength": null
+              }
+            ],
+            "undelivered": [],
+            "sending": [],
+            "lastAlertAt": 1767605460000,
+            "errors": []
+          }
+        }
+      ]
+    }
   ]
 }

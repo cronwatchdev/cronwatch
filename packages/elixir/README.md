@@ -52,7 +52,7 @@ end)
 
 A raise, throw, exit, `{:error, reason}`, or `:error` fails the run and is handed back as it came, so your supervisor or queue sees exactly what it would have without CronWatch. A binary the function returns, or `{:ok, binary}`, is the run's output when nothing was logged, and what `expect` checks. A process killed while running a job has its run recorded as failed at once. `isolate: true` runs the function in a task of the instance instead, and with `kill_at_timeout: true` it is stopped at the job's timeout and recorded as timed out. `Cronwatch.current/0` (and `log/1`, `metric/2`) find the run from the calling process, or from the process that started it, so a `Task` inside a job logs to it.
 
-The checks look for missed and stuck runs, retry alerts no channel accepted, and prune old runs. `check_every` runs them on an interval; leave it out where another process checks, and call `Cronwatch.check/1` from there:
+The checks look for missed and stuck runs, retry alerts to the channels that refused them, and prune old runs. `check_every` runs them on an interval; leave it out where another process checks, and call `Cronwatch.check/1` from there:
 
 ```elixir
 {:ok, result} = Cronwatch.check()

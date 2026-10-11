@@ -268,6 +268,27 @@ module Cronwatch
       @triage_tried = true
     end
 
+    # The keys of the channels that still owe a held alert (the SDK's
+    # HeldAlert.owed; see Evaluate.channel_keys), as stored, or nil when it
+    # has none, so every configured channel owes it. Kept with the fields
+    # this version does not otherwise read, so it is written after them, as
+    # the SDK's spread of an alert writes it.
+    def owed = @extra&.fetch("owed", nil)
+
+    # Whether the alert carries `owed` at all, whatever it holds.
+    def owed? = @extra&.key?("owed") || false
+
+    # A copy with `owed` set to `keys`, or without it when `keys` is nil.
+    def with_owed(keys)
+      extra = (@extra || {}).dup
+      if keys.nil? then extra.delete("owed")
+      else extra["owed"] = keys
+      end
+      copy = dup
+      copy.instance_variable_set(:@extra, extra.empty? ? nil : extra)
+      copy
+    end
+
     # Read leniently, since a queued alert a foreign writer left malformed
     # must affect only its own job: a field of the wrong type is kept as it
     # came (a `type` or `run` that is not what it should be, `details` that

@@ -171,6 +171,152 @@ internal static class Evaluate
     /// <summary>Identifies an alert across retries, and in <c>sending</c>.</summary>
     public static string AlertKey(Alert a) => a.Type.Value + "|" + Js.FormatLong(a.At) + "|" + (a.Run == null ? "" : a.Run.Id);
 
+    /// <summary>How much of a held alert's run error and output is kept: 2048 UTF-16 units of each.</summary>
+    public const int HeldTextCap = 2048;
+
+    /// <summary>
+    /// How far past a cap a held text may run and still be kept whole: longer than any marker, so
+    /// a text trimmed once (its kept part and its marker) is never trimmed again, and the count in
+    /// its marker stays true.
+    /// </summary>
+    public const int HeldTextSlack = 64;
+
+    /// <summary>How much of a held alert's message is kept: its first 4096 UTF-16 units.</summary>
+    public const int HeldMessageCap = 4096;
+
+    private static string KeepHead(string text, int cap)
+    {
+        int end = cap;
+        if (char.IsHighSurrogate(text[end - 1]))
+        {
+            end--;
+        }
+        return text[..end] + "\n[" + (text.Length - end).ToString(CultureInfo.InvariantCulture) + " more characters trimmed]";
+    }
+
+    private static string KeepTail(string text)
+    {
+        int start = text.Length - HeldTextCap;
+        if (char.IsLowSurrogate(text[start]) && char.IsHighSurrogate(text[start - 1]))
+        {
+            start++;
+        }
+        return "[" + start.ToString(CultureInfo.InvariantCulture) + " earlier characters trimmed]\n" + text[start..];
+    }
+
+    /// <summary>
+    /// <c>heldRun</c> on a run's JSON: its error kept to its first <see cref="HeldTextCap"/> units
+    /// and its output to its last, each cut so as not to split a surrogate pair, with a line
+    /// saying how many units were left out. A text of at most <see cref="HeldTextCap"/> plus
+    /// <see cref="HeldTextSlack"/> units, or one that is not a string, is kept as it is, and so is
+    /// every other key. Null when nothing changes.
+    /// </summary>
+    internal static JsObject? HeldRunValue(JsObject run)
+    {
+        string? error = run.Get("error") is string e && e.Length > HeldTextCap + HeldTextSlack ? KeepHead(e, HeldTextCap) : null;
+        string? output = run.Get("output") is string o && o.Length > HeldTextCap + HeldTextSlack ? KeepTail(o) : null;
+        if (error == null && output == null)
+        {
+            return null;
+        }
+        var copy = run.Copy();
+        if (error != null)
+        {
+            copy.Set("error", error);
+        }
+        if (output != null)
+        {
+            copy.Set("output", output);
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// <c>heldRun</c>: a run as an alert held in a job's state keeps it, so the state stays small
+    /// however much a run logged (see <see cref="HeldRunValue"/>). The first send of an alert uses
+    /// the alert as composed; only a retry reads the held copy.
+    /// </summary>
+    public static Run HeldRun(Run run) => HeldRunValue(run.ToValue()) is { } held ? Run.FromValue(held) : run;
+
+    /// <summary>
+    /// <c>heldAlert</c>: an alert as it is held in state: its run trimmed (<see cref="HeldRun"/>),
+    /// and its message, when longer than <see cref="HeldMessageCap"/> plus
+    /// <see cref="HeldTextSlack"/> units, cut to its first <see cref="HeldMessageCap"/> as a run's
+    /// error is. Everything else, the title included, as it is, every key where it stands.
+    /// </summary>
+    public static Alert HeldAlert(Alert alert)
+    {
+        JsObject v = alert.ToValue();
+        bool changed = false;
+        if (v.Get("run") is JsObject run && HeldRunValue(run) is { } held)
+        {
+            v.Set("run", held);
+            changed = true;
+        }
+        if (v.Get("message") is string message && message.Length > HeldMessageCap + HeldTextSlack)
+        {
+            v.Set("message", KeepHead(message, HeldMessageCap));
+            changed = true;
+        }
+        return changed ? Alert.FromValue(v) : alert;
+    }
+
+    /// <summary>
+    /// <c>channelKeys</c>: each configured channel's key, in the order configured: its name, with
+    /// <c>#2</c>, <c>#3</c>, and so on for the second and later channels of the same name. A key
+    /// already given to an earlier channel is skipped for the next number up, so every key is
+    /// different. A held alert names the channels that still owe it by these keys.
+    /// </summary>
+    public static List<string> ChannelKeys(IReadOnlyList<string> names)
+    {
+        var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var keys = new List<string>(names.Count);
+        foreach (string name in names)
+        {
+            int n = (seen.TryGetValue(name, out int count) ? count : 0) + 1;
+            seen[name] = n;
+            string key = n == 1 ? name : name + "#" + n.ToString(CultureInfo.InvariantCulture);
+            while (taken.Contains(key))
+            {
+                n++;
+                key = name + "#" + n.ToString(CultureInfo.InvariantCulture);
+            }
+            taken.Add(key);
+            keys.Add(key);
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// <c>owedChannels</c>: the channels a held alert is still owed by, of those configured now
+    /// (in <see cref="ChannelKeys"/> order): those its <see cref="Alert.Owed"/> names, or every one
+    /// when it has none. None left means the alert is done.
+    /// </summary>
+    public static List<string> OwedChannels(Alert alert, IReadOnlyList<string> configured)
+    {
+        if (alert.Owed is not { } owed)
+        {
+            return [.. configured];
+        }
+        var named = new HashSet<string>(owed, StringComparer.Ordinal);
+        return configured.Where(named.Contains).ToList();
+    }
+
+    /// <summary>
+    /// <c>afterSend</c>: an alert after a send to the channels in <paramref name="tried"/>, of
+    /// which those in <paramref name="failed"/> refused it: null when none is left owing it, else
+    /// the alert with <see cref="Alert.Owed"/> set to those that refused, in configured order.
+    /// </summary>
+    public static Alert? AfterSend(Alert alert, IReadOnlyList<string> tried, IReadOnlyCollection<string> failed)
+    {
+        var owed = tried.Where(failed.Contains).ToList();
+        return owed.Count == 0 ? null : alert.WithOwed(owed);
+    }
+
+    /// <summary><c>withoutOwed</c>: an alert without its <c>owed</c> list, as a channel is given it.</summary>
+    public static Alert WithoutOwed(Alert alert) => alert.WithOwed(null);
+
     /// <summary>The newest <paramref name="max"/> of <paramref name="list"/>, and how many went.</summary>
     private static (List<T> Kept, int Dropped) Newest<T>(List<T> list, int max)
     {
@@ -179,17 +325,25 @@ internal static class Evaluate
     }
 
     /// <summary>
-    /// <paramref name="alerts"/> added to the undelivered queue: one with the same key as a queued
-    /// alert replaces it where it stands, the rest go at the end, and only the newest
+    /// <paramref name="alerts"/> added to the undelivered queue, each held as state keeps it
+    /// (<see cref="HeldAlert"/>) with its <c>owed</c> list as given: one with the same key as a
+    /// queued alert replaces it where it stands, the rest go at the end, and only the newest
     /// <see cref="MaxUndelivered"/> stay. <c>Dropped</c> counts those let go.
     /// </summary>
     public static (JobState State, int Dropped) QueueUndelivered(JobState state, IReadOnlyList<Alert> alerts)
     {
         var next = CloneState(state);
         var byKey = new Dictionary<string, Alert>(StringComparer.Ordinal);
+        // A JavaScript Map's order: a key given again keeps its first place and takes the last alert.
+        var order = new List<string>();
         foreach (var a in alerts)
         {
-            byKey[AlertKey(a)] = a;
+            string key = AlertKey(a);
+            if (!byKey.ContainsKey(key))
+            {
+                order.Add(key);
+            }
+            byKey[key] = HeldAlert(a);
         }
         var queue = new List<Alert>();
         var known = new HashSet<string>(StringComparer.Ordinal);
@@ -199,11 +353,11 @@ internal static class Evaluate
             queue.Add(byKey.TryGetValue(key, out var replaced) ? replaced : a);
             known.Add(key);
         }
-        foreach (var a in alerts)
+        foreach (string key in order)
         {
-            if (!known.Contains(AlertKey(a)))
+            if (!known.Contains(key))
             {
-                queue.Add(a);
+                queue.Add(byKey[key]);
             }
         }
         var (kept, dropped) = Newest(queue, MaxUndelivered);
@@ -216,7 +370,9 @@ internal static class Evaluate
     /// before any is sent, so a process that stops part way does not lose them: into
     /// <c>sending</c>, each with its lease ending at <paramref name="until"/>, when this process
     /// sends them, or (<paramref name="deferred"/>, delivering at check) straight into the
-    /// undelivered queue for a check elsewhere. <c>Dropped</c> counts alerts let go past
+    /// undelivered queue for a check elsewhere. Either way the copy held has its run trimmed
+    /// (<see cref="HeldAlert"/>) and no <c>owed</c> list, so every configured channel owes it; the
+    /// first send uses the alerts as composed. <c>Dropped</c> counts alerts let go past
     /// <see cref="MaxUndelivered"/>.
     /// </summary>
     public static (JobState State, int Dropped) HoldAlerts(JobState state, IReadOnlyList<Alert> alerts, long until, bool deferred)
@@ -233,7 +389,7 @@ internal static class Evaluate
         var sending = new List<SendingAlert>(next.Sending ?? []);
         foreach (var a in alerts)
         {
-            sending.Add(new SendingAlert { Until = until, Alert = a });
+            sending.Add(new SendingAlert { Until = until, Alert = HeldAlert(a) });
         }
         var (kept, dropped) = Newest(sending, MaxUndelivered);
         next.Sending = kept;
@@ -273,13 +429,16 @@ internal static class Evaluate
     }
 
     /// <summary>
-    /// How a send went. Delivered and stale alerts leave the queue; failed ones replace their
-    /// queued copy, so a triage made on this attempt is kept, or join the queue. Every one of them
-    /// leaves <c>sending</c>. <c>lastAlertAt</c> moves only on a delivery. <c>Dropped</c> counts
-    /// alerts let go past <see cref="MaxUndelivered"/>.
+    /// How a send went. Delivered alerts (no channel owes them any more) and stale ones leave the
+    /// queue; failed ones (some channel still owes them, named by their <c>owed</c>) replace their
+    /// queued copy, so a triage made on this attempt and the shrunken <c>owed</c> are kept, or join
+    /// the queue. Every one of them leaves <c>sending</c>. <c>lastAlertAt</c> moves to
+    /// <paramref name="now"/> when <paramref name="reached"/> (some channel accepted an alert on
+    /// this attempt; by default, when any was delivered). <c>Dropped</c> counts alerts let go past
+    /// <see cref="MaxUndelivered"/>.
     /// </summary>
     public static (JobState State, int Dropped) RecordSent(
-        JobState state, IReadOnlyList<Alert> delivered, IReadOnlyList<Alert> failed, IReadOnlyList<Alert> stale, long now)
+        JobState state, IReadOnlyList<Alert> delivered, IReadOnlyList<Alert> failed, IReadOnlyList<Alert> stale, long now, bool? reached = null)
     {
         var next = CloneState(state);
         var done = new HashSet<string>(StringComparer.Ordinal);
@@ -298,7 +457,7 @@ internal static class Evaluate
             sent.Add(AlertKey(a));
         }
         next.Sending = next.Sending?.FindAll(e => e.Alert == null || !sent.Contains(AlertKey(e.Alert)));
-        if (delivered.Count > 0)
+        if (reached ?? delivered.Count > 0)
         {
             next.LastAlertAt = now;
         }

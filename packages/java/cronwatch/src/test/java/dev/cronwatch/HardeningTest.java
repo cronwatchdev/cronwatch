@@ -332,7 +332,11 @@ class HardeningTest {
     assertEquals(List.of("failed"), good.types(), "the other channel has it");
     assertEquals(List.of("alert channel hung"), m.errors().wheres());
     assertTrue(m.errors().messages().get(0).contains("timed out after 1000ms"));
-    assertEquals(List.of(), m.cw().store().getState("h").undelivered(), "delivered once");
+    List<Object> owed = new ArrayList<>();
+    for (Alert a : m.cw().store().getState("h").undelivered()) {
+      owed.add(a.toValue().get("owed"));
+    }
+    assertEquals(List.of(List.of("hung")), owed, "kept for the hung channel alone");
     Support.await("the hung send to be interrupted", interrupted::get);
   }
 

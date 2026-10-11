@@ -69,31 +69,37 @@ defmodule Cronwatch.Delivery do
   end
 
   def dispatch(%Config{} = c, name, alerts, now) do
-    {sent, delivered, failed} =
-      Enum.reduce(alerts, {[], [], []}, fn alert, {sent, delivered, failed} ->
+    {sent, delivered, failed, reached} =
+      Enum.reduce(alerts, {[], [], [], false}, fn alert, {sent, delivered, failed, reached} ->
         alert = if c.triage && alert.type != "recovered", do: add_triage(c, alert, triage_timeout()), else: alert
 
-        if deliver(c, alert) do
-          {sent ++ [alert], delivered ++ [alert], failed}
-        else
-          Telemetry.alert(:queued, meta(c, alert, nil))
-          {sent ++ [alert], delivered, failed ++ [alert]}
+        # The alert as composed, full run and all; only a retry reads the
+        # trimmed copy held in state.
+        case deliver(c, alert) do
+          {nil, took} ->
+            {sent ++ [alert], delivered ++ [alert], failed, reached or took}
+
+          {left, took} ->
+            Telemetry.alert(:queued, meta(c, alert, nil))
+            {sent ++ [alert], delivered, failed ++ [left], reached or took}
         end
       end)
 
-    record_delivery(c, name, delivered, failed, [], now)
+    record_delivery(c, name, delivered, failed, [], now, reached)
     sent
   end
 
   @doc """
-  Sends the alerts no channel accepted last time, once each, oldest first.
+  Sends the alerts some channel refused last time, once each, oldest first,
+  to the channels that still owe them (their `owed`) and no others, from the
+  copy held in state, its run trimmed (`Cronwatch.Evaluate.held_run/1`).
   They are claimed first (`Cronwatch.Evaluate.claim_undelivered/3`): moved
   into `sending` with a lease, in one conditional write, so when several
   processes check at once only the one whose write lands sends them. One
   that no longer describes the job is dropped instead. Retries across a
   check share the retry budget of wall-clock time, kept in `spent`; claimed
   alerts it has no time left for go back to the queue for the next check.
-  Answers `{delivered, spent}`.
+  Answers `{sent, spent}`: the alerts some channel took on this attempt.
   """
   def retry_undelivered(%Config{} = c, name, state, now, spent) do
     if (state.undelivered || []) == [] or c.deliver == :check do
@@ -123,13 +129,13 @@ defmodule Cronwatch.Delivery do
   end
 
   defp retry(c, name, claimed, now, spent) do
-    {delivered, failed, spent} =
-      Enum.reduce(claimed, {[], [], spent}, fn alert, {delivered, failed, spent} ->
+    {delivered, failed, sent, spent} =
+      Enum.reduce(claimed, {[], [], [], spent}, fn alert, {delivered, failed, sent, spent} ->
         left = retry_budget() - spent
 
         if left <= 0 do
-          # Not tried: back to the queue as it was.
-          {delivered, failed ++ [alert], spent}
+          # Not tried: back to the queue as it was, owed and all.
+          {delivered, failed ++ [alert], sent, spent}
         else
           started = System.monotonic_time(:millisecond)
 
@@ -140,26 +146,30 @@ defmodule Cronwatch.Delivery do
               do: add_triage(c, alert, min(triage_timeout(), left)),
               else: alert
 
-          {delivered, failed} =
-            if deliver(c, alert), do: {delivered ++ [alert], failed}, else: {delivered, failed ++ [alert]}
+          {left_owing, took} = deliver(c, alert)
+          sent = if took, do: sent ++ [Evaluate.without_owed(alert)], else: sent
 
-          {delivered, failed, spent + max(0, System.monotonic_time(:millisecond) - started)}
+          {delivered, failed} =
+            if left_owing, do: {delivered, failed ++ [left_owing]}, else: {delivered ++ [alert], failed}
+
+          {delivered, failed, sent, spent + max(0, System.monotonic_time(:millisecond) - started)}
         end
       end)
 
-    record_delivery(c, name, delivered, failed, [], now)
-    {delivered, spent}
+    record_delivery(c, name, delivered, failed, [], now, sent != [])
+    {sent, spent}
   end
 
   # Marks delivered alerts done, drops stale ones, and keeps failed ones for
   # the next check, taking them all out of `sending` (record_sent). A failed
-  # alert replaces its stored copy, so a triage made on this attempt is kept.
-  # last_alert_at moves only on a delivery. When this write fails, alerts
-  # still in `sending` are retried once their lease runs out.
-  defp record_delivery(c, name, delivered, failed, dropped, now) do
+  # alert replaces its stored copy, so a triage made on this attempt and the
+  # channels that still owe it are kept. last_alert_at moves when `reached`,
+  # some channel accepted an alert on this attempt. When this write fails,
+  # alerts still in `sending` are retried once their lease runs out.
+  defp record_delivery(c, name, delivered, failed, dropped, now, reached) do
     {_, trimmed} =
       Core.update_state!(c, name, fn previous ->
-        Evaluate.record_sent(Evaluate.normalize_state(previous, name), delivered, failed, dropped, now)
+        Evaluate.record_sent(Evaluate.normalize_state(previous, name), delivered, failed, dropped, now, reached)
       end)
 
     report_dropped(c, name, trimmed)
@@ -168,63 +178,81 @@ defmodule Cronwatch.Delivery do
   end
 
   @doc """
-  Sends to every channel at once, each in a task of its own stopped after 15
-  seconds. True when at least one accepted it, or there are none.
+  Sends to every channel that still owes the alert
+  (`Cronwatch.Evaluate.owed_channels/2`: all of them for an alert not sent
+  before), at once, each in a task of its own stopped after 15 seconds, each
+  failure reported under its channel's name. Answers `{left, reached}`:
+  `left` is the alert with `owed` cut to the channels that refused it, or
+  nil when none did (or none is left to owe it), and `reached` whether any
+  channel accepted it. With no channels at all it counts as delivered.
   """
-  def deliver(%Config{alerts: []}, _alert), do: true
+  def deliver(%Config{alerts: []}, _alert), do: {nil, true}
 
   def deliver(%Config{} = c, alert) do
+    named = Enum.map(c.alerts, &{&1, channel_name(&1)})
+    keys = Evaluate.channel_keys(Enum.map(named, &elem(&1, 1)))
+
+    case Evaluate.owed_channels(alert, keys) do
+      [] -> {nil, false}
+      owed -> send_owed(c, alert, Enum.zip(named, keys), owed)
+    end
+  end
+
+  defp send_owed(c, alert, channels, owed) do
+    plain = Evaluate.without_owed(alert)
+
     tasks =
-      Enum.map(c.alerts, fn {module, state} = channel ->
-        name = channel_name(channel)
+      for {{{module, state}, name}, key} <- channels, key in owed do
         ctx = %ChannelContext{on_error: fn e -> Core.report(c, e, "alert channel #{name}") end, transport: c.transport}
 
         task =
           Task.Supervisor.async_nolink(Cronwatch.Supervisor.tasks(c.name), fn ->
-            guarded(fn -> module.send(state, alert, ctx) end)
+            guarded(fn -> module.send(state, plain, ctx) end)
           end)
 
-        {task, name}
-      end)
+        {task, name, key}
+      end
 
     results = Task.yield_many(Enum.map(tasks, &elem(&1, 0)), channel_timeout())
 
-    tasks
-    |> Enum.zip(results)
-    |> Enum.map(fn {{task, name}, {_, result}} ->
-      outcome =
-        case result do
-          {:ok, :ok} ->
-            :ok
+    failed =
+      tasks
+      |> Enum.zip(results)
+      |> Enum.flat_map(fn {{task, name, key}, {_, result}} ->
+        outcome =
+          case result do
+            {:ok, :ok} ->
+              :ok
 
-          {:ok, {:error, reason}} ->
-            {:error, reason}
+            {:ok, {:error, reason}} ->
+              {:error, reason}
 
-          # Described by its shape alone: an app's channel may answer with
-          # its own state, credentials and all.
-          {:ok, other} ->
-            {:error, "channel #{name} answered #{Config.shape(other)}, not :ok or {:error, reason}"}
+            # Described by its shape alone: an app's channel may answer with
+            # its own state, credentials and all.
+            {:ok, other} ->
+              {:error, "channel #{name} answered #{Config.shape(other)}, not :ok or {:error, reason}"}
 
-          {:exit, reason} ->
-            {:error, {:exit, reason}}
+            {:exit, reason} ->
+              {:error, {:exit, reason}}
 
-          nil ->
-            Task.shutdown(task, :brutal_kill)
-            {:error, Cronwatch.Error.other("timed out after #{channel_timeout()}ms")}
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, Cronwatch.Error.other("timed out after #{channel_timeout()}ms")}
+          end
+
+        case outcome do
+          :ok ->
+            Telemetry.alert(:sent, meta(c, alert, name))
+            []
+
+          {:error, reason} ->
+            Core.report(c, reason, "alert channel #{name}")
+            Telemetry.alert(:failed, meta(c, alert, name))
+            [key]
         end
+      end)
 
-      case outcome do
-        :ok ->
-          Telemetry.alert(:sent, meta(c, alert, name))
-          true
-
-        {:error, reason} ->
-          Core.report(c, reason, "alert channel #{name}")
-          Telemetry.alert(:failed, meta(c, alert, name))
-          false
-      end
-    end)
-    |> Enum.any?()
+    {Evaluate.after_send(alert, owed, failed), length(failed) < length(owed)}
   end
 
   defp channel_name({module, state}) do

@@ -536,7 +536,9 @@ class JobState:
     last_alert_at: int | None = None
     #: Conditions that alerted and have since closed, waiting for the recovered message.
     pending_recovery: list[Condition | str] | None = None
-    #: Alerts that no channel accepted. Each check retries them once.
+    #: Alerts some channel still owes: each check retries them once, to those
+    #: channels only (each alert's ``owed``, the keys of the channels that refused
+    #: it; without it, every channel). Their runs and messages are trimmed (held_alert).
     undelivered: list[Alert] | None = None
     #: The outbox: alerts written with the state that opened their condition,
     #: while the process that wrote them sends them (see SendingAlert). None

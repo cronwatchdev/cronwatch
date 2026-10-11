@@ -398,7 +398,7 @@ A job's options, on `JobOptions.builder()`: `schedule` (five or six field cron, 
 | `job(name, options)` | declare a job and get its handle |
 | `job.run(fn)`, `job.call(fn)`, and with `RunOptions` | run as a recorded run; `RunOptions.trigger`, `interruptingAtTimeout`, and `discardWhen` |
 | `Cronwatch.current()`, `log`, `metric`, `cancelled`, `onCancel`, `wrap` | the run in progress, on its `JobContext` |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `startChecking()`, `startChecking(every)`, `stop()` | check on an interval |
 | `jobs()`, `jobsWithRuns(limit)`, `jobSummary(name)` | summaries, without alerting |
 | `runs(name, limit)`, `getRun(id)` | newest first; `limit` is held to 1 to 500 |

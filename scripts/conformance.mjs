@@ -56,6 +56,15 @@ import {
   summarize,
   timeoutMs,
   unevaluableSummary,
+  afterSend,
+  channelKeys,
+  HELD_MESSAGE_CAP,
+  HELD_TEXT_CAP,
+  HELD_TEXT_SLACK,
+  heldAlert,
+  heldRun,
+  owedChannels,
+  withoutOwed,
 } from "../packages/sdk/src/evaluate.ts";
 import { median, percentile } from "../packages/sdk/src/stats.ts";
 import { capOutput, errorMessage, OUTPUT_CAP, REDACT_EDGE, redactAndCap, redactSecrets } from "../packages/sdk/src/output.ts";
@@ -1336,6 +1345,14 @@ function deliveryCases(state) {
   const d = alert("missed", T0 + 2 * MIN);
   const many = (n, from = 0) => Array.from({ length: n }, (_, i) => alert("failed", T0 + (from + i) * SEC));
   const held = (until, x) => ({ until, alert: x });
+  // A run with a long error and output, which a held copy keeps trimmed (heldRun).
+  const longRun = (error, output) => ({ ...sampleRun({ id: "rl", job: "j" }), error, output });
+  const longAlert = { ...a, run: longRun("e".repeat(5000), "o".repeat(5000)) };
+  // A held run with its error and output as digest() writes them ({ text }, or { length, sha256 } past 400 units), or { value } when not a string.
+  const heldDigest = (r) => {
+    const field = (x) => (typeof x === "string" ? digest(x) : { value: x });
+    return { ...clone(r), error: field(r.error), output: field(r.output) };
+  };
 
   const alertKeys = [a, b, c, d, alert("missed", -5), alert("failed", 1.5, "")].map((x) => ({ alert: x, key: alertKey(x) }));
 
@@ -1352,6 +1369,7 @@ function deliveryCases(state) {
     [state({ undelivered: many(19) }), [a, b]],
     [state({ undelivered: many(25) }), []],
     [state({ undelivered: many(20) }), many(3, 20)],
+    [state({ undelivered: [{ ...a, owed: ["slack", "email"] }] }), [{ ...a, owed: ["email"] }, longAlert]],
   ].map(([s, alerts]) => ({ state: s, alerts, result: clone(queueUndelivered(s, alerts)) }));
 
   const holds = [
@@ -1361,6 +1379,8 @@ function deliveryCases(state) {
     [state({ sending: many(19).map((x) => held(T0, x)) }), [a, b], false],
     [state({ open: { failed: T0 } }), [a], true],
     [state({ undelivered: many(20) }), [a], true],
+    [state({ open: { failed: T0 } }), [longAlert], false],
+    [state({ open: { failed: T0 } }), [longAlert], true],
   ].map(([s, alerts, deferred]) => ({ state: s, alerts, until: T0 + SEND_LEASE_MS, deferred, result: clone(holdAlerts(s, alerts, T0 + SEND_LEASE_MS, deferred)) }));
 
   const now = T0 + SEND_LEASE_MS;
@@ -1372,7 +1392,62 @@ function deliveryCases(state) {
     [state({ sending: [held(now - 1, a)], undelivered: [{ ...a, triage: null }, d] })],
     [state({ sending: [{ alert: a }, { until: "x", alert: b }, { until: now - 1 }, null, held(now - 1, c)] })],
     [state({ sending: many(5).map((x) => held(now - 1, x)), undelivered: many(18, 5) })],
+    [state({ sending: [held(now - 1, { ...a, owed: ["email"] }), held(now - 1, longAlert)] })],
   ].map(([s]) => ({ state: s, now, result: clone(releaseSending(s, now)) }));
+
+  // Trimmed held runs, and the per-channel bookkeeping.
+  const astral = "\u{1F600}";
+  const textSpecs = [
+    null, "", "short", { parts: [["e", HELD_TEXT_CAP]] }, { parts: [["e", HELD_TEXT_CAP + HELD_TEXT_SLACK]] },
+    { parts: [["e", HELD_TEXT_CAP + HELD_TEXT_SLACK + 1]] }, { parts: [["x", 16 * 1024]] },
+    { parts: [["e", HELD_TEXT_CAP - 1], [astral, 1], ["e", 3000]] }, { parts: [["e", HELD_TEXT_CAP - 2], [astral, 1], ["e", 3000]] },
+    { parts: [[astral, 3000]] }, { parts: [["a\nb", 2000]] },
+  ];
+  const heldRuns = [];
+  for (const errorSpec of textSpecs) {
+    for (const outputSpec of [null, textSpecs[4], textSpecs[5], { parts: [["o", 3000], [astral, 1], ["o", HELD_TEXT_CAP - 1]] }, { parts: [["o", 3000], [astral, 1], ["o", HELD_TEXT_CAP - 2]] }]) {
+      const input = longRun(errorSpec === null ? null : expand(errorSpec), outputSpec === null ? null : expand(outputSpec));
+      heldRuns.push({ error: errorSpec, output: outputSpec, result: heldDigest(heldRun(input)) });
+    }
+  }
+  // A foreign row's error or output that is not a string is kept as it is.
+  heldRuns.push({ error: { value: 5 }, output: { value: { x: 1 } }, result: heldDigest(heldRun(longRun(5, { x: 1 }))) });
+  // Messages are given as text specs too, and written back as digest() writes them.
+  const messageSpecs = [
+    "m", { parts: [["m", HELD_MESSAGE_CAP]] }, { parts: [["m", HELD_MESSAGE_CAP + HELD_TEXT_SLACK]] },
+    { parts: [["m", HELD_MESSAGE_CAP + HELD_TEXT_SLACK + 1]] }, { parts: [["Output (tail):\n", 1], ["x", 16 * 1024]] },
+    { parts: [["m", HELD_MESSAGE_CAP - 1], [astral, 1], ["m", 3000]] }, { parts: [["m", HELD_MESSAGE_CAP - 2], [astral, 1], ["m", 3000]] },
+  ];
+  const alertDigest = (x) => {
+    const r = clone(x);
+    if (r.run && typeof r.run === "object") r.run = heldDigest(r.run);
+    if (typeof r.message === "string") r.message = digest(r.message);
+    return r;
+  };
+  const heldAlerts = [a, d, longAlert, { ...longAlert, owed: ["slack"] }, { ...d, run: "nope" }].map((x) => ({ alert: x, result: alertDigest(heldAlert(x)) }));
+  for (const spec of messageSpecs) heldAlerts.push({ alert: { ...a, message: spec }, result: alertDigest(heldAlert({ ...a, message: expand(spec) })) });
+  // Already trimmed: a second trim changes nothing.
+  const once = heldAlert({ ...a, message: "m".repeat(9000) }).message;
+  heldAlerts.push({ alert: { ...a, message: { parts: [[once, 1]] } }, result: alertDigest(heldAlert({ ...a, message: once })) });
+  const keys = [[], ["slack"], ["slack", "email"], ["webhook", "webhook", "email", "webhook"], ["a", "a#2", "a"], ["a", "a", "a#2"], ["", "", "#2"], ["x", "x", "x", "x#3"]]
+    .map((names) => ({ names, keys: channelKeys(names) }));
+  const owed = [
+    [a, ["slack", "email"]],
+    [a, []],
+    [{ ...a, owed: ["email"] }, ["slack", "email"]],
+    [{ ...a, owed: ["email", "slack"] }, ["slack", "email"]],
+    [{ ...a, owed: ["gone"] }, ["slack", "email"]],
+    [{ ...a, owed: [] }, ["slack"]],
+    [{ ...a, owed: "slack" }, ["slack", "email"]],
+    [{ ...a, owed: [1, "email", null] }, ["slack", "email"]],
+  ].map(([x, configured]) => ({ alert: x, configured, owed: owedChannels(x, configured) }));
+  const afterSends = [
+    [a, ["slack", "email"], []],
+    [a, ["slack", "email"], ["email"]],
+    [{ ...a, owed: ["slack", "email"] }, ["slack", "email"], ["email", "slack"]],
+    [{ ...a, owed: ["slack"] }, ["slack"], ["slack"]],
+  ].map(([x, tried, failed]) => ({ alert: x, tried, failed, result: clone(afterSend(x, tried, failed)) }));
+  const without = [a, { ...a, owed: ["x"] }].map((x) => ({ alert: x, result: clone(withoutOwed(x)) }));
 
   const at = T0 + 3 * MIN;
   const sent = [
@@ -1383,7 +1458,15 @@ function deliveryCases(state) {
     [state({ undelivered: [a, b] }), [], [{ ...a, triage: null }], []],
     [state({ undelivered: many(20) }), [], [a], []],
     [state({ sending: [held(now, a)], lastAlertAt: 5 }), [], [], []],
-  ].map(([s, delivered, failed, stale]) => ({ state: s, delivered, failed, stale, now: at, result: clone(recordSent(s, delivered, failed, stale, at)) }));
+    // Some channels took it and some still owe it; `reached` says one took something.
+    [state({ sending: [held(now, a)] }), [], [{ ...a, owed: ["slack"] }], [], true],
+    [state({ undelivered: [{ ...a, owed: ["slack", "email"] }] }), [], [{ ...a, owed: ["email"] }], [], true],
+    [state({ undelivered: [{ ...a, owed: ["gone"] }], lastAlertAt: 5 }), [{ ...a, owed: ["gone"] }], [], [], false],
+    [state({ sending: [held(now, longAlert)] }), [], [longAlert], [], false],
+  ].map(([s, delivered, failed, stale, reached]) => ({
+    state: s, delivered, failed, stale, now: at, ...(reached === undefined ? {} : { reached }),
+    result: clone(recordSent(s, delivered, failed, stale, at, ...(reached === undefined ? [] : [reached]))),
+  }));
 
   // A check's claim on the queue before it retries: what it sends, what it
   // drops as stale, and the state its write leaves.
@@ -1399,6 +1482,7 @@ function deliveryCases(state) {
     [state({ open: { slow: T0 }, undelivered: [c, b], silencedUntil: now + 1 })],
     [state({ open: { failed: T0, slow: T0 }, undelivered: [a, b], sending: many(19).map((x) => held(until, x)) })],
     [state({ open: { failed: T0 }, undelivered: [a], sending: many(20).map((x) => held(until, x)) })],
+    [state({ open: { failed: T0, slow: T0 }, undelivered: [{ ...a, owed: ["email"] }, b] })],
   ].map(([s]) => ({ state: s, now, until, result: clone(claimUndelivered(s, now, until)) }));
 
   // Runs held as pending from their start until their finish is evaluated.
@@ -1424,6 +1508,8 @@ function deliveryCases(state) {
     maxUndelivered: MAX_UNDELIVERED, sendLeaseMs: SEND_LEASE_MS, maxPendingRuns: MAX_PENDING_RUNS, alertKey: alertKeys,
     normalizeState: [...normalized, ...normalizedPending], queueUndelivered: queued, holdAlerts: holds, releaseSending: releases, recordSent: sent,
     claimUndelivered: claims, holdRun: holdsRun, releaseRun: releasesRun,
+    heldTextCap: HELD_TEXT_CAP, heldMessageCap: HELD_MESSAGE_CAP, heldTextSlack: HELD_TEXT_SLACK, heldRun: heldRuns, heldAlert: heldAlerts, channelKeys: keys,
+    owedChannels: owed, afterSend: afterSends, withoutOwed: without,
   };
 }
 
@@ -1949,7 +2035,166 @@ async function foreignRowCases() {
  * stored data it does not know (unknownFields).
  */
 async function clientCases() {
-  return { runIds: await runIdCases(), unknownFields: await unknownFieldCases(), environment: environmentCases(), secrets: secretCases() };
+  return { runIds: await runIdCases(), unknownFields: await unknownFieldCases(), environment: environmentCases(), secrets: secretCases(), outbox: await outboxCases() };
+}
+
+/**
+ * Per-channel delivery through a client. Each scenario starts a client on a
+ * memory store with `channels` (their names, in order) and plays its steps:
+ *
+ * - `fail`: job "nightly" (declared with no options) starts a run with id
+ *   `id` at `at` and fails it at `at` + 1s with the error `error` (a string,
+ *   or a { parts } recipe).
+ * - `ok`: the same, finished with "done".
+ * - `check`: cw.check() at `at`.
+ * - `down` / `up`: the channels with these keys (channelKeys of the
+ *   configured names) refuse every send from now on, or take them again.
+ * - `configure`: a new client on the same store with these channel names
+ *   (down keys carry over by key); the old one is closed.
+ * - `legacy`: the stored state's undelivered alerts lose their `owed`, as an
+ *   older release wrote them.
+ *
+ * After each step: `sent`, each send a channel took or refused in this step
+ * as { channel (key), type, run (id or null), accepted, errorLength,
+ * outputLength }, ordered by channel position then send order; `undelivered`
+ * and `sending` from the stored state as { type, run, owed } (owed absent
+ * when the entry has none); `lastAlertAt`; and `errors`, the onError
+ * `where`s in order.
+ */
+async function outboxCases() {
+  const scenarios = [
+    {
+      name: "a channel that refuses is the only one retried to, until it takes it",
+      channels: ["slack", "email"],
+      steps: [
+        { op: "down", channels: ["slack"] }, { op: "fail", id: "r1", at: T0 }, { op: "check", at: T0 + MIN },
+        { op: "up", channels: ["slack"] }, { op: "check", at: T0 + 2 * MIN }, { op: "check", at: T0 + 3 * MIN },
+      ],
+    },
+    {
+      name: "owed shrinks as channels take it",
+      channels: ["a", "b", "c"],
+      steps: [
+        { op: "down", channels: ["b", "c"] }, { op: "fail", id: "r1", at: T0 }, { op: "up", channels: ["b"] }, { op: "check", at: T0 + MIN },
+        { op: "up", channels: ["c"] }, { op: "check", at: T0 + 2 * MIN },
+      ],
+    },
+    {
+      name: "every channel refuses, then all take it, then the recovery goes to all",
+      channels: ["a", "b"],
+      steps: [
+        { op: "down", channels: ["a", "b"] }, { op: "fail", id: "r1", at: T0 }, { op: "check", at: T0 + MIN },
+        { op: "up", channels: ["a", "b"] }, { op: "check", at: T0 + 2 * MIN }, { op: "ok", id: "r2", at: T0 + 3 * MIN },
+      ],
+    },
+    {
+      name: "channels of the same name are told apart by position",
+      channels: ["webhook", "webhook", "email"],
+      steps: [
+        { op: "down", channels: ["webhook#2"] }, { op: "fail", id: "r1", at: T0 }, { op: "up", channels: ["webhook#2"] }, { op: "check", at: T0 + MIN },
+      ],
+    },
+    {
+      name: "an alert held without owed, by an older release, goes to every channel configured now",
+      channels: ["a"],
+      steps: [
+        { op: "down", channels: ["a"] }, { op: "fail", id: "r1", at: T0 }, { op: "legacy" }, { op: "configure", channels: ["a", "b"] },
+        { op: "up", channels: ["a"] }, { op: "check", at: T0 + MIN },
+      ],
+    },
+    {
+      name: "a channel no longer configured is dropped from owed",
+      channels: ["a", "b", "c"],
+      steps: [
+        { op: "down", channels: ["b", "c"] }, { op: "fail", id: "r1", at: T0 }, { op: "configure", channels: ["a", "c"] },
+        { op: "up", channels: ["c"] }, { op: "check", at: T0 + MIN },
+      ],
+    },
+    {
+      name: "an alert whose owed channels are all gone is done, sent to none",
+      channels: ["a", "b"],
+      steps: [{ op: "down", channels: ["b"] }, { op: "fail", id: "r1", at: T0 }, { op: "configure", channels: ["a"] }, { op: "check", at: T0 + MIN }],
+    },
+    {
+      name: "the first send has the whole run, a retry the trimmed one held in state",
+      channels: ["a"],
+      steps: [
+        { op: "down", channels: ["a"] }, { op: "fail", id: "r1", at: T0, error: { parts: [["e", 5000]] } },
+        { op: "up", channels: ["a"] }, { op: "check", at: T0 + MIN },
+      ],
+    },
+  ];
+  const out = [];
+  for (const scenario of scenarios) {
+    let now = T0;
+    const store = sdk.memory();
+    const down = new Set();
+    const log = [];
+    const errors = [];
+    let names = scenario.channels;
+    const make = () => {
+      const keys = channelKeys(names);
+      return sdk.cronwatch({
+        store, now: () => now, cronSecret: null,
+        alerts: names.map((name, i) => ({
+          name,
+          send: async (alert) => {
+            const accepted = !down.has(keys[i]);
+            log.push({
+              position: i, channel: keys[i], type: alert.type, run: alert.run?.id ?? null, accepted,
+              errorLength: alert.run?.error?.length ?? null, outputLength: alert.run?.output?.length ?? null,
+            });
+            if (!accepted) throw new Error(`${keys[i]} down`);
+          },
+        })),
+        onError: (_error, where) => errors.push(where),
+      });
+    };
+    let cw = make();
+    const snapshot = async () => {
+      const state = (await store.getState("nightly")) ?? {};
+      const brief = (alert) => ({ type: alert.type, run: alert.run?.id ?? null, ...(alert.owed !== undefined ? { owed: alert.owed } : {}) });
+      const sent = log.splice(0).map((entry, order) => ({ ...entry, order }))
+        .sort((x, y) => x.position - y.position || x.order - y.order)
+        .map(({ position: _p, order: _o, ...entry }) => entry);
+      return {
+        sent,
+        undelivered: (state.undelivered ?? []).map(brief),
+        sending: (state.sending ?? []).map((entry) => brief(entry.alert)),
+        lastAlertAt: state.lastAlertAt ?? null,
+        errors: errors.splice(0),
+      };
+    };
+    const steps = [];
+    for (const step of scenario.steps) {
+      if (step.op === "fail" || step.op === "ok") {
+        now = step.at;
+        const handle = await cw.job("nightly").start({ id: step.id });
+        now = step.at + 1000;
+        await (step.op === "fail" ? handle.fail(step.error === undefined ? "boom" : expand(step.error)) : handle.finish("done"));
+      } else if (step.op === "check") {
+        now = step.at;
+        await cw.check();
+      } else if (step.op === "down") {
+        for (const key of step.channels) down.add(key);
+      } else if (step.op === "up") {
+        for (const key of step.channels) down.delete(key);
+      } else if (step.op === "configure") {
+        await cw.close();
+        names = step.channels;
+        cw = make();
+      } else if (step.op === "legacy") {
+        const state = await store.getState("nightly");
+        await store.setState({ ...state, undelivered: state.undelivered.map(({ owed: _owed, ...alert }) => alert) });
+      } else {
+        throw new Error(`unknown step ${step.op}`);
+      }
+      steps.push({ ...step, expect: await snapshot() });
+    }
+    await cw.close();
+    out.push({ name: scenario.name, channels: scenario.channels, steps });
+  }
+  return out;
 }
 
 /**

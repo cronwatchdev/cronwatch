@@ -409,7 +409,7 @@ final class Cronwatch
 
     /**
      * Look for missed and stuck runs across every job, send alerts, retry
-     * alerts no channel accepted, and prune old runs. Call it from a crontab
+     * alerts to the channels that refused them, and prune old runs. Call it from a crontab
      * line, the framework's scheduler, or by hand, every few minutes.
      */
     public function check(): CheckResult
@@ -1669,17 +1669,21 @@ final class Cronwatch
         self::holdOn();
         $delivered = [];
         $failed = [];
+        $reached = false;
         foreach ($alerts as $alert) {
             if ($this->triage !== null && $alert->type !== AlertType::RECOVERED) {
                 $this->addTriage($alert, self::TRIAGE_TIMEOUT_MS);
             }
-            if ($this->deliver($alert)) {
-                $delivered[] = $alert;
+            // The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+            ['left' => $left, 'reached' => $took] = $this->deliver($alert);
+            $reached = $reached || $took;
+            if ($left !== null) {
+                $failed[] = $left;
             } else {
-                $failed[] = $alert;
+                $delivered[] = $alert;
             }
         }
-        $this->recordDelivery($name, $delivered, $failed, [], $at);
+        $this->recordDelivery($name, $delivered, $failed, [], $at, $reached);
         return $alerts;
     }
 
@@ -1715,14 +1719,17 @@ final class Cronwatch
     }
 
     /**
-     * Send the alerts that no channel accepted last time, once each, oldest
-     * first. They are claimed first (Evaluate::claimUndelivered): moved into
-     * `sending` with a lease, in one conditional write, so when several
-     * processes check at once only the one whose write lands sends them. An
-     * alert that no longer describes the job (Evaluate::staleAlert) is
-     * dropped instead. Retries across a check share RETRY_BUDGET_MS of
-     * wall-clock time; claimed alerts it has no time left for go back to the
-     * queue for the next check.
+     * Send the alerts some channel refused last time, once each, oldest
+     * first, to the channels that still owe them (their `owed`) and no
+     * others, from the copy held in state, its run trimmed
+     * (Evaluate::heldRun). They are claimed first
+     * (Evaluate::claimUndelivered): moved into `sending` with a lease, in one
+     * conditional write, so when several processes check at once only the
+     * one whose write lands sends them. An alert that no longer describes the
+     * job (Evaluate::staleAlert) is dropped instead. Retries across a check
+     * share RETRY_BUDGET_MS of wall-clock time; claimed alerts it has no time
+     * left for go back to the queue for the next check. Returns the alerts
+     * some channel took on this attempt.
      *
      * @return list<Alert>
      */
@@ -1746,6 +1753,7 @@ final class Cronwatch
         self::holdOn();
         $delivered = [];
         $failed = [];
+        $sent = [];
         foreach ($claimed as $alert) {
             $left = self::RETRY_BUDGET_MS - $spent;
             if ($left <= 0) {
@@ -1759,15 +1767,19 @@ final class Cronwatch
             if ($this->triage !== null && $alert->type !== AlertType::RECOVERED && !$alert->triageTried) {
                 $this->addTriage($alert, min(self::TRIAGE_TIMEOUT_MS, $left));
             }
-            if ($this->deliver($alert)) {
-                $delivered[] = $alert;
+            ['left' => $left, 'reached' => $took] = $this->deliver($alert);
+            if ($took) {
+                $sent[] = Evaluate::withoutOwed($alert);
+            }
+            if ($left !== null) {
+                $failed[] = $left;
             } else {
-                $failed[] = $alert;
+                $delivered[] = $alert;
             }
             $spent += max(0.0, ($this->wall)() - $started);
         }
-        $this->recordDelivery($name, $delivered, $failed, [], $at);
-        return $delivered;
+        $this->recordDelivery($name, $delivered, $failed, [], $at, $sent !== []);
+        return $sent;
     }
 
     /**
@@ -1815,19 +1827,20 @@ final class Cronwatch
      * Mark delivered alerts done, drop stale ones, and keep failed ones for
      * the next check, taking them all out of `sending`
      * (Evaluate::recordSent). A failed alert replaces its stored copy, so a
-     * triage made on this attempt is kept. lastAlertAt moves only on a
-     * delivery. When this write fails, alerts still in `sending` are retried
-     * once their lease runs out.
+     * triage made on this attempt and the channels that still owe it are
+     * kept. lastAlertAt moves when `reached`, some channel accepted an alert
+     * on this attempt. When this write fails, alerts still in `sending` are
+     * retried once their lease runs out.
      *
      * @param list<Alert> $delivered
      * @param list<Alert> $failed
      * @param list<Alert> $dropped
      */
-    private function recordDelivery(string $name, array $delivered, array $failed, array $dropped, int|float $at): void
+    private function recordDelivery(string $name, array $delivered, array $failed, array $dropped, int|float $at, bool $reached): void
     {
         try {
-            [, $trimmed] = $this->updateState($name, function (JobState $previous) use ($name, $delivered, $failed, $dropped, $at): array {
-                $sent = Evaluate::recordSent(Evaluate::normalizeState($previous, $name), $delivered, $failed, $dropped, $at);
+            [, $trimmed] = $this->updateState($name, function (JobState $previous) use ($name, $delivered, $failed, $dropped, $at, $reached): array {
+                $sent = Evaluate::recordSent(Evaluate::normalizeState($previous, $name), $delivered, $failed, $dropped, $at, $reached);
                 return [$sent['state'], $sent['dropped']];
             });
             $this->reportDropped($name, $trimmed);
@@ -1836,23 +1849,42 @@ final class Cronwatch
         }
     }
 
-    /** Send to every channel, one after another. True when at least one accepted it, or there are none. */
-    private function deliver(Alert $alert): bool
+    /**
+     * Send to every channel that still owes the alert
+     * (Evaluate::owedChannels: all of them for an alert not sent before),
+     * one after another, each failure reported under its channel's name.
+     * `left` is the alert with `owed` cut to the channels that refused it,
+     * or null when none did (or none is left to owe it); `reached` is
+     * whether any channel accepted it. With no channels at all it counts as
+     * delivered, as it always has.
+     *
+     * @return array{left: ?Alert, reached: bool}
+     */
+    private function deliver(Alert $alert): array
     {
         if ($this->alerts === []) {
-            return true;
+            return ['left' => null, 'reached' => true];
         }
-        $any = false;
-        foreach ($this->alerts as $channel) {
+        $keys = Evaluate::channelKeys(array_map(fn (AlertChannel $channel) => $channel->name(), $this->alerts));
+        $owed = Evaluate::owedChannels($alert, $keys);
+        if ($owed === []) {
+            return ['left' => null, 'reached' => false];
+        }
+        $plain = Evaluate::withoutOwed($alert);
+        $failed = [];
+        foreach ($this->alerts as $i => $channel) {
+            if (!in_array($keys[$i], $owed, true)) {
+                continue;
+            }
             $name = $channel->name();
             try {
-                $channel->send($alert, new ChannelContext(fn (\Throwable $error) => $this->report($error, "alert channel {$name}")));
-                $any = true;
+                $channel->send($plain, new ChannelContext(fn (\Throwable $error) => $this->report($error, "alert channel {$name}")));
             } catch (\Throwable $error) {
+                $failed[] = $keys[$i];
                 $this->report($error, "alert channel {$name}");
             }
         }
-        return $any;
+        return ['left' => Evaluate::afterSend($alert, $owed, $failed), 'reached' => count($failed) < count($owed)];
     }
 
     /**

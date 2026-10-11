@@ -243,7 +243,8 @@ defmodule Cronwatch.RuntimeTest do
       assert_received {:event, ^ref, [:cronwatch, :alert, :sent], _, %{channel: "capture", type: "failed", job: "t"}}
       assert_received {:event, ^ref, [:cronwatch, :alert, :failed], _, %{channel: "broken", condition: "failed"}}
       assert_received {:event, ^ref, [:cronwatch, :error], _, %{where: "alert channel broken"}}
-      refute_received {:event, ^ref, [:cronwatch, :alert, :queued], _, _}
+      # Queued for the channel that refused it, which the check retries alone.
+      assert_received {:event, ^ref, [:cronwatch, :alert, :queued], _, %{type: "failed"}}
       Cronwatch.check!(instance: cw)
       assert_received {:event, ^ref, [:cronwatch, :check, :stop], _, %{jobs: 1, alerts: 0, pruned: 0}}
     end

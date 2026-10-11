@@ -370,7 +370,7 @@ The functions, each taking `instance:` among its options:
 | `job(name, options)` | declare a job and get its handle |
 | `run(job_or_name, fun, options)` | run as a recorded run; `trigger`, `isolate`, `kill_at_timeout`, and `discard_when` among the options |
 | `current()`, `log/1,2`, `metric/2,3`, `cancelled?/1` | the run in progress |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `start_checking(every: d)`, `stop()` | check on an interval, for an instance started without `check_every`; a second call while it runs is ignored |
 | `jobs()`, `jobs_with_runs(limit)`, `job_summary(name)` | summaries, without alerting |
 | `runs(name, limit)`, `get_run(id)` | newest first; `limit` is 1 to 500 |

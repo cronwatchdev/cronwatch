@@ -478,8 +478,8 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
     // ---- checks and reads
 
     /// <summary>
-    /// Checks every job: missed and stuck runs, queued alerts retried, old runs pruned. A check
-    /// already running is joined, and every caller gets its answer.
+    /// Checks every job: missed and stuck runs, queued alerts retried to the channels that refused
+    /// them, old runs pruned. A check already running is joined, and every caller gets its answer.
     /// </summary>
     /// <exception cref="CronwatchException">When the store fails.</exception>
     public Task<CheckResult> CheckAsync(CancellationToken cancellationToken = default) => SharedCheckAsync(cancellationToken);

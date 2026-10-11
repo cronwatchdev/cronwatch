@@ -9,11 +9,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Sending alerts: the outbox, channels, triage, and the queue of alerts no channel accepted,
- * retried once per check (the SDK's {@code outbox}, {@code dispatch}, {@code retryUndelivered},
- * {@code recordDelivery}, {@code deliver}, and {@code addTriage}).
+ * Sending alerts: the outbox, channels, triage, and the queue of alerts some channel refused,
+ * retried once per check to those channels only (the SDK's {@code outbox}, {@code dispatch}, {@code
+ * retryUndelivered}, {@code recordDelivery}, {@code deliver}, and {@code addTriage}).
  */
 final class Delivery {
   private final Core core;
@@ -73,15 +74,23 @@ final class Delivery {
     List<Alert> sent = new ArrayList<>();
     List<Alert> delivered = new ArrayList<>();
     List<Alert> failed = new ArrayList<>();
-    for (Alert held : alerts) {
-      Alert alert = held;
+    boolean reached = false;
+    for (Alert composed : alerts) {
+      Alert alert = composed;
       if (core.triage != null && !alert.type().equals(AlertType.RECOVERED)) {
         alert = addTriage(alert, core.timings.triageMs);
       }
-      (deliver(alert) ? delivered : failed).add(alert);
+      // The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+      Outcome outcome = deliver(alert);
+      reached |= outcome.reached();
+      if (outcome.left() != null) {
+        failed.add(outcome.left());
+      } else {
+        delivered.add(alert);
+      }
       sent.add(alert);
     }
-    recordDelivery(name, delivered, failed, List.of(), now);
+    recordDelivery(name, delivered, failed, List.of(), now, reached);
     return sent;
   }
 
@@ -91,12 +100,14 @@ final class Delivery {
   }
 
   /**
-   * Sends the alerts no channel accepted last time, once each, oldest first. They are claimed first
-   * ({@code claimUndelivered}): moved into {@code sending} with a lease, in one conditional write,
-   * so when several processes check at once only the one whose write lands sends them. An alert
-   * that no longer describes the job is dropped instead, and while the job is silenced only
-   * recoveries are claimed. Retries across a check share the retry budget; claimed alerts it has no
-   * time left for go back to the queue for the next check.
+   * Sends the alerts some channel refused last time, once each, oldest first, to the channels that
+   * still owe them ({@code owed}) and no others, from the copy held in state, its run trimmed
+   * ({@code heldRun}). They are claimed first ({@code claimUndelivered}): moved into {@code
+   * sending} with a lease, in one conditional write, so when several processes check at once only
+   * the one whose write lands sends them. An alert that no longer describes the job is dropped
+   * instead, and while the job is silenced only recoveries are claimed. Retries across a check
+   * share the retry budget; claimed alerts it has no time left for go back to the queue for the
+   * next check. Returns the alerts some channel took on this attempt.
    */
   List<Alert> retryUndelivered(String name, JobState state, long now, Budget budget) {
     List<Alert> pending = state.undelivered() == null ? List.of() : state.undelivered();
@@ -124,6 +135,7 @@ final class Delivery {
     }
     List<Alert> delivered = new ArrayList<>();
     List<Alert> failed = new ArrayList<>();
+    List<Alert> sent = new ArrayList<>();
     for (Alert a : claimed) {
       long left = core.timings.retryBudgetMs - budget.spentMs;
       if (left <= 0) {
@@ -140,21 +152,35 @@ final class Delivery {
           && !alert.triageTried()) {
         alert = addTriage(alert, Math.min(core.timings.triageMs, left));
       }
-      (deliver(alert) ? delivered : failed).add(alert);
+      Outcome outcome = deliver(alert);
+      if (outcome.reached()) {
+        sent.add(Evaluate.withoutOwed(alert));
+      }
+      if (outcome.left() != null) {
+        failed.add(outcome.left());
+      } else {
+        delivered.add(alert);
+      }
       budget.spentMs += Math.max(0, (System.nanoTime() - started) / 1_000_000);
     }
-    recordDelivery(name, delivered, failed, List.of(), now);
-    return delivered;
+    recordDelivery(name, delivered, failed, List.of(), now, !sent.isEmpty());
+    return sent;
   }
 
   /**
    * Marks delivered alerts done, drops stale ones, and keeps failed ones for the next check, taking
    * them all out of {@code sending} ({@code recordSent}). A failed alert replaces its stored copy,
-   * so a triage made on this attempt is kept. {@code lastAlertAt} moves only on a delivery. When
+   * so a triage made on this attempt and the channels that still owe it are kept. {@code
+   * lastAlertAt} moves when {@code reached}, some channel accepted an alert on this attempt. When
    * this write fails, alerts still in {@code sending} are retried once their lease runs out.
    */
   private void recordDelivery(
-      String name, List<Alert> delivered, List<Alert> failed, List<Alert> dropped, long now) {
+      String name,
+      List<Alert> delivered,
+      List<Alert> failed,
+      List<Alert> dropped,
+      long now,
+      boolean reached) {
     try {
       Core.Changed<Integer> out =
           core.updateState(
@@ -162,7 +188,12 @@ final class Delivery {
               previous -> {
                 Evaluate.Queued sent =
                     Evaluate.recordSent(
-                        Evaluate.normalizeState(previous, name), delivered, failed, dropped, now);
+                        Evaluate.normalizeState(previous, name),
+                        delivered,
+                        failed,
+                        dropped,
+                        now,
+                        reached);
                 return new Core.Changed<>(sent.state(), sent.dropped());
               });
       reportDropped(name, out.result());
@@ -171,32 +202,58 @@ final class Delivery {
     }
   }
 
-  /** Sends to every channel at once. True when at least one accepted it, or there are none. */
-  boolean deliver(Alert alert) {
+  /**
+   * How a send went: {@code left} is the alert with {@code owed} cut to the channels that refused
+   * it, or null when none did (or none is left to owe it); {@code reached} is whether any channel
+   * accepted it.
+   */
+  record Outcome(@Nullable Alert left, boolean reached) {}
+
+  /**
+   * Sends to every channel that still owes the alert ({@code owedChannels}: all of them for an
+   * alert not sent before), at once, each failure reported under its channel's name. A channel is
+   * never given the {@code owed} list. With no channels at all it counts as delivered.
+   */
+  Outcome deliver(Alert alert) {
     if (core.channels.isEmpty()) {
-      return true;
+      return new Outcome(null, true);
     }
-    List<Future<?>> sends = new ArrayList<>();
+    List<String> names = new ArrayList<>(core.channels.size());
     for (Channel channel : core.channels) {
+      names.add(channel.name());
+    }
+    List<String> keys = Evaluate.channelKeys(names);
+    List<String> owed = Evaluate.owedChannels(alert, keys);
+    if (owed.isEmpty()) {
+      return new Outcome(null, false);
+    }
+    Alert plain = Evaluate.withoutOwed(alert);
+    List<@Nullable Future<?>> sends = new ArrayList<>();
+    for (int i = 0; i < core.channels.size(); i++) {
+      Channel channel = core.channels.get(i);
+      if (!owed.contains(keys.get(i))) {
+        sends.add(null);
+        continue;
+      }
       ChannelContext context =
           new ChannelContext(
               e -> core.report(e, "alert channel " + channel.name()), core.transport);
       sends.add(
           core.submit(
               () -> {
-                channel.send(alert, context);
+                channel.send(plain, context);
                 return null;
               }));
     }
     long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(core.timings.channelMs);
-    boolean ok = false;
+    List<String> failed = new ArrayList<>();
     for (int i = 0; i < sends.size(); i++) {
-      Channel channel = core.channels.get(i);
-      if (await(sends.get(i), deadline, "alert channel " + channel.name())) {
-        ok = true;
+      Future<?> send = sends.get(i);
+      if (send != null && !await(send, deadline, "alert channel " + core.channels.get(i).name())) {
+        failed.add(keys.get(i));
       }
     }
-    return ok;
+    return new Outcome(Evaluate.afterSend(alert, owed, failed), failed.size() < owed.size());
   }
 
   /**

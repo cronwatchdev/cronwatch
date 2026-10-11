@@ -24,8 +24,9 @@ type checkCall struct {
 }
 
 // Check looks for missed and stuck runs across every job, sends alerts,
-// retries alerts no channel accepted, and prunes old runs. Call it from an
-// interval (Start), a cron hitting the dashboard's check route, or by hand.
+// retries alerts to the channels that refused them, and prunes old runs.
+// Call it from an interval (Start), a cron hitting the dashboard's check
+// route, or by hand.
 // Concurrent calls share one check. A job that cannot be evaluated is
 // reported to the error handler and shown as failing; the error returned is
 // for the store failing as the check starts.

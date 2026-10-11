@@ -20,7 +20,7 @@ public class ClientConformanceTests
     private static readonly JsObject Fixture = Fixtures.Load("client");
 
     [Fact]
-    public void Every_section_is_replayed() => DurationConformanceTests.Known(Fixture, "runIds", "unknownFields", "environment", "secrets");
+    public void Every_section_is_replayed() => DurationConformanceTests.Known(Fixture, "runIds", "unknownFields", "environment", "secrets", "outbox");
 
     /// <summary>
     /// <c>environment</c>: <c>CRONWATCH_ENV</c>, <c>APP_ENV</c>, then the language's own, here
@@ -246,5 +246,168 @@ public class ClientConformanceTests
             default:
                 return v;
         }
+    }
+    /// <summary>A channel of the outbox replay: records each alert it is given, and refuses it while its key is down.</summary>
+    private sealed class Fake(string name, string key, ISet<string> down, List<JsObject> seen) : IChannel
+    {
+        public string Name => name;
+
+        public Task SendAsync(Alert alert, ChannelContext context, System.Threading.CancellationToken cancellationToken)
+        {
+            bool accepted = !down.Contains(key);
+            Assert.Null(alert.Owed);
+            lock (seen)
+            {
+                seen.Add(new JsObject()
+                    .Set("channel", key)
+                    .Set("type", alert.Type.Value)
+                    .Set("run", alert.Run?.Id)
+                    .Set("accepted", accepted)
+                    .Set("errorLength", alert.Run?.Error?.Length)
+                    .Set("outputLength", alert.Run?.Output?.Length));
+            }
+            return accepted ? Task.CompletedTask : Task.FromException(new InvalidOperationException(key + " is down"));
+        }
+    }
+
+    /// <summary>A held alert as the replay compares it: its type, its run's id, and its <c>owed</c> when present.</summary>
+    private static JsObject Held(Alert alert)
+    {
+        var o = new JsObject().Set("type", alert.Type.Value).Set("run", alert.Run?.Id);
+        if (alert.ToValue().Get("owed") is { } owed)
+        {
+            o.Set("owed", owed);
+        }
+        return o;
+    }
+
+    /// <summary>
+    /// <c>outbox</c>: a real client on the memory store with fake channels, some of them down,
+    /// through failures, checks, a channel set changed between clients, and an entry an older
+    /// release held: which channels each send reaches, what the state holds after, and what was
+    /// reported. Channels sent to at once report in no fixed order here, so the reports are
+    /// compared sorted.
+    /// </summary>
+    [Fact]
+    public async Task The_outbox_retries_each_alert_to_the_channels_that_still_owe_it()
+    {
+        var failures = new Fixtures.Failures();
+        var scenarios = Fixtures.Objects(Fixture, "outbox");
+        foreach (JsObject scenario in scenarios)
+        {
+            string name = Fixtures.String(scenario, "name")!;
+            var store = new MemoryStore();
+            var clock = Clock();
+            var down = new HashSet<string>(StringComparer.Ordinal);
+            var errors = new List<string>();
+            var seens = new List<List<JsObject>>();
+            CronwatchClient Client(List<string> names)
+            {
+                List<string> keys = Evaluate.ChannelKeys(names);
+                seens.Clear();
+                var channels = new List<IChannel>();
+                for (int k = 0; k < names.Count; k++)
+                {
+                    var seen = new List<JsObject>();
+                    seens.Add(seen);
+                    channels.Add(new Fake(names[k], keys[k], down, seen));
+                }
+                return new CronwatchClient(new CronwatchOptions
+                {
+                    Store = store,
+                    Clock = clock,
+                    Alerts = channels,
+                    CronSecret = CronSecret.None,
+                    ProcessExitHook = false,
+                    OnWarning = _ => { },
+                    OnError = (e, where) =>
+                    {
+                        lock (errors)
+                        {
+                            errors.Add(where);
+                        }
+                    },
+                });
+            }
+            var cw = Client(Fixtures.List(scenario, "channels").Select(c => (string)c!).ToList());
+            try
+            {
+                int step = 0;
+                foreach (JsObject s in Fixtures.Objects(scenario, "steps"))
+                {
+                    string op = Fixtures.String(s, "op")!;
+                    switch (op)
+                    {
+                        case "fail":
+                        case "ok":
+                            {
+                                long at = Fixtures.Integer(s, "at");
+                                clock.Set(at);
+                                RunHandle handle = await cw.Job("nightly").StartAsync(new StartOptions { Id = Fixtures.String(s, "id") });
+                                clock.Set(at + 1000);
+                                if (op == "ok")
+                                {
+                                    await handle.FinishAsync("done");
+                                }
+                                else
+                                {
+                                    await handle.FailAsync(s.Has("error") ? Fixtures.Expand(s.Get("error")) : "boom");
+                                }
+                                break;
+                            }
+                        case "check":
+                            clock.Set(Fixtures.Integer(s, "at"));
+                            await cw.CheckAsync();
+                            break;
+                        case "down":
+                            down.UnionWith(Fixtures.List(s, "channels").Select(c => (string)c!));
+                            break;
+                        case "up":
+                            down.ExceptWith(Fixtures.List(s, "channels").Select(c => (string)c!));
+                            break;
+                        case "configure":
+                            await cw.DisposeAsync();
+                            cw = Client(Fixtures.List(s, "channels").Select(c => (string)c!).ToList());
+                            break;
+                        case "legacy":
+                            {
+                                JobState stored = (await store.GetStateAsync("nightly"))!;
+                                var plain = stored.Undelivered!.Select(Evaluate.WithoutOwed).ToList();
+                                await store.SetStateAsync(stored with { Undelivered = ValueList<Alert>.Of(plain) });
+                                break;
+                            }
+                        default:
+                            failures.Fail(name + ": an op this replay does not know: " + op);
+                            break;
+                    }
+                    JobState? state = await store.GetStateAsync("nightly");
+                    List<string> reported;
+                    lock (errors)
+                    {
+                        reported = [.. errors];
+                        errors.Clear();
+                    }
+                    var expect = Fixtures.Object(s, "expect");
+                    var got = new JsObject()
+                        .Set("sent", seens.SelectMany(seen => seen).Select(o => (object?)o).ToList())
+                        .Set("undelivered", (state?.Undelivered ?? ValueList<Alert>.Empty).Select(a => (object?)Held(a)).ToList())
+                        .Set("sending", (state?.Sending ?? ValueList<SendingAlert>.Empty).Where(e => e.Alert != null).Select(e => (object?)Held(e.Alert!)).ToList())
+                        .Set("lastAlertAt", state?.LastAlertAt)
+                        .Set("errors", reported.Order(StringComparer.Ordinal).Select(w => (object?)w).ToList());
+                    var want = expect.Copy().Set("errors", Fixtures.List(expect, "errors").Select(w => (string)w!).Order(StringComparer.Ordinal).Select(w => (object?)w).ToList());
+                    failures.Same(name + ": step " + step++ + " (" + op + ")", got, want);
+                    foreach (var seen in seens)
+                    {
+                        seen.Clear();
+                    }
+                }
+            }
+            finally
+            {
+                await cw.DisposeAsync();
+            }
+        }
+        failures.Check("client outbox");
+        Assert.Equal(8, scenarios.Count);
     }
 }

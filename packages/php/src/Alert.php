@@ -129,6 +129,22 @@ final class Alert
     }
 
     /**
+     * A copy whose JSON, as a state holds it, `change` rewrites (a field it
+     * sets keeps its place, a new one goes last, as a spread does in
+     * JavaScript). The copy is held as that JSON, as an alert read from a
+     * state is, so fields this release does not know (`owed` among them)
+     * stay where they were.
+     *
+     * @internal For Evaluate's held alerts (heldAlert(), afterSend(), withoutOwed()).
+     * @param \Closure(array<string, mixed>): array<string, mixed> $change
+     */
+    public function withJson(\Closure $change): self
+    {
+        $json = $this->stateJson();
+        return self::fromJson((object) $change($json instanceof \stdClass ? get_object_vars($json) : $json));
+    }
+
+    /**
      * The alert as a state holds it: as it was stored, while unchanged (an
      * object even when it has no fields), else toJson().
      *
