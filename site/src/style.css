@@ -132,7 +132,7 @@ pre b.bad { color: var(--bad); } pre b.warn { color: var(--warn); } pre b.ok { c
 .installs .set + .set { margin-top: 14px; }
 .installs .for { font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 7px; }
 .installs .install { margin-top: 0; }
-.installs .alt { margin: 10px 0 0; max-width: 62ch; color: var(--muted); font-size: 16px; text-wrap: pretty; }
+.installs .alt { margin: 10px 0 0; color: var(--muted); font-size: 16px; text-wrap: pretty; }
 .installs .alt code { font: 400 14px/1.4 var(--mono); color: var(--body); }
 /* Without script the boxes sit in a grid sized to the commands; a help line
    wraps to its box's width rather than widening the column. */
