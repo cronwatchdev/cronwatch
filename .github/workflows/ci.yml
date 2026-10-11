@@ -1638,6 +1638,9 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     name: dotnet (.NET ${{ matrix.dotnet }})
     runs-on: ubuntu-latest
+    # A run takes one to five minutes; a test that hangs fails here rather
+    # than holding the job for GitHub's six hours.
+    timeout-minutes: 20
     strategy:
       matrix:
         include:
@@ -1758,6 +1761,9 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     name: dotnet-frameworks (${{ matrix.name }})
     runs-on: ubuntu-latest
+    # A run takes one to five minutes; a test that hangs fails here rather
+    # than holding the job for GitHub's six hours.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1806,6 +1812,9 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     name: dotnet (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # A run takes one to five minutes; a test that hangs fails here rather
+    # than holding the job for GitHub's six hours.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
