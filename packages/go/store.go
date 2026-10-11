@@ -24,6 +24,7 @@ type Store interface {
 	GetRun(ctx context.Context, id string) (*Run, error)
 	// ListRuns is a job's newest runs first, at most limit of them.
 	ListRuns(ctx context.Context, job string, limit int) ([]Run, error)
+	LastRun(ctx context.Context, job string) (*Run, error)
 	// RunningRuns is every run still running, oldest first.
 	RunningRuns(ctx context.Context) ([]Run, error)
 	// GetState is nil when the job has no state yet.
@@ -35,15 +36,6 @@ type Store interface {
 	// each job's newest run, and returns how many.
 	Prune(ctx context.Context, before int64) (int, error)
 	Close() error
-}
-
-// LastRunner is a store that can read a job's newest run on its own. The
-// client never calls it, so a store need not have it; MemoryStore and
-// sqlstore keep it for callers of their own, and storetest checks it on a
-// store that has it.
-type LastRunner interface {
-	// LastRun is a job's newest run, or nil when it has none.
-	LastRun(ctx context.Context, job string) (*Run, error)
 }
 
 // RunUpdater is a store that can finish a run conditionally. Without it the

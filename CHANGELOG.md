@@ -67,7 +67,7 @@ Every language:
 
 - A webhook with a secret also sends `X-CronWatch-Timestamp` (Unix seconds) and `X-CronWatch-Timestamp-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a full stop, and the body, so a receiver can refuse a replayed request. `X-CronWatch-Signature` is unchanged. Each webhook channel takes a clock option for tests.
 - A store without the conditional writes (`compareAndSetState` or `updateRunIf`, by each language's names) is reported once to `onError`, since processes sharing it can then judge a run twice or lose each other's updates.
-- `lastRun` is optional for a store of your own. Go moves it from `Store` to a new optional `LastRunner` interface, so code that calls `Store().LastRun` needs a type assertion; Rust and .NET give it a default; the built-in stores keep it.
+- `lastRun` is optional for a store of your own, since the client never calls it: TypeScript, Python, PHP, and Elixir make it optional, and Rust and .NET give it a default. Go keeps it in `Store` until a major release, and the built-in stores keep it everywhere.
 
 Python:
 
