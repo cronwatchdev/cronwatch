@@ -280,6 +280,14 @@ public sealed partial class CronwatchClient
             }
             await CallAsync(() => _store.InitAsync()).ConfigureAwait(false);
             Volatile.Write(ref _ready, true);
+            if (StoreGaps(_store) is string missing)
+            {
+                // Once per client: it still works, but only as long as one process at a time uses
+                // the store.
+                Report(
+                    "the store has no " + missing + ", so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it",
+                    "store");
+            }
             if (_defaultStore && Env.Environment(_environment) == "production")
             {
                 Warn("[cronwatch] using the in-memory store: runs and state are lost on restart. Pass a store in CronwatchOptions.Store, such as SqlStore over the app's database.");
@@ -289,6 +297,24 @@ public sealed partial class CronwatchClient
         {
             _readyLock.Release();
         }
+    }
+
+    /// <summary>
+    /// The capabilities that keep two processes sharing a store apart which it lacks, in the SDK's
+    /// names and order joined with " or ", or null when it has both.
+    /// </summary>
+    internal static string? StoreGaps(IStore store)
+    {
+        var missing = new List<string>(2);
+        if (store is not ICompareAndSetStateStore)
+        {
+            missing.Add("compareAndSetState");
+        }
+        if (store is not IUpdateRunIfStore)
+        {
+            missing.Add("updateRunIf");
+        }
+        return missing.Count == 0 ? null : string.Join(" or ", missing);
     }
 
     /// <summary>

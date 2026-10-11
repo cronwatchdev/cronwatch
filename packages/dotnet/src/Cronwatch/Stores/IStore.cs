@@ -49,8 +49,16 @@ public interface IStore
     /// <summary>A job's newest runs first (ties broken newest inserted first), at most <paramref name="limit"/>.</summary>
     Task<IReadOnlyList<Run>> ListRunsAsync(string job, int limit, CancellationToken cancellationToken = default);
 
-    /// <summary>A job's newest run, or null.</summary>
-    Task<Run?> LastRunAsync(string job, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// A job's newest run, or null. The client never calls it, so a store need not write one: by
+    /// default it is the first of <see cref="ListRunsAsync"/> with a limit of 1. The built-in
+    /// stores keep their own for callers of their own.
+    /// </summary>
+    async Task<Run?> LastRunAsync(string job, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<Run> runs = await ListRunsAsync(job, 1, cancellationToken).ConfigureAwait(false);
+        return runs.Count == 0 ? null : runs[0];
+    }
 
     /// <summary>Every run still running, oldest first.</summary>
     Task<IReadOnlyList<Run>> RunningRunsAsync(CancellationToken cancellationToken = default);
@@ -68,7 +76,11 @@ public interface IStore
     Task<long> PruneAsync(long before, CancellationToken cancellationToken = default);
 }
 
-/// <summary>A store that writes a run only over a stored status it names, in one step.</summary>
+/// <summary>
+/// A store that writes a run only over a stored status it names, in one step. A store without it
+/// is safe only while one process at a time finishes a given run; the client reports that once,
+/// through its error handler, when it first uses the store.
+/// </summary>
 public interface IUpdateRunIfStore
 {
     /// <summary>
@@ -80,7 +92,11 @@ public interface IUpdateRunIfStore
     Task<bool> UpdateRunIfAsync(Run run, IReadOnlyList<RunStatus> from, CancellationToken cancellationToken = default);
 }
 
-/// <summary>A store that writes a state only over the version it was read at.</summary>
+/// <summary>
+/// A store that writes a state only over the version it was read at. A store without it is safe
+/// only while one process at a time writes a job's state; the client reports that once, through
+/// its error handler, when it first uses the store.
+/// </summary>
 public interface ICompareAndSetStateStore
 {
     /// <summary>

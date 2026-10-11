@@ -516,12 +516,49 @@ func hasFullBaseline(history []Run) bool {
 	return n >= baselineWindow
 }
 
-// onRunStart is called when a run starts. Missed and stuck are about the
-// absence of a run, so a run starting closes them without an alert; the
-// recovered message waits for a successful finish.
-func onRunStart(state JobState) JobState {
+// finishedAtOf is when a run finished, or nil while it runs (a run marked
+// timeout has finished).
+func finishedAtOf(run Run) *int64 {
+	if run.Status == StatusRunning || run.FinishedAt == nil {
+		return nil
+	}
+	return ptr(*run.FinishedAt)
+}
+
+// catchesUp is whether run brings the schedule up to date at now, so missed
+// may close for it: judged with it as the job's last run, as onCheck
+// judges, the run the schedule wants next is not yet past its deadline. A
+// run that started before the fire missed opened for does not cover that
+// fire, however late it finishes, and neither does a run a source reports
+// only once it is over whose start was before it. Every run starting now
+// covers it. A job with no schedule, or one that no longer parses, has
+// nothing due, so any run does.
+func catchesUp(def Definition, run Run, now int64) bool {
+	if !truthy(get(def.o, "schedule")) {
+		return true
+	}
+	parsed, err := parsedSchedule(def)
+	if err != nil {
+		return true
+	}
+	grace, err := graceMs(def)
+	if err != nil {
+		return true
+	}
+	exp, ok := schedule.Expect(parsed, ptr(run.StartedAt), run.StartedAt, grace, finishedAtOf(run))
+	return !ok || float64(now) <= exp.Deadline
+}
+
+// onRunStart is called when a run starts, or when a run a source reports is
+// recorded. Missed and stuck are about the absence of a run, so a run
+// starting closes them without an alert; the recovered message waits for a
+// successful finish. Missed closes only when the run catches the schedule
+// up (catchesUp), which a run starting now always does.
+func onRunStart(def Definition, run Run, state JobState, now int64) JobState {
 	next := cloneState(state)
-	closeCondition(&next, ConditionMissed)
+	if catchesUp(def, run, now) {
+		closeCondition(&next, ConditionMissed)
+	}
 	closeCondition(&next, ConditionStuck)
 	return next
 }
@@ -541,7 +578,9 @@ func failuresBeforeAlert(def Definition) float64 {
 
 // onRunFinish is called when a run finishes with status ok, failed, or
 // timeout. history is the job's earlier runs, newest first, not including
-// this one.
+// this one. Missed closes only when the run catches the schedule up
+// (catchesUp): a run that started before the fire missed opened for leaves
+// it open.
 func onRunFinish(def Definition, run Run, state JobState, history []Run, now int64) (evaluation, error) {
 	next := cloneState(state)
 	alerts := []alertDraft{}
@@ -549,7 +588,9 @@ func onRunFinish(def Definition, run Run, state JobState, history []Run, now int
 
 	if run.Status == StatusOK {
 		next.ConsecutiveFailures = 0
-		closeCondition(&next, ConditionMissed)
+		if catchesUp(def, run, now) {
+			closeCondition(&next, ConditionMissed)
+		}
 		closeCondition(&next, ConditionStuck)
 		closeCondition(&next, ConditionFailed)
 
@@ -596,7 +637,9 @@ func onRunFinish(def Definition, run Run, state JobState, history []Run, now int
 	if next.ConsecutiveFailures < maxFailureCount {
 		next.ConsecutiveFailures++
 	}
-	closeCondition(&next, ConditionMissed)
+	if catchesUp(def, run, now) {
+		closeCondition(&next, ConditionMissed)
+	}
 	threshold := failuresBeforeAlert(def)
 	condition, alertType := ConditionFailed, AlertFailed
 	if run.Status == StatusTimeout {
@@ -692,11 +735,16 @@ func onCheck(def Definition, stored StoredJob, lastRun *Run, state JobState, now
 	if lastRun != nil {
 		lastRunAt = ptr(lastRun.StartedAt)
 	}
-	exp, hasExp := schedule.Expect(parsed, lastRunAt, stored.CreatedAt, grace)
+	var lastFinishedAt *int64
+	if lastRun != nil {
+		lastFinishedAt = finishedAtOf(*lastRun)
+	}
+	exp, hasExp := schedule.Expect(parsed, lastRunAt, stored.CreatedAt, grace, lastFinishedAt)
 	var nextAt int64
 	var hasNext bool
 	if parsed.Kind == "interval" {
-		nextAt, hasNext = schedule.NextFire(parsed, stored.CreatedAt, lastRunAt)
+		// An interval always has an expectation.
+		nextAt, hasNext = exp.DueAt, true
 	} else {
 		nextAt, hasNext = schedule.NextFire(parsed, now, nil)
 	}
@@ -710,9 +758,10 @@ func onCheck(def Definition, stored StoredJob, lastRun *Run, state JobState, now
 	}
 	out.dueAt = ptr(exp.DueAt)
 
-	// An interval's next run is due a period after the last one started. If
-	// that run is still going, the job is busy, not late; stuck covers one
-	// that never ends.
+	// An interval's next run is due a period after the last one started, or
+	// after it finished when it outlasted the period (schedule.IntervalDue).
+	// If that run is still going, the job is busy, not late; stuck covers
+	// one that never ends.
 	if parsed.Kind == "interval" && lastRun != nil && lastRun.Status == StatusRunning {
 		out.evaluation = evaluation{next, alerts}
 		return out, nil

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Cronwatch.Alerts;
 using Cronwatch.Internal;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static Cronwatch.Tests.Support;
 
@@ -126,14 +127,19 @@ public class ChannelTests
     }
 
     [Fact]
-    public async Task The_webhook_signs_its_body_and_keeps_a_repeated_header_in_its_first_place()
+    public async Task The_webhook_signs_its_body_and_its_timestamp_and_matches_header_names_in_any_case()
     {
         var rec = new Recorder();
         var channel = new WebhookChannel(new WebhookOptions
         {
             Url = "https://hooks.example.com/in",
-            Headers = [new("x-one", " 1\n"), new("content-type", "application/cloudevents+json"), new("x-one", "2")],
+            Headers =
+            [
+                new("x-one", " 1\n"), new("Content-Type", "application/cloudevents+json"), new("x-one", "2"),
+                new("X-CronWatch-Signature", "forged"), new("X-CRONWATCH-TIMESTAMP", "1"),
+            ],
             Secret = "s3cret",
+            Clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(1_767_605_402_999)),
             Transport = rec,
         });
         Alert alert = ChannelsConformanceTests.Sample();
@@ -141,8 +147,15 @@ public class ChannelTests
         TransportRequest sent = Assert.Single(rec.Taken());
         // The payload's version first, then the alert's own fields.
         string body = "{\"schema\":1," + alert.ToJson()[1..];
+        // A name given again keeps its first place among the app's headers; one that matches a
+        // default in another case replaces it, and none stands beside the signature headers.
         Assert.Equal(
-            ["content-type: application/cloudevents+json", "user-agent: cronwatch", "x-one: 2", "x-cronwatch-signature: sha256=" + WebhookChannel.Signature("s3cret", body)],
+            [
+                "user-agent: cronwatch", "x-one: 2", "Content-Type: application/cloudevents+json",
+                "x-cronwatch-signature: sha256=" + WebhookChannel.Signature("s3cret", body),
+                "x-cronwatch-timestamp: 1767605402",
+                "x-cronwatch-timestamp-signature: sha256=" + WebhookChannel.Signature("s3cret", "1767605402." + body),
+            ],
             sent.Headers.Select(h => h.Key + ": " + h.Value).ToList());
         Assert.Equal(body, Recorder.Body(sent));
         // The receiver's check, as the SDK documents it: HMAC-SHA256 of the raw body, hex.

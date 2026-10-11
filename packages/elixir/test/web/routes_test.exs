@@ -907,6 +907,30 @@ defmodule Cronwatch.Web.RoutesTest do
 
     assert get(w, "/cronwatch/api/jobs/a%2Fb", [@auth]).status == 404, "a slash inside a name"
 
+    # Only the base and the paths under it are the routes': a path that
+    # merely starts with the base's text, or that its dot segments take out
+    # of it, is the HTML 404 page, signed in or not.
+    for path <- [
+          "/cronwatchapi/jobs",
+          "/cronwatch/../api/jobs",
+          "/cronwatch/%2e%2e/api/jobs",
+          "/api/jobs",
+          "/cronwatch-x"
+        ] do
+      for headers <- [[@auth], []] do
+        res = get(w, path, headers)
+        assert res.status == 404, path
+        assert header(res, "content-type") =~ "text/html", path
+        assert res.body =~ "Not found", path
+      end
+    end
+
+    assert get(w, "/cronwatch", [@auth]).status == 200, "the base itself"
+    assert get(w, "/cronwatch/jobs/../api/jobs", [@auth]).status == 200, "still under the base"
+    assert get(w, "/cronwatch/./api/jobs", [@auth]).status == 200, "still under the base"
+    assert Request.strip_base("/anything", "") == "/anything", "an empty base takes every path"
+    assert Request.strip_base("/cronwatchapi", "/cronwatch") == nil
+
     for {raw, want} <- [
           {"/a/..", "/"},
           {"/a/b/.", "/a/b/"},

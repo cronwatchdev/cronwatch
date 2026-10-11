@@ -27,6 +27,18 @@ public final class Adapters {
   }
 
   /**
+   * Whether a request's path is the routes' to answer under {@code base} (the mount, such as the
+   * context path and {@code /cronwatch}, trailing slashes dropped), as {@link Routes#handle}
+   * decides it: the raw path with its dot segments resolved must be the base or start with the base
+   * and a {@code /}. So {@code /cronwatchx} and {@code /cronwatch/../api/jobs} are not under {@code
+   * /cronwatch}. An empty base takes every path. An adapter that passes every other request on
+   * should ask this, not compare the raw path, so it and the routes agree.
+   */
+  public static boolean under(String rawPath, String base) {
+    return Requests.stripBase(Requests.normalizePath(rawPath), base) != null;
+  }
+
+  /**
    * A form body written back from a container's parsed parameters, for a body a filter ahead of the
    * dashboard already read: every parameter but those of the query, which the servlet specification
    * puts first for each name, written as {@code URLSearchParams} writes a form.

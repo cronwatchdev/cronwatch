@@ -139,6 +139,104 @@ public class AdapterTests
         await app.StopAsync();
     }
 
+    /// <summary>
+    /// An open dashboard on endpoint routing requires authorization even in an app with no
+    /// fallback policy, so it is never open to anyone by accident; an app that wants it open says
+    /// so with <c>AllowAnonymous</c>.
+    /// </summary>
+    [Fact]
+    public async Task An_open_dashboard_requires_authorization_without_a_fallback_policy_unless_the_app_allows_anyone()
+    {
+        await using CronwatchClient cw = Client();
+        await using WebApplication app = App(cw, s =>
+        {
+            s.AddAuthentication("none").AddScheme<AuthenticationSchemeOptions, NoOne>("none", null);
+            s.AddAuthorization();
+        });
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapCronwatch("/open", new RoutesOptions { Token = DashboardToken.None });
+        app.MapCronwatch("/anyone", new RoutesOptions { Token = DashboardToken.None }).AllowAnonymous();
+        app.MapGet("/app", () => "the app's own");
+        await app.StartAsync();
+        HttpClient http = app.GetTestClient();
+
+        HttpResponseMessage open = await http.SendAsync(Get("/open/api/jobs"));
+        Assert.Equal(401, (int)open.StatusCode);
+        Assert.Equal("", await open.Content.ReadAsStringAsync());
+        Assert.Equal(200, (int)(await http.SendAsync(Get("/anyone/api/jobs"))).StatusCode);
+        // The app's own endpoints are as the app left them.
+        Assert.Equal(200, (int)(await http.SendAsync(Get("/app"))).StatusCode);
+        await app.StopAsync();
+    }
+
+    /// <summary>A logger provider that keeps every message at warning or above.</summary>
+    private sealed class Kept : ILoggerProvider, ILogger
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Warnings { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => this;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (IsEnabled(logLevel))
+            {
+                Warnings.Enqueue(formatter(state, exception));
+            }
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task An_open_dashboard_as_middleware_logs_once_that_only_the_apps_own_authorization_guards_it()
+    {
+        var kept = new Kept();
+        await using CronwatchClient cw = Client();
+        await using WebApplication app = App(cw, s => s.AddSingleton<ILoggerProvider>(kept));
+        app.UseCronwatch("/guarded", new RoutesOptions { Token = "tok" });
+        Assert.Empty(kept.Warnings);
+        app.UseCronwatch("/open", new RoutesOptions { Token = DashboardToken.None });
+        string warning = Assert.Single(kept.Warnings);
+        Assert.StartsWith("UseCronwatch serves the dashboard at /open with no token (DashboardToken.None), so only the app's own authentication and authorization guard it", warning, StringComparison.Ordinal);
+        await app.StartAsync();
+        HttpClient http = app.GetTestClient();
+        Assert.Equal(200, (int)(await http.SendAsync(Get("/open/api/jobs"))).StatusCode);
+        Assert.Single(kept.Warnings);
+        await app.StopAsync();
+    }
+
+    /// <summary>
+    /// Options of the app's own that name no token keep the one the container holds (what
+    /// <c>AddCronwatch</c> reads from <c>Cronwatch:Token</c>), rather than dropping it.
+    /// </summary>
+    [Fact]
+    public async Task Options_of_the_apps_own_without_a_token_keep_the_configured_one()
+    {
+        await using CronwatchClient cw = Client();
+        await using WebApplication app = App(cw, s => s.AddSingleton(new RoutesOptions { Token = "configured" }));
+        app.MapCronwatch("/mapped", new RoutesOptions { TrustProxy = true });
+        app.UseCronwatch("/middleware", new RoutesOptions { TrustProxy = true });
+        app.MapCronwatch("/own", new RoutesOptions { Token = "own" });
+        await app.StartAsync();
+        HttpClient http = app.GetTestClient();
+        foreach (string path in new[] { "/mapped/api/jobs", "/middleware/api/jobs" })
+        {
+            Assert.Equal(401, (int)(await http.SendAsync(Get(path))).StatusCode);
+            Assert.Equal(200, (int)(await http.SendAsync(Get(path, "configured"))).StatusCode);
+        }
+        Assert.Equal(401, (int)(await http.SendAsync(Get("/own/api/jobs", "configured"))).StatusCode);
+        Assert.Equal(200, (int)(await http.SendAsync(Get("/own/api/jobs", "own"))).StatusCode);
+        await app.StopAsync();
+    }
+
     [Fact]
     public async Task The_forms_pass_the_apps_antiforgery_and_a_form_read_ahead_is_taken_from_the_parsed_form()
     {

@@ -57,7 +57,7 @@ class GoldenTest {
       int matched =
           Golden.throughServer(
               seeded, server.getAddress().getPort(), Set.of("date"), Golden.MALFORMED_TARGETS);
-      assertEquals(Golden.CAPTURES - 2, matched);
+      assertEquals(Golden.CAPTURES - 2 - Golden.OUTSIDE_BASE.size(), matched);
     } finally {
       server.stop(0);
     }

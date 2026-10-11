@@ -710,16 +710,47 @@ final class ChannelsTest extends TestCase
     }
 
     #[DataProvider('transports')]
-    public function testTheDefaultHttpKeepsAtMostAMebibyteOfAnAnswer(bool $curl): void
+    public function testTheDefaultHttpKeepsAtMostAMebibyteOfAnAnswerAndSixtyFourKibibytesOfAnError(bool $curl): void
     {
         $server = new LocalServer();
         try {
+            $answer = $this->http($curl)->post("{$server->url}/big?status=200", '{}', []);
+            $this->assertSame(200, $answer->status);
+            $this->assertSame(str_repeat("y", Alerts\Http::MAX_BODY), $answer->body, 'three decoded mebibytes, one kept');
             $answer = $this->http($curl)->post("{$server->url}/big", '{}', []);
             $this->assertSame(500, $answer->status);
-            $this->assertSame(str_repeat("y", Alerts\Http::MAX_BODY), $answer->body, 'three decoded mebibytes, one kept');
+            $this->assertSame(65_536, Alerts\Http::ERROR_READ_MAX);
+            $this->assertSame(str_repeat("y", Alerts\Http::ERROR_READ_MAX), $answer->body, 'only the start of an error is read');
         } finally {
             $server->stop();
         }
+    }
+
+    public function testAnErrorBodyAnHttpKeptWholeIsReadOnlyToItsStart(): void
+    {
+        $long = str_repeat('x', Alerts\Http::ERROR_READ_MAX - 1) . "\u{00E9}" . str_repeat('z', 1000);
+        $this->assertSame(str_repeat('x', Alerts\Http::ERROR_READ_MAX - 1) . "\u{FFFD}", Shared::errorText(new Alerts\HttpResponse(500, $long)), 'a character cut at the end reads as U+FFFD');
+        $this->assertSame('short', Shared::errorText(new Alerts\HttpResponse(500, 'short')));
+    }
+
+    public function testAWebhookSignsATimestampFromTheSystemClockAndKeepsItsSignatureHeadersItsOwn(): void
+    {
+        $http = new FakeHttp();
+        $before = time();
+        (new Alerts\Webhook('https://hooks.example.com/x', ['X-CRONWATCH-TIMESTAMP' => '1', 'Content-Type' => 'text/plain'], secret: 'k', http: $http))->send(self::failed(), self::context());
+        $headers = $http->requests[0]['headers'];
+        $this->assertSame(['user-agent', 'Content-Type', 'x-cronwatch-signature', 'x-cronwatch-timestamp', 'x-cronwatch-timestamp-signature'], array_keys($headers));
+        $this->assertSame('text/plain', $headers['Content-Type']);
+        $timestamp = (int) $headers['x-cronwatch-timestamp'];
+        $this->assertGreaterThanOrEqual($before, $timestamp);
+        $this->assertLessThanOrEqual(time(), $timestamp);
+        $body = $http->requests[0]['body'];
+        $this->assertSame('sha256=' . hash_hmac('sha256', "{$timestamp}.{$body}", 'k'), $headers['x-cronwatch-timestamp-signature']);
+
+        // Unsigned, none of the three.
+        $http = new FakeHttp();
+        (new Alerts\Webhook('https://hooks.example.com/x', http: $http))->send(self::failed(), self::context());
+        $this->assertSame(['content-type', 'user-agent'], array_keys($http->requests[0]['headers']));
     }
 
     public function testAWebhookSignsTheBytesItSendsWhenTheAlertHoldsBytesThatAreNotUtf8(): void

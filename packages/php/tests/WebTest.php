@@ -715,8 +715,10 @@ final class WebTest extends TestCase
         $this->assertSame(500, $page->status);
         $this->assertStringContainsString('text/html', (string) $page->header('content-type'));
         $this->assertStringNotContainsString('secret', $page->body);
-        $this->assertSame(['routes', 'routes'], $this->wheres());
-        $this->assertStringContainsString('secret connection string', $this->messages()[0]);
+        // First the short token and the store's missing conditional writes, each reported once.
+        $this->assertSame(['routes', 'store', 'routes', 'routes'], $this->wheres());
+        $this->assertStringContainsString('shorter than 24 characters', $this->messages()[0]);
+        $this->assertStringContainsString('secret connection string', $this->messages()[2]);
     }
 
     public function testAThrowingOnErrorStillYieldsA500(): void
@@ -1415,5 +1417,37 @@ final class WebTest extends TestCase
             $this->assertSame($expected, Text::toFixed($value, $digits), "{$value}.toFixed({$digits})");
         }
         $this->assertSame("a-b_c.d!e~f*g'h(i)j%20%C3%A9%2F", Text::encodeUriComponent("a-b_c.d!e~f*g'h(i)j \u{e9}/"));
+    }
+
+    public function testOnlyTheBaseAndThePathsUnderItAreTheRoutes(): void
+    {
+        [, $web] = $this->app();
+        $this->assertSame(200, self::send($web, 'GET', '/cronwatch', self::BEARER)->status, 'the base itself is the dashboard');
+        foreach (['/cronwatchapi/jobs', '/api/jobs', '/cronwatch/../api/jobs', '/cronwatch-x/api/jobs'] as $path) {
+            $response = self::send($web, 'GET', $path, self::BEARER);
+            $this->assertSame(404, $response->status, $path);
+            $this->assertStringContainsString('text/html', (string) $response->header('content-type'), $path);
+            $this->assertStringContainsString('Not found', $response->body, $path);
+        }
+        $this->assertSame(200, self::send($web, 'GET', '/cronwatch/./api/jobs', self::BEARER)->status, 'a dot segment that stays under the base');
+        $this->assertSame(200, self::send($web, 'GET', '/cronwatch/jobs/../api/jobs', self::BEARER)->status);
+        [, $root] = $this->app(basePath: '');
+        $this->assertSame(200, self::send($root, 'GET', '/api/jobs', self::BEARER)->status, 'an empty base takes every path');
+    }
+
+    public function testATokenShortEnoughToGuessIsReportedOnceAndStillUsed(): void
+    {
+        $cw = $this->client();
+        $web = $this->routes($cw, 'tok');
+        $this->assertSame(200, self::send($web, 'GET', '/cronwatch/api/jobs', self::BEARER)->status);
+        self::send($web, 'GET', '/cronwatch/api/jobs', self::BEARER);
+        $this->assertSame(['routes'], $this->wheres());
+        $this->assertStringContainsString('shorter than 24 characters', $this->messages()[0]);
+
+        $long = str_repeat('k', Dashboard::SHORT_TOKEN);
+        $cw = $this->client();
+        $web = $this->routes($cw, $long);
+        self::send($web, 'GET', '/cronwatch/api/jobs', ['authorization' => "Bearer {$long}"]);
+        $this->assertSame([], $this->wheres());
     }
 }

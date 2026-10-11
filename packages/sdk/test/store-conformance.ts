@@ -35,8 +35,11 @@ export async function conformance(name: string, make: () => Store, skip: string 
     await store.insertRun(run("rc", "_c", "running", 2000));
     assert.deepEqual((await store.listRuns("a", 10)).map((r) => r.id), ["r3", "r2", "r1"]);
     assert.deepEqual((await store.listRuns("a", 2)).map((r) => r.id), ["r3", "r2"]);
-    assert.equal((await store.lastRun("a"))!.id, "r3");
-    assert.equal(await store.lastRun("none"), null);
+    // Optional: the client never calls it.
+    if (store.lastRun) {
+      assert.equal((await store.lastRun("a"))!.id, "r3");
+      assert.equal(await store.lastRun("none"), null);
+    }
     assert.deepEqual((await store.runningRuns()).map((r) => r.id), ["rb", "rc", "r3"], "oldest first, then insertion order");
     const r1 = (await store.getRun("r1"))!;
     assert.deepEqual(r1.metrics, { n: 1 });

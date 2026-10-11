@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
+from .. import _fork
 from .._deprecated import names as _deprecated_names
 from ..types import JobDefinition, JobState, Run, RunStatus, StoredJob
 from . import _sql
@@ -65,17 +66,25 @@ class SqliteStore:
         self._db: sqlite3.Connection | None = connection
         self._mutex = threading.RLock()
         self._pid = os.getpid()
+        _fork.track(self)
+
+    def _after_fork(self) -> None:
+        """A forked child (gunicorn, Celery's prefork pool) gets a fresh lock,
+        and opens a connection of its own: SQLite's must not be used across a
+        fork, so the parent's is left to it, not closed. The pid goes last
+        (see cronwatch._fork)."""
+        self._mutex = threading.RLock()
+        if self._own:
+            self._db = None
+        self._pid = os.getpid()
 
     @property
     def _lock(self) -> threading.RLock:
-        """The store's lock. A forked child (gunicorn, Celery's prefork pool)
-        gets a fresh one, and opens a connection of its own: SQLite's must not
-        be used across a fork, so the parent's is left to it, not closed."""
+        """The store's lock, this process's own (see _after_fork)."""
         if self._pid != os.getpid():
-            self._pid = os.getpid()
-            self._mutex = threading.RLock()
-            if self._own:
-                self._db = None
+            with _fork.lock:
+                if self._pid != os.getpid():
+                    self._after_fork()
         return self._mutex
 
     def _open(self) -> sqlite3.Connection:

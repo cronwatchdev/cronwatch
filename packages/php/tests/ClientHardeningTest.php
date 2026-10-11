@@ -11,9 +11,11 @@ use Cronwatch\JobDefinition;
 use Cronwatch\Run;
 use Cronwatch\Store\MemoryStore;
 use Cronwatch\Store\Store;
+use Cronwatch\Store\UpdatesRunIf;
 use Cronwatch\Tests\Support\Capture;
 use Cronwatch\Tests\Support\Clients;
 use Cronwatch\Tests\Support\Clock;
+use Cronwatch\Tests\Support\DelegatingStore;
 use Cronwatch\Tests\Support\FlakyStore;
 use Cronwatch\TriageContext;
 use PHPUnit\Framework\TestCase;
@@ -697,5 +699,74 @@ final class ClientHardeningTest extends TestCase
         $this->assertSame('ok', $cw->runs('nightly')[0]->status);
         $this->assertCount(1, $cw->runs('nightly'));
         $this->assertSame([], $this->errors);
+    }
+
+    public function testAStoreWithoutTheConditionalWritesIsReportedOnceWhenItIsFirstUsed(): void
+    {
+        $cw = $this->make(['store' => new DelegatingStore(new MemoryStore())]);
+        $cw->run('a', fn () => null);
+        $cw->run('a', fn () => null);
+        $cw->check();
+        $this->assertSame(['store'], $this->wheres());
+        $this->assertSame(
+            ["the store has no compareAndSetState or updateRunIf, so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it"],
+            $this->messages(),
+        );
+
+        // One that has updateRunIf names only what it lacks.
+        $partial = new class (new MemoryStore()) extends DelegatingStore implements UpdatesRunIf {
+            public function updateRunIf(Run $run, array $fromStatuses): bool
+            {
+                return $this->inner->updateRunIf($run, $fromStatuses);
+            }
+        };
+        $cw = $this->make(['store' => $partial]);
+        $cw->run('a', fn () => null);
+        $this->assertSame(['store'], $this->wheres());
+        $this->assertStringStartsWith('the store has no compareAndSetState, so', $this->messages()[0]);
+
+        // The built-in stores have both.
+        $cw = $this->make(['store' => new MemoryStore()]);
+        $cw->run('a', fn () => null);
+        $this->assertSame([], $this->errors);
+    }
+
+    public function testAThrowingOnErrorOverAFailingStoreNeverStopsTheJob(): void
+    {
+        $store = (new FlakyStore(new MemoryStore()))->breaks(['upsertJob', 'insertRun', 'getRun', 'getState', 'setState', 'updateRun', 'listRuns']);
+        $cw = $this->make(['store' => $store, 'onError' => function (): never {
+            throw new \RuntimeException('onError itself failed');
+        }]);
+        $this->assertSame(7, $cw->run('s', fn () => 7));
+        $this->assertSame("the job's own", $this->failing(fn () => $cw->run('s', self::thrower("the job's own")))->getMessage());
+        // start() and finish() report the store and carry on: nothing recorded, nothing thrown.
+        $this->assertNull($cw->job('s')->start()->finish());
+    }
+
+    public function testOnlyOneCheckAnHourPrunesWhateverProcessItRunsIn(): void
+    {
+        $pruned = 0;
+        $store = new DelegatingStore(new MemoryStore());
+        $store->hooks['prune'] = function (\Closure $next, array $args) use (&$pruned): int {
+            $pruned++;
+            return $next(...$args);
+        };
+        // A new client stands for a new process: a crontab line's check runs in one of its own.
+        $check = fn () => $this->make(['store' => $store])->check();
+        $check();
+        $this->assertSame(1, $pruned);
+        $this->clock->advance(30 * self::MIN);
+        $check();
+        $this->assertSame(1, $pruned, 'within the hour, in another process too');
+        $this->clock->advance(31 * self::MIN);
+        $check();
+        $this->assertSame(2, $pruned);
+        $this->assertSame(Clock::T0 + 61 * self::MIN, $store->getState(Cronwatch::PRUNE_KEY)->toJson()['prunedAt']);
+        $this->assertSame([], $store->listJobs(), 'the row is no job');
+
+        // A time an hour or more ahead of the clock (a clock put back) does not hold pruning off.
+        $this->clock->advance(-2 * self::HOUR);
+        $check();
+        $this->assertSame(3, $pruned);
     }
 }

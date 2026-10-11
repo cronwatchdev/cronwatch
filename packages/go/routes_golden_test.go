@@ -66,8 +66,8 @@ func readGolden(t *testing.T) goldenFile {
 	if g.T0 != T0 {
 		t.Fatalf("golden.json's t0 is %d, not %d", g.T0, T0)
 	}
-	if len(g.Captures) != 82 {
-		t.Fatalf("golden.json has %d captures, not 82", len(g.Captures))
+	if len(g.Captures) != 86 {
+		t.Fatalf("golden.json has %d captures, not 86", len(g.Captures))
 	}
 	// GET /api names the library, its language, and its version, and a page's
 	// footer the library and its version, which the fixture holds as
@@ -298,6 +298,10 @@ func replayServer(t *testing.T, mount func(mux *http.ServeMux, routes *cronwatch
 	g := readGolden(t)
 	cw := seedGolden(t)
 	routes := must[*cronwatch.Routes](t)(cw.Routes(cronwatch.WithToken("tok")))
+	// The paths outside the mount (the base itself, one that only starts
+	// with its text, one elsewhere) never reach the dashboard through a
+	// mux, which answers them itself, so they go to the routes directly.
+	direct := must[*cronwatch.Routes](t)(cw.Routes(cronwatch.WithToken("tok"), cronwatch.WithBasePath("/cronwatch")))
 	mux := http.NewServeMux()
 	mount(mux, routes)
 	server := httptest.NewServer(mux)
@@ -306,6 +310,12 @@ func replayServer(t *testing.T, mount func(mux *http.ServeMux, routes *cronwatch
 	seen := ids{}
 	for _, c := range g.Captures {
 		path := resolveRuns(t, cw, c.Path)
+		if !strings.HasPrefix(path, "/cronwatch/") {
+			rec := httptest.NewRecorder()
+			direct.ServeHTTP(rec, goldenRequest(c, path))
+			compare(t, c, rec.Code, rec.Header(), rec.Body.Bytes(), seen)
+			continue
+		}
 		var body io.Reader
 		if c.Body != nil {
 			body = strings.NewReader(*c.Body)

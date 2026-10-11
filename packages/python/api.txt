@@ -345,7 +345,7 @@ class UrllibHTTP
     def post(self, url: str, body: str, headers: dict[str, str]) -> Response
 class Webhook
     name = 'webhook'
-    def __init__(self, url: str, *, headers: Mapping[str, str] | None=None, secret: str | None=None, http: HTTP | None=None) -> None
+    def __init__(self, url: str, *, headers: Mapping[str, str] | None=None, secret: str | None=None, now: Callable[[], int] | None=None, http: HTTP | None=None) -> None
     def send(self, alert: Alert, context: Any=None) -> None
 
 # cronwatch.alerts.bugsnag
@@ -436,7 +436,7 @@ class Twilio
 WEBHOOK_SCHEMA = 1
 class Webhook
     name = 'webhook'
-    def __init__(self, url: str, *, headers: Mapping[str, str] | None=None, secret: str | None=None, http: HTTP | None=None) -> None
+    def __init__(self, url: str, *, headers: Mapping[str, str] | None=None, secret: str | None=None, now: Callable[[], int] | None=None, http: HTTP | None=None) -> None
     def send(self, alert: Alert, context: Any=None) -> None
 def signature(secret: str, body: str) -> str
 
@@ -551,7 +551,6 @@ class Store(Protocol)
     def update_run(self, run: Run) -> None
     def get_run(self, run_id: str) -> Run | None
     def list_runs(self, job: str, limit: int) -> list[Run]
-    def last_run(self, job: str) -> Run | None
     def running_runs(self) -> list[Run]
     def get_state(self, job: str) -> JobState | None
     def set_state(self, state: JobState) -> None

@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
@@ -43,6 +44,7 @@ class ChannelsConformanceTest {
             "sends",
             "failures",
             "webhookPayloads",
+            "slackLinks",
             "providerSends",
             "providerFailures",
             "twilioPartial",
@@ -104,7 +106,7 @@ class ChannelsConformanceTest {
             if (o.has("secret")) {
               b.secret(s(o, "secret"));
             }
-            yield Webhook.channel(b.transport(transport).build());
+            yield Webhook.channel(b.now(() -> now).transport(transport).build());
           }
           case "resend" ->
               Resend.channel(
@@ -364,11 +366,13 @@ class ChannelsConformanceTest {
 
     // The webhook's whole body, "schema": 1 first, and its signature.
     for (JsObject c : Fixtures.objects(f, "webhookPayloads")) {
+      long sentAt = Long.parseLong(s(c, "timestamp")) * 1000 + 999;
       Channel ch =
           Webhook.channel(
               WebhookOptions.builder()
                   .url("https://hooks.example.com/in")
                   .secret(s(c, "secret"))
+                  .now(() -> sentAt)
                   .transport(rec)
                   .build());
       rec.answerWith(200, "");
@@ -383,6 +387,39 @@ class ChannelsConformanceTest {
           "Webhook.signature of " + s(c, "alert"),
           "sha256=" + Webhook.signature(s(c, "secret"), s(c, "body")),
           c.get("signature"));
+      failures.same(
+          "webhook timestamp of " + s(c, "alert"),
+          sent.header("x-cronwatch-timestamp"),
+          c.get("timestamp"));
+      failures.same(
+          "webhook timestamp signature of " + s(c, "alert"),
+          sent.header("x-cronwatch-timestamp-signature"),
+          c.get("timestampSignature"));
+      failures.same(
+          "Webhook.signature of " + s(c, "alert") + " with its timestamp",
+          "sha256=" + Webhook.signature(s(c, "secret"), s(c, "timestamp") + "." + s(c, "body")),
+          c.get("timestampSignature"));
+      count++;
+    }
+
+    for (JsObject c : Fixtures.objects(f, "slackLinks")) {
+      String target = s(c, "link");
+      Channel ch =
+          Slack.channel(
+              SlackOptions.builder()
+                  .webhookUrl("https://hooks.slack.example/T/B/secret")
+                  .link(a -> target)
+                  .transport(rec)
+                  .build());
+      rec.answerWith(200, "");
+      ch.send(first, cx);
+      Request sent = rec.taken().get(0);
+      JsObject payload = Json.parseObject(Recorder.body(sent));
+      JsObject block = (JsObject) ((List<?>) Objects.requireNonNull(payload.get("blocks"))).get(0);
+      failures.same(
+          "slack link " + target,
+          Fixtures.string(Fixtures.object(block, "text"), "text"),
+          c.get("text"));
       count++;
     }
 
@@ -482,6 +519,7 @@ class ChannelsConformanceTest {
       total += Fixtures.objects(f, key).size();
     }
     total += Fixtures.objects(f, "webhookPayloads").size();
+    total += Fixtures.objects(f, "slackLinks").size();
     total += Fixtures.objects(partial, "cases").size();
     for (String key :
         List.of("errorBodies", "subjects", "smsSegments", "smsBodies", "discordDescriptions")) {

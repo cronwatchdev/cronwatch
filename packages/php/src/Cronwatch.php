@@ -49,6 +49,14 @@ final class Cronwatch
     /** @internal */
     public const PRUNE_INTERVAL_MS = 60 * 60_000;
     /**
+     * The state row that holds when the store was last pruned (see
+     * claimPrune()). No job has this name: a job's starts with a letter or
+     * a digit.
+     *
+     * @internal
+     */
+    public const PRUNE_KEY = '_cronwatch:prune';
+    /**
      * Undelivered alerts kept per job for retry; the oldest go first.
      *
      * @internal
@@ -371,7 +379,7 @@ final class Cronwatch
         if (!$evaluate) {
             return [];
         }
-        $this->updateState($run->job, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
+        $this->updateState($run->job, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($definition, $run, $before, $this->now()), $run->id), null]);
         if ($run->status === RunStatus::RUNNING) {
             return [];
         }
@@ -661,6 +669,14 @@ final class Cronwatch
             return;
         }
         $this->store->init();
+        $missing = array_keys(array_filter([
+            'compareAndSetState' => !$this->store instanceof ComparesAndSetsState,
+            'updateRunIf' => !$this->store instanceof UpdatesRunIf,
+        ]));
+        if ($missing !== []) {
+            // Once per client: it still works, but only as long as one process at a time uses the store.
+            $this->report(new \RuntimeException('the store has no ' . implode(' or ', $missing) . ", so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it"), 'store');
+        }
         if ($this->usingDefaultStore && Env::isProduction()) {
             Console::write('[cronwatch] using the in-memory store: runs and state are lost when the process ends. Pass a store such as Cronwatch\\Store\\SqliteStore or Cronwatch\\Store\\MysqlStore.');
         }
@@ -872,8 +888,9 @@ final class Cronwatch
         // The SDK closes missed and stuck beside the running job; here it is
         // done just before the job runs. The result is the same.
         if ($recorded && !$mayDiscard) {
+            $begun = clone $run;
             try {
-                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
+                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($definition, $begun, $before, $this->now()), $run->id), null]);
             } catch (\Throwable $error) {
                 $this->report($error, "starting {$name}");
             }
@@ -1206,7 +1223,7 @@ final class Cronwatch
         }
         if ($recorded) {
             try {
-                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($before), $run->id), null]);
+                $this->updateState($name, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($definition, $run, $before, $this->now()), $run->id), null]);
             } catch (\Throwable $error) {
                 $this->report($error, "starting {$name}");
             }
@@ -1398,7 +1415,7 @@ final class Cronwatch
             [, $held] = $this->updateState($run->job, function (JobState $previous) use ($definition, $run, $at, $startPending, &$history): array {
                 $history ??= $this->history($run);
                 $before = Evaluate::releaseRun($previous, $run->id);
-                $started = $startPending ? Evaluate::onRunStart($before) : $before;
+                $started = $startPending ? Evaluate::onRunStart($definition, self::asStarted($run), $before, $run->startedAt) : $before;
                 $settled = Evaluate::applySilence($before, Evaluate::onRunFinish($definition, $run, $started, $history, $at), $at);
                 return $this->outbox($settled, $definition, $at);
             });
@@ -1408,6 +1425,19 @@ final class Cronwatch
         }
         $this->reportDropped($run->job, $held['dropped']);
         return $this->dispatch($run->job, $held['alerts'], $at);
+    }
+
+    /**
+     * A finished run as it was when it started, for a start whose effect on
+     * the state waited for the finish (startExecution's mayDiscard): judged
+     * as onRunStart would have judged it then.
+     */
+    private static function asStarted(Run $run): Run
+    {
+        $begun = clone $run;
+        $begun->status = RunStatus::RUNNING;
+        $begun->finishedAt = null;
+        return $begun;
     }
 
     /**
@@ -1545,12 +1575,38 @@ final class Cronwatch
         if ($at - $this->lastPruneAt > self::PRUNE_INTERVAL_MS) {
             $this->lastPruneAt = $at;
             try {
-                $pruned = $this->store->prune($at - $this->retentionMs);
+                if ($this->claimPrune($at)) {
+                    $pruned = $this->store->prune($at - $this->retentionMs);
+                }
             } catch (\Throwable $error) {
                 $this->report($error, 'pruning');
             }
         }
         return new CheckResult($at, $jobs, $alerts, $pruned);
+    }
+
+    /**
+     * Whether this check prunes: when no process sharing the store has in
+     * the last hour. PHP usually runs each check in a process of its own
+     * (a crontab line, a request), where the hour kept in memory is always
+     * past, so the time is kept in the store too, as the state of PRUNE_KEY
+     * (a `prunedAt` field). Taking the hour is a conditional write, so of two
+     * checks at once only one prunes. A time more than an hour from the
+     * clock either way (a foreign row's, a clock put back) does not hold
+     * pruning off.
+     */
+    private function claimPrune(int|float $at): bool
+    {
+        [, $claimed] = $this->updateState(self::PRUNE_KEY, function (JobState $current) use ($at): array {
+            $fields = $current->toJson();
+            $last = $fields['prunedAt'] ?? null;
+            if (Js::isNumber($last) && abs($at - $last) <= self::PRUNE_INTERVAL_MS) {
+                return [$current, false];
+            }
+            $fields['prunedAt'] = $at;
+            return [JobState::fromJson($fields), true];
+        });
+        return $claimed;
     }
 
     /** A job's summary and its newest runs, without alerting. A job that cannot be evaluated is reported and shown as failing. */
@@ -1646,7 +1702,7 @@ final class Cronwatch
         }
         // A worker that serves many requests (FrankenPHP, RoadRunner) keeps
         // this static between them; the request's start time tells them apart.
-        $request = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        $request = isset($_SERVER['REQUEST_TIME_FLOAT']) ? (float) $_SERVER['REQUEST_TIME_FLOAT'] : null;
         if ($request !== null && $request === self::$heldOnFor) {
             return;
         }

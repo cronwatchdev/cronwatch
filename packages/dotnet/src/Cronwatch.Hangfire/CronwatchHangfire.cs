@@ -78,8 +78,9 @@ public sealed class CronwatchHangfire : IDisposable
         Filter = new CronwatchHangfireFilter(this);
         // One integration per process: Hangfire's filters are global, so an earlier one left in
         // place (a host built again in the same process) would open every attempt a second time,
-        // under the same id, on a client that may be disposed.
-        Interlocked.Exchange(ref s_active, null)?.Dispose();
+        // under the same id, on a client that may be disposed. Its filter comes off now; its
+        // reading ends on its own, without this constructor waiting for it.
+        Interlocked.Exchange(ref s_active, null)?.Stop(wait: false);
         GlobalJobFilters.Filters.Add(Filter);
         _reading = CronwatchClient_WithoutFlow(ReadLoopAsync);
         Volatile.Write(ref s_active, this);
@@ -123,6 +124,13 @@ public sealed class CronwatchHangfire : IDisposable
 
     /// <summary>The filter this integration added to <see cref="GlobalJobFilters.Filters"/>.</summary>
     public CronwatchHangfireFilter Filter { get; }
+
+    /// <summary>
+    /// The longest the server filter blocks a worker on the store, to open a run and to close one:
+    /// a store that does not answer costs each attempt this wait at most, and the work goes on in
+    /// the background. Settable for the tests.
+    /// </summary>
+    internal TimeSpan StoreWait { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>The fire-time checks kept per cron, for the tests.</summary>
     internal FireTimeChecks Checks => _checks;
@@ -389,11 +397,17 @@ public sealed class CronwatchHangfire : IDisposable
                 _cw.ReportError(e, "recording " + name);
             }
         });
+        Track(work);
+    }
+
+    /// <summary>Keeps <paramref name="work"/> among what <see cref="RecordedAsync"/> waits for.</summary>
+    internal void Track(Task work)
+    {
         _recording.TryAdd(work, 0);
         _ = work.ContinueWith(t => _recording.TryRemove(t, out _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    /// <summary>Waits for the load failures being recorded, for tests and a clean exit.</summary>
+    /// <summary>Waits for the load failures and the late runs being recorded, for tests and a clean exit.</summary>
     internal Task RecordedAsync() => Task.WhenAll(_recording.Keys);
 
     /// <summary>
@@ -401,7 +415,13 @@ public sealed class CronwatchHangfire : IDisposable
     /// is recorded from now on, and the recurring jobs are no longer read. A run open now is still
     /// closed when its job ends. Leaves the client and Hangfire running.
     /// </summary>
-    public void Dispose()
+    public void Dispose() => Stop(wait: true);
+
+    /// <summary>
+    /// Takes the filter off and stops the reading; with <paramref name="wait"/>, waits up to five
+    /// seconds for the reading to end, else lets it end on its own.
+    /// </summary>
+    private void Stop(bool wait)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
@@ -410,6 +430,11 @@ public sealed class CronwatchHangfire : IDisposable
         GlobalJobFilters.Filters.Remove(Filter);
         Interlocked.CompareExchange(ref s_active, null, this);
         _stop.Cancel();
+        if (!wait)
+        {
+            _ = _reading.ContinueWith(_ => _stop.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return;
+        }
         try
         {
             _reading.Wait(TimeSpan.FromSeconds(5));

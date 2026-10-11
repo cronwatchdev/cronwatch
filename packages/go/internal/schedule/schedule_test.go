@@ -31,7 +31,7 @@ func mustParse(t *testing.T, schedule, zone string) *Parsed {
 
 func due(t *testing.T, p *Parsed, lastRunAt *int64, registeredAt int64, grace float64) int64 {
 	t.Helper()
-	e, ok := Expect(p, lastRunAt, registeredAt, grace)
+	e, ok := Expect(p, lastRunAt, registeredAt, grace, nil)
 	if !ok {
 		t.Fatal("no expectation")
 	}
@@ -88,7 +88,7 @@ func TestNextFire(t *testing.T) {
 func TestExpectationForACronCountsForwardFromTheLastRun(t *testing.T) {
 	daily := mustParse(t, "0 2 * * *", "")
 	registered := utc(2026, 0, 4, 12, 0, 0)
-	first, _ := Expect(daily, nil, registered, 10*minute)
+	first, _ := Expect(daily, nil, registered, 10*minute, nil)
 	if first.DueAt != utc(2026, 0, 5, 2, 0, 0) || first.Deadline != float64(utc(2026, 0, 5, 2, 10, 0)) {
 		t.Errorf("never ran: %+v", first)
 	}
@@ -130,7 +130,7 @@ func TestExpectationForYearlyCronsAndIntervals(t *testing.T) {
 	}
 	every := mustParse(t, "every 1h", "")
 	now := utc(2026, 0, 5, 9, 30, 0)
-	if e, _ := Expect(every, at(now-2*hour), now-day, 5*minute); e.DueAt != now-hour || e.Deadline != float64(now-hour+5*minute) {
+	if e, _ := Expect(every, at(now-2*hour), now-day, 5*minute, nil); e.DueAt != now-hour || e.Deadline != float64(now-hour+5*minute) {
 		t.Errorf("%+v", e)
 	}
 	if got := due(t, every, nil, now-30*minute, 5*minute); got != now+30*minute {
@@ -217,7 +217,7 @@ func TestADateNoMonthHasNeverFires(t *testing.T) {
 	if _, ok := NextFire(p, utc(2026, 0, 1, 0, 0, 0), nil); ok {
 		t.Error("February 30 fired")
 	}
-	if _, ok := Expect(p, nil, utc(2026, 0, 1, 0, 0, 0), 0); ok {
+	if _, ok := Expect(p, nil, utc(2026, 0, 1, 0, 0, 0), 0, nil); ok {
 		t.Error("February 30 is due")
 	}
 }

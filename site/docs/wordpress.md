@@ -21,7 +21,7 @@ Each release's zip is also attached to its [GitHub release](https://github.com/c
 
 Activating it makes three tables (`wp_cronwatch_jobs`, `wp_cronwatch_runs`, and `wp_cronwatch_state`, with your table prefix) and schedules its check. Then, under CronWatch, Settings, enter where alerts go and send a test alert.
 
-It needs WordPress 6.1 or newer, PHP 8.2 or newer, and MySQL 5.7.8 or MariaDB 10.3 or newer (the versions with the JSON functions it reads state with); activation refuses an older database server with a message.
+It needs WordPress 6.5 or newer, PHP 8.2 or newer, and MySQL 5.7.8 or MariaDB 10.3 or newer (the versions with the JSON functions it reads state with); activation refuses an older database server with a message.
 
 ## What is watched
 

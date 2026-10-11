@@ -132,11 +132,28 @@ function countFrom(from: number): number | null {
 
 /**
  * The first fire strictly after `from`, or null when the cron never fires
- * again. croner answers with times in the past when asked from inside the
- * hour that repeats when clocks go back, so its answers are filtered, and a
- * stretch of nothing but past times is stepped over an hour at a time.
+ * again. On the night clocks spring forward every slot the pattern names
+ * still fires: one whose local time the jump skips is moved forward by the
+ * gap's length (see springGap and gapFireAfter), so the fires stay strictly
+ * ascending whichever instant they are counted from.
  */
 function fireAfter(parsed: ParsedSchedule, from: number): number | null {
+  const found = croneFireAfter(parsed, from);
+  const start = countFrom(from);
+  if (start === null) return found;
+  const moved = gapFireAfter(parsed, start);
+  return moved !== null && (found === null || moved < found) ? moved : found;
+}
+
+/**
+ * The first fire strictly after `from` as croner counts it, or null when
+ * the cron never fires again. croner answers with times in the past when
+ * asked from inside the hour that repeats when clocks go back, so its
+ * answers are filtered, and a stretch of nothing but past times is stepped
+ * over an hour at a time. Asked from inside a spring-forward gap it skips
+ * the slots moved out of it, which fireAfter adds back.
+ */
+function croneFireAfter(parsed: ParsedSchedule, from: number): number | null {
   const cron = crons.get(parsed);
   if (!cron) throw new Error(`schedule "${parsed.source}" was not made by parseSchedule`);
   if (never.has(parsed)) return null;
@@ -154,10 +171,82 @@ function fireAfter(parsed: ParsedSchedule, from: number): number | null {
 }
 
 /**
+ * The window a spring-forward jump moves skipped slots into, when `at` lies
+ * in one: from the jump (`jumpAt`, the first instant on the later offset)
+ * for the gap's length (`gapMs`, the later offset less the earlier one, so
+ * 30 minutes on Lord Howe Island and an hour in most zones). `beforeMs` is
+ * the earlier offset. Null when `at` is not within a gap's length after a
+ * jump in the three hours before it.
+ */
+export function springGap(timezone: string | undefined, at: number): { jumpAt: number; gapMs: number; beforeMs: number } | null {
+  const jump = springJump(timezone, at);
+  return jump && at < jump.jumpAt + jump.gapMs ? jump : null;
+}
+
+/** How far back a spring-forward jump is looked for: more than any gap a zone has had. */
+const JUMP_LOOKBACK_MS = 3 * 3_600_000;
+
+/**
+ * The spring-forward jump in the three hours up to `at`, found to the
+ * minute: the first minute on the later offset. Null when the offset at
+ * `at` is not ahead of the offset three hours before.
+ */
+function springJump(timezone: string | undefined, at: number): { jumpAt: number; gapMs: number; beforeMs: number } | null {
+  // Every zone kept its local mean time, with no clock change, in the year 1.
+  if (at - JUMP_LOOKBACK_MS < FIRST_DATE_MS || at >= LAST_DATE_MS) return null;
+  const after = utcOffset(at, timezone);
+  const before = utcOffset(at - JUMP_LOOKBACK_MS, timezone);
+  if (after <= before) return null;
+  let lo = at - JUMP_LOOKBACK_MS;
+  let hi = at;
+  while (hi - lo > 60_000) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (utcOffset(mid, timezone) === after) hi = mid;
+    else lo = mid;
+  }
+  return { jumpAt: Math.floor(hi / 60_000) * 60_000, gapMs: after - before, beforeMs: before };
+}
+
+/** The pattern read in UTC, which stands for wall-clock time in gapFireAfter. */
+const wallCrons = new WeakMap<ParsedSchedule, Cron>();
+
+function wallCron(parsed: ParsedSchedule): Cron {
+  let wall = wallCrons.get(parsed);
+  if (!wall) {
+    wall = new Cron(parsed.source, { timezone: "UTC" });
+    wallCrons.set(parsed, wall);
+  }
+  return wall;
+}
+
+/**
+ * The first slot moved out of a spring-forward gap strictly after `start`,
+ * when `start` lies in that gap's window, else null. A slot whose local time
+ * the jump skips fires at that local time read on the earlier offset, which
+ * is the same as moving it forward by the gap's length: 01:20 on the night
+ * London skips 01:00 to 02:00 fires at 02:20 BST (01:20Z). croner moves them
+ * the same way when asked from before the jump, but not from inside it.
+ */
+function gapFireAfter(parsed: ParsedSchedule, start: number): number | null {
+  if (never.has(parsed)) return null;
+  const gap = springGap(parsed.timezone, start);
+  if (!gap) return null;
+  const wall = wallCron(parsed);
+  // Wall-clock time as if it were UTC: the slots the jump skips run from
+  // jumpAt + beforeMs for gapMs.
+  const [slot] = runsAfter(wall, 1, start + gap.beforeMs);
+  if (slot === undefined || slot >= gap.jumpAt + gap.beforeMs + gap.gapMs) return null;
+  return slot - gap.beforeMs;
+}
+
+/**
  * Every fire of a cron strictly after `from` and at or before `to`,
- * ascending, or null when there are more than `limit`. Asks croner for fires
- * in batches, which is far cheaper than one nextFire per fire, and drops any
- * that do not move forward (see fireAfter).
+ * ascending, or null when there are more than `limit`: the fires nextFire
+ * gives one after another. Asks croner for fires in batches, which is far
+ * cheaper than one nextFire per fire, and drops any that do not move forward
+ * (the hour that repeats when clocks go back, see croneFireAfter). Around a
+ * spring-forward gap, where croner's batch can skip a moved slot or give
+ * one out of order, it counts with fireAfter instead.
  */
 export function firesBetween(parsed: ParsedSchedule, from: number, to: number, limit: number): number[] | null {
   const cron = crons.get(parsed);
@@ -169,28 +258,65 @@ export function firesBetween(parsed: ParsedSchedule, from: number, to: number, l
   let probe = start;
   let last = start;
   for (let guard = 0; guard < 1000; guard++) {
+    if (springGap(parsed.timezone, last)) {
+      // Counting from inside a gap's window: croner would skip its moved slots.
+      const t = fireAfter(parsed, last);
+      if (t === null || t > to) return out;
+      out.push(t);
+      last = probe = t;
+      if (out.length > limit) return null;
+      continue;
+    }
     const batch = runsAfter(cron, Math.min(limit + 1 - out.length, 24), probe);
     if (batch.length === 0) return out;
+    let stepped = false;
     for (const t of batch) {
       if (t <= last) continue;
+      if (springGap(parsed.timezone, t)) {
+        // The batch reached a gap's window, where its order is croner's:
+        // the next fire is counted from the last one, and the rest with it.
+        const next = fireAfter(parsed, last);
+        if (next === null || next > to) return out;
+        out.push(next);
+        last = probe = next;
+        if (out.length > limit) return null;
+        stepped = true;
+        break;
+      }
       if (t > to) return out;
       out.push(t);
       last = t;
       if (out.length > limit) return null;
     }
+    if (stepped) continue;
     const end = batch[batch.length - 1]!;
     probe = end > probe ? end : probe + 3_600_000;
   }
   return out;
 }
 
-/** The next time the schedule fires strictly after `from`. For an interval, counted from the last run when there is one. */
+/**
+ * The next time the schedule fires strictly after `from`. For an interval,
+ * counted from the last run's start when there is one (see intervalDue for
+ * a run that outlasted its period).
+ */
 export function nextFire(parsed: ParsedSchedule, from: number, lastRunAt: number | null): number | null {
   if (parsed.kind === "interval") {
     const base = lastRunAt ?? from;
     return base + parsed.everyMs!;
   }
   return fireAfter(parsed, from);
+}
+
+/**
+ * When an interval of `everyMs` is next due after a run: a period after it
+ * started, or, when it finished (`finishedAt` not null) later than that, a
+ * period after it finished. A run that outlasts its period is not followed
+ * by a missed alert the moment it ends.
+ */
+export function intervalDue(everyMs: number, startedAt: number, finishedAt: number | null): number {
+  const due = startedAt + everyMs;
+  return finishedAt !== null && finishedAt > due ? finishedAt + everyMs : due;
 }
 
 export interface Expectation {
@@ -204,8 +330,9 @@ export interface Expectation {
  * When the schedule next wants a run, given the last one. For a cron that is
  * the first fire the last run does not already cover; with no run yet, the
  * first fire at or after registration. For an interval it is the last run's
- * start (or registration) plus the interval. Null for a cron that never
- * fires again.
+ * start (or registration) plus the interval, or its finish plus the interval
+ * when it finished (`lastFinishedAt`, null while it runs) later than that
+ * (intervalDue). Null for a cron that never fires again.
  *
  * Counting forward from the last run, rather than back from now, is what
  * lets a job whose period is shorter than its grace be missed at all, and it
@@ -216,10 +343,11 @@ export function expectation(
   lastRunAt: number | null,
   registeredAt: number,
   graceMs: number,
+  lastFinishedAt: number | null = null,
 ): Expectation | null {
   let dueAt: number | null;
   if (parsed.kind === "interval") {
-    dueAt = (lastRunAt ?? registeredAt) + parsed.everyMs!;
+    dueAt = lastRunAt === null ? registeredAt + parsed.everyMs! : intervalDue(parsed.everyMs!, lastRunAt, lastFinishedAt);
   } else if (lastRunAt === null) {
     dueAt = fireAfter(parsed, registeredAt - 1);
   } else {
@@ -235,11 +363,15 @@ export function expectation(
  */
 function dueAfterRun(parsed: ParsedSchedule, startedAt: number): number | null {
   // A fire at or before the start is covered by the run itself.
-  const next = fireAfter(parsed, startedAt);
-  if (next === null) return null;
-  const following = fireAfter(parsed, next);
-  const covers = runCovers(startedAt, next, following) || inSpringForwardGap(parsed, startedAt, next);
-  return covers ? following : next;
+  let next = fireAfter(parsed, startedAt);
+  // Bounded: a gap holds at most a few hours of moved slots.
+  for (let guard = 0; next !== null && guard < 100_000; guard++) {
+    const following = fireAfter(parsed, next);
+    const covers = runCovers(startedAt, next, following) || inSpringForwardGap(parsed, startedAt, next);
+    if (!covers) return next;
+    next = following;
+  }
+  return next;
 }
 
 /**
@@ -254,36 +386,21 @@ export function runCovers(startedAt: number, dueAt: number, followingAt: number 
 }
 
 /**
- * On the night clocks spring forward, a fire whose local time does not exist
- * (02:30 when 02:00 jumps to 03:00) is moved by croner to the same distance
- * past the jump (03:30), while vixie cron runs it at the jump itself (03:00).
- * A run that starts at or after the jump, and before the first fire after
- * it when that fire lies within one gap of it, is taken to cover that fire,
- * so neither scheduler's run is reported as missed. A cron that really fires
- * at 03:30 that night is treated the same way, which only matters if it also
- * ran early by up to an hour.
+ * On the night clocks spring forward, a slot whose local time does not exist
+ * (02:30 when 02:00 jumps to 03:00) fires moved forward by the gap (03:30;
+ * see gapFireAfter), while vixie cron runs every skipped job once, at the
+ * jump itself (03:00). A run that starts at or after the jump (less a
+ * minute of slack), and before such a moved fire, is taken to cover it, so
+ * neither scheduler's run is reported as missed. Only a moved slot that is
+ * not also a slot of its own on the later offset counts: a cron that fires
+ * every 10 minutes moves 02:10 onto its own 03:10, which was not skipped.
  */
 function inSpringForwardGap(parsed: ParsedSchedule, startedAt: number, fireAt: number): boolean {
-  const LOOKBACK = 3 * 3_600_000;
-  // Every zone kept its local mean time, with no clock change, in the year 1.
-  if (fireAt - LOOKBACK < FIRST_DATE_MS) return false;
-  const after = utcOffset(fireAt, parsed.timezone);
-  const before = utcOffset(fireAt - LOOKBACK, parsed.timezone);
-  const gap = after - before;
-  if (gap <= 0) return false;
-  // Find the jump: the first minute in the window with the later offset.
-  let lo = fireAt - LOOKBACK;
-  let hi = fireAt;
-  while (hi - lo > 60_000) {
-    const mid = lo + Math.floor((hi - lo) / 2);
-    if (utcOffset(mid, parsed.timezone) === after) hi = mid;
-    else lo = mid;
-  }
-  const jumpAt = Math.floor(hi / 60_000) * 60_000;
-  if (fireAt - jumpAt >= gap || startedAt < jumpAt - EARLY_SLACK_MS || startedAt >= fireAt) return false;
-  // Only the first fire after the jump can be a moved one; a cron that also
-  // fires at the jump (every 10 minutes, say) was not moved at all.
-  return fireAfter(parsed, jumpAt - 1) === fireAt;
+  const gap = springGap(parsed.timezone, fireAt);
+  if (!gap || startedAt < gap.jumpAt - EARLY_SLACK_MS || startedAt >= fireAt) return false;
+  const wall = wallCron(parsed);
+  const fires = (at: number) => runsAfter(wall, 1, at - 1)[0] === at;
+  return fires(fireAt + gap.beforeMs) && !fires(fireAt + gap.beforeMs + gap.gapMs);
 }
 
 const formatters = new Map<string, Intl.DateTimeFormat>();

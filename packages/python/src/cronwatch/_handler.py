@@ -19,7 +19,7 @@ $CRON_SECRET, what Vercel sends its cron requests with); "" or a string of
 only whitespace counts as unset, and anything but a string or None raises
 TypeError.
 With no secret at all the handler answers 503 unless the environment is
-development or test (see cronwatch._env), and reports it once to on_error as
+development (see cronwatch._env; "test" is not), and reports it once to on_error as
 "handler". ``secret=None`` lets anyone run the job.
 
 The answer is JSON: ``{"ok", "job", "run", "status", "durationMs"}``, status
@@ -248,10 +248,14 @@ class Handler:
         return _named(endpoint, self)
 
     def wsgi(self, environ: Mapping[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
-        """The handler as a WSGI app. The function gets a cronwatch.web.Request."""
-        from .web import Request
+        """The handler as a WSGI app. The function gets a cronwatch.web.Request.
+        A Content-Length that is not a length is answered 400, and the job does not run."""
+        from .web import BadContentLength, Request, _bad_length
 
-        request = Request.from_wsgi(environ)
+        try:
+            request = Request.from_wsgi(environ)
+        except BadContentLength:
+            return _wsgi_answer(_bad_length(), environ, start_response)
         return _wsgi_answer(self.respond(request), environ, start_response)
 
     async def asgi(self, scope: Mapping[str, Any], receive: Callable[..., Any], send: Callable[..., Any]) -> None:
@@ -319,9 +323,12 @@ class AsyncHandler(Handler):
 
     def wsgi(self, environ: Mapping[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         """The handler as a WSGI app: the async function runs to completion on an event loop of its own."""
-        from .web import Request
+        from .web import BadContentLength, Request, _bad_length
 
-        request = Request.from_wsgi(environ)
+        try:
+            request = Request.from_wsgi(environ)
+        except BadContentLength:
+            return _wsgi_answer(_bad_length(), environ, start_response)
         return _wsgi_answer(asyncio.run(self.respond(request)), environ, start_response)
 
     async def asgi(self, scope: Mapping[str, Any], receive: Callable[..., Any], send: Callable[..., Any]) -> None:

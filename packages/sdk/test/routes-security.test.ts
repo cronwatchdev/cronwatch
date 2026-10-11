@@ -375,3 +375,22 @@ test("the ?token= sign-in never redirects off the site, however many slashes lea
     assert.ok(!new URL(location, "http://app.test").host.includes("evil"), `${path} -> ${location}`);
   }
 });
+
+test("only the base and the paths under it are served; a look-alike prefix or a dot segment out of it is not", async () => {
+  const { cw, send, bearer } = app();
+  await cw.run("x", async () => {});
+  for (const path of ["/cronwatchapi/jobs", "/cronwatch/../api/jobs", "/api/jobs", "/cronwatch-other/", "/", "/x/cronwatch/api/jobs"]) {
+    const res = await send("GET", path, bearer);
+    assert.equal(res.status, 404, path);
+    assert.match(res.headers.get("content-type")!, /text\/html/, path);
+    assert.doesNotMatch(await res.text(), /"jobs"/, path);
+  }
+  assert.equal((await send("GET", "/cronwatch/api/jobs", bearer)).status, 200);
+  assert.equal((await send("GET", "/cronwatch/./api/jobs", bearer)).status, 200, "a dot segment that stays under the base");
+  assert.equal((await send("GET", "/cronwatch/jobs/../api/jobs", bearer)).status, 200);
+  assert.equal((await send("GET", "/cronwatch", bearer)).status, 200, "the base itself is the dashboard");
+  assert.equal((await send("GET", "/cronwatch/", bearer)).status, 200);
+  // Mounted at the root, every path is the routes'.
+  const root = cw.routes({ token: "tok", basePath: "/" });
+  assert.equal((await root.handler(new Request("http://app.test/api/jobs", { headers: bearer }))).status, 200);
+});

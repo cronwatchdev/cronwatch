@@ -220,20 +220,26 @@ class ChannelHardeningTest {
   }
 
   @Test
-  void anAnswerIsReadToOneMebibyteAsItArrivesWhateverItsFraming() throws Exception {
+  void anAnswerIsReadToOneMebibyteAndAnErrorTo64KibAsItArrivesWhateverItsFraming()
+      throws Exception {
     long large = 64L << 20;
-    for (String framing : List.of("length", "chunked", "close")) {
-      try (TestServer big = TestServer.start(r -> new TestServer.Stream(500, large, framing));
-          JdkTransport jdk = new JdkTransport()) {
-        Post.Answer answer = Post.fetch(jdk, 30_000, big.url(), List.of(), "{}");
-        assertEquals(500, answer.status(), framing);
-        assertEquals(Post.MAX_BODY, answer.body().length(), framing);
-        // The subscription was cancelled at the cap, which closed the connection: the server
-        // could not write the rest.
-        assertTrue(
-            Await.until(() -> big.stoppedAt.get() >= 0),
-            framing + ": the connection stayed open after the cap");
-        assertTrue(big.written.get() < large, framing + ": the whole answer was written");
+    for (int status : new int[] {200, 500}) {
+      for (String framing : List.of("length", "chunked", "close")) {
+        try (TestServer big = TestServer.start(r -> new TestServer.Stream(status, large, framing));
+            JdkTransport jdk = new JdkTransport()) {
+          Post.Answer answer = Post.fetch(jdk, 30_000, big.url(), List.of(), "{}");
+          assertEquals(status, answer.status(), framing);
+          assertEquals(
+              status == 200 ? Post.MAX_BODY : Post.ERROR_READ_MAX,
+              answer.body().length(),
+              framing + " " + status);
+          // The subscription was cancelled at the cap, which closed the connection: the server
+          // could not write the rest.
+          assertTrue(
+              Await.until(() -> big.stoppedAt.get() >= 0),
+              framing + ": the connection stayed open after the cap");
+          assertTrue(big.written.get() < large, framing + ": the whole answer was written");
+        }
       }
     }
   }

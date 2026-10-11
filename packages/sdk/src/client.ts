@@ -64,8 +64,9 @@ export interface HandlerOptions {
    * whitespace, counts as unset; any other type (false, a number) throws.
    * With no secret at all the handler answers 503 unless the app is in
    * development (the first of CRONWATCH_ENV, APP_ENV, and NODE_ENV that is
-   * set names "development", "dev", "local", "test", or "testing"). Pass
-   * null to allow anyone.
+   * set names "development", "dev", or "local"; "test" and "testing" are not
+   * development, so a test run or CI needs a secret too). Pass null to allow
+   * anyone.
    */
   secret?: string | null;
 }
@@ -486,7 +487,7 @@ export class Cronwatch {
   private warnNoSecret(): void {
     if (this.warnedNoSecret) return;
     this.warnedNoSecret = true;
-    this.onError(new Error("handler() refused a request because no CRON_SECRET is set; pass secret: null to allow unauthenticated requests"), "handler");
+    this.report(new Error("handler() refused a request because no CRON_SECRET is set; pass secret: null to allow unauthenticated requests"), "handler");
   }
 
   /** onError, for places that must carry on even when onError itself throws. */
@@ -502,6 +503,14 @@ export class Cronwatch {
     if (!this.ready) {
       this.ready = (async () => {
         if (this.store.init) await this.store.init();
+        const missing = (["compareAndSetState", "updateRunIf"] as const).filter((method) => typeof this.store[method] !== "function");
+        if (missing.length > 0) {
+          // Once per client: it still works, but only as long as one process at a time uses the store.
+          this.report(
+            new Error(`the store has no ${missing.join(" or ")}, so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it`),
+            "store",
+          );
+        }
         if (this.usingDefaultStore && isProduction()) {
           console.warn("[cronwatch] using the in-memory store: runs and state are lost on restart. Pass a store from @cronwatch/sdk/sqlite or @cronwatch/sdk/postgres.");
         }
@@ -661,12 +670,13 @@ export class Cronwatch {
       await this.store.insertRun({ ...run });
       recorded = true;
     } catch (e) {
-      this.onError(e, `recording ${name}`);
+      this.report(e, `recording ${name}`);
     }
     // Closing missed and stuck happens beside the job, which never waits on it.
+    const begun = { ...run };
     const started = recorded
-      ? this.updateState(name, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }))
-          .then(() => {}, (e) => this.onError(e, `starting ${name}`))
+      ? this.updateState(name, (before) => ({ state: holdRun(onRunStart(definition, begun, before, this.now()), run.id), result: undefined }))
+          .then(() => {}, (e) => this.report(e, `starting ${name}`))
       : Promise.resolve();
 
     const recorder = createRecorder(run);
@@ -696,7 +706,7 @@ export class Cronwatch {
       const ignored = await this.recordFinish(definition, run, recorded, finishedAt);
       if (ignored) this.report(new Error(`run ${run.id} of ${name} ${ignored}; ignored`), `finishing ${name}`);
     } catch (e) {
-      this.onError(e, `recording ${name}`);
+      this.report(e, `recording ${name}`);
     }
     return { run, result, error, threw };
   }
@@ -811,7 +821,7 @@ export class Cronwatch {
         await this.ensureReady();
         stored = await this.store.getRun(id);
       } catch (e) {
-        this.onError(e, `recording ${name}`);
+        this.report(e, `recording ${name}`);
       }
       if (stored) return this.existingHandle(definition, stored);
     }
@@ -836,11 +846,11 @@ export class Cronwatch {
       // Another process may have started a run with this id first.
       const stored = id === undefined ? null : await this.store.getRun(id).catch(() => null);
       if (stored) return this.existingHandle(definition, stored);
-      this.onError(e, `recording ${name}`);
+      this.report(e, `recording ${name}`);
     }
     if (recorded) {
-      await this.updateState(name, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }))
-        .catch((e: unknown) => this.onError(e, `starting ${name}`));
+      await this.updateState(name, (before) => ({ state: holdRun(onRunStart(definition, run, before, this.now()), run.id), result: undefined }))
+        .catch((e: unknown) => this.report(e, `starting ${name}`));
     }
     return this.runHandle(definition, run.id, run, recorded, null);
   }
@@ -853,7 +863,7 @@ export class Cronwatch {
       await this.ensureReady();
       stored = await this.store.getRun(runId);
     } catch (e) {
-      this.onError(e, `resuming ${definition.name}`);
+      this.report(e, `resuming ${definition.name}`);
       return this.runHandle(definition, runId, null, true, null);
     }
     if (!stored) return this.runHandle(definition, runId, null, true, "was not found");
@@ -1072,7 +1082,7 @@ export class Cronwatch {
       throw e;
     }
     if (!evaluate) return [];
-    await this.updateState(run.job, (before) => ({ state: holdRun(onRunStart(before), run.id), result: undefined }));
+    await this.updateState(run.job, (before) => ({ state: holdRun(onRunStart(definition, run, before, this.now()), run.id), result: undefined }));
     if (run.status === "running") return [];
     return this.finishRun(definition, run, this.now());
   }
@@ -1114,7 +1124,7 @@ export class Cronwatch {
         return this.outbox(applySilence(before, onRunFinish(definition, run, before, history, now), now), definition, now);
       }));
     } catch (e) {
-      this.onError(e, `evaluating ${run.job}`);
+      this.report(e, `evaluating ${run.job}`);
       return [];
     }
     this.reportDropped(run.job, held.dropped);
@@ -1401,7 +1411,7 @@ export class Cronwatch {
       this.warnedDeferredStart = true;
       console.warn('[cronwatch] startChecking() was called with deliver: "check", so these checks send no alerts. Another process must run checks with deliver: "now" (the default) to send them.');
     }
-    const tick = () => this.check().catch((e) => this.onError(e, "check"));
+    const tick = () => this.check().catch((e) => this.report(e, "check"));
     this.timer = setInterval(tick, ms);
     if (typeof this.timer === "object" && "unref" in this.timer) this.timer.unref();
     this.firstTick = setTimeout(() => {
@@ -1479,7 +1489,7 @@ export class Cronwatch {
         return { state: claim.state, result: claim.claimed };
       }));
     } catch (e) {
-      this.onError(e, `claiming undelivered alerts for ${name}`);
+      this.report(e, `claiming undelivered alerts for ${name}`);
       return [];
     }
     if (claimed.length === 0) return [];
@@ -1518,7 +1528,7 @@ export class Cronwatch {
       });
       this.reportDropped(name, trimmed);
     } catch (e) {
-      this.onError(e, `recording alert delivery for ${name}`);
+      this.report(e, `recording alert delivery for ${name}`);
     }
   }
 
@@ -1531,7 +1541,7 @@ export class Cronwatch {
           await withTimeout(channel.send(alert, { onError: (e) => this.report(e, `alert channel ${channel.name}`) }), CHANNEL_TIMEOUT_MS);
           return true;
         } catch (e) {
-          this.onError(e, `alert channel ${channel.name}`);
+          this.report(e, `alert channel ${channel.name}`);
           return false;
         }
       }),
@@ -1549,7 +1559,7 @@ export class Cronwatch {
     } catch (e) {
       controller.abort();
       alert.triage = null;
-      this.onError(e, `triage for ${alert.job}`);
+      this.report(e, `triage for ${alert.job}`);
     }
   }
 }

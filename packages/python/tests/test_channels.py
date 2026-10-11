@@ -406,6 +406,40 @@ def test_webhook_signs_the_raw_body_and_sends_the_alert_as_the_sdk_does() -> Non
     assert call["body"] == '{"schema":1,' + _js.dumps(alert_j("db").to_dict())[1:]
 
 
+def test_webhook_signs_a_timestamp_with_the_body_so_a_receiver_can_refuse_a_replay() -> None:
+    http = FakeHTTP()
+    A.Webhook("https://hooks.example.com/cw", secret="s3cret", now=lambda: T0 + 1999, http=http).send(alert_j("db"))
+    headers = http.requests[0]["headers"]
+    body = http.requests[0]["body"]
+    assert list(headers)[-3:] == ["x-cronwatch-signature", "x-cronwatch-timestamp", "x-cronwatch-timestamp-signature"]
+    assert headers["x-cronwatch-timestamp"] == str((T0 + 1999) // 1000)
+    signed = f"{headers['x-cronwatch-timestamp']}.{body}".encode()
+    assert headers["x-cronwatch-timestamp-signature"] == "sha256=" + hmac.new(b"s3cret", signed, hashlib.sha256).hexdigest()
+    # The real clock by default.
+    before = int(time.time())
+    A.Webhook("https://hooks.example.com/cw", secret="s3cret", http=http).send(alert_j("db"))
+    assert before <= int(http.requests[1]["headers"]["x-cronwatch-timestamp"]) <= int(time.time())
+    # No secret, no signature headers of any kind.
+    for secret in (None, ""):
+        A.Webhook("https://hooks.example.com/cw", secret=secret, http=http).send(alert_j("db"))
+        assert not [name for name in http.requests[-1]["headers"] if name.startswith("x-cronwatch-")]
+
+
+def test_webhook_headers_of_the_apps_own_replace_the_defaults_whatever_their_case_and_never_the_signatures() -> None:
+    http = FakeHTTP()
+    given = {"Content-Type": "application/cloudevents+json", "USER-AGENT": " mine ", "X-CronWatch-Timestamp": "1", "x-cronwatch-timestamp-SIGNATURE": "forged"}
+    A.Webhook("https://hooks.example.com/cw", secret="s3cret", headers=given, now=lambda: T0, http=http).send(alert_j("db"))
+    headers = http.requests[0]["headers"]
+    assert [name.lower() for name in headers] == ["content-type", "user-agent", "x-cronwatch-signature", "x-cronwatch-timestamp", "x-cronwatch-timestamp-signature"]
+    assert headers["Content-Type"] == "application/cloudevents+json"
+    assert headers["USER-AGENT"] == "mine"
+    assert headers["x-cronwatch-timestamp"] == str(T0 // 1000)
+    assert headers["x-cronwatch-timestamp-signature"] != "forged"
+    # Unsigned, an app's header of the signature's name goes as given.
+    A.Webhook("https://hooks.example.com/cw", headers={"X-CronWatch-Signature": "theirs"}, http=http).send(alert_j("db"))
+    assert http.requests[1]["headers"]["X-CronWatch-Signature"] == "theirs"
+
+
 @pytest.mark.parametrize("make_channel", [A.Slack, A.Discord])
 def test_a_positional_webhook_url_still_works_with_a_deprecation_warning(make_channel: Any) -> None:
     http = FakeHTTP()
@@ -615,7 +649,8 @@ def test_no_channel_follows_a_redirect_so_its_credentials_never_reach_another_or
 def test_the_default_http_has_a_whole_request_deadline() -> None:
     """The deadline is the whole request's, as AbortSignal.timeout(10_000) is:
     a body dripping in under each read timeout still stops at the deadline,
-    and the status is kept with an empty body, as the SDK reads it."""
+    and the status is kept with what of the body had come, as the SDK's
+    errorText keeps it."""
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     sock.listen(1)
@@ -638,7 +673,7 @@ def test_the_default_http_has_a_whole_request_deadline() -> None:
         response = UrllibHTTP(timeout=1).post(f"http://127.0.0.1:{sock.getsockname()[1]}/", "{}", {})
         assert time.monotonic() - started < 2.5
         assert response.status == 500
-        assert response.body == ""
+        assert set(response.body) <= {"x"} and len(response.body) < 30
     finally:
         sock.close()
 
@@ -762,11 +797,14 @@ def test_the_deadline_covers_a_status_line_and_headers_sent_a_line_at_a_time() -
         server.close()
 
 
-def test_an_answers_body_is_read_to_one_mebibyte_and_no_further() -> None:
+@pytest.mark.parametrize(("status", "most"), [(500, 65_536), (200, 1_048_576)])
+def test_an_answers_body_is_read_to_its_cap_and_no_further(status: int, most: int) -> None:
+    """An error answer's body is read to ERROR_READ_MAX (64 KiB), as the
+    SDK's errorText reads it, and any other to MAX_BODY (1 MiB)."""
     sent = [0]
 
     def flood(client: socket.socket) -> None:
-        client.sendall(b"HTTP/1.1 500 Oops\r\nContent-Length: 104857600\r\n\r\n")
+        client.sendall(f"HTTP/1.1 {status} Whatever\r\nContent-Length: 104857600\r\n\r\n".encode())
         block = b"x" * 65536
         while sent[0] < 104857600:
             client.sendall(block)
@@ -775,12 +813,26 @@ def test_an_answers_body_is_read_to_one_mebibyte_and_no_further() -> None:
     server = OneAnswer(flood)
     try:
         response = UrllibHTTP(timeout=10).post(f"{server.url}/", "{}", {})
-        assert response.status == 500
-        assert len(response.body) == _http.MAX_BODY == 1_048_576
+        assert response.status == status
+        assert len(response.body) == most == (_http.ERROR_READ_MAX if status == 500 else _http.MAX_BODY)
         assert set(response.body) == {"x"}
     finally:
         server.close()
     assert sent[0] < 104857600, "the client hung up rather than read it all"
+
+
+def test_an_error_body_cut_inside_a_character_decodes_with_a_replacement() -> None:
+    def answer(client: socket.socket) -> None:
+        body = b"x" * (65_536 - 1) + "\u00e9".encode() + b"tail"
+        client.sendall(b"HTTP/1.1 502 Bad\r\nContent-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
+
+    server = OneAnswer(answer)
+    try:
+        response = UrllibHTTP(timeout=10).post(f"{server.url}/", "{}", {})
+        assert response.status == 502
+        assert response.body == "x" * (65_536 - 1) + "\ufffd"
+    finally:
+        server.close()
 
 
 def test_the_default_http_trims_header_values() -> None:

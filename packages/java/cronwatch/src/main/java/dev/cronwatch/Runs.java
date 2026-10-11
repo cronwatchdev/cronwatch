@@ -239,9 +239,7 @@ final class Runs {
     // as it was, or a job overdue would have missed closed by each attempt given back and opened
     // again by the next check, an alert each time.
     Future<?> closing =
-        recorded && !options.mayTakeBack
-            ? core.submit(() -> closeOnStart(def.name(), run.id()))
-            : null;
+        recorded && !options.mayTakeBack ? core.submit(() -> closeOnStart(def, run)) : null;
 
     JobContext context =
         new JobContext(
@@ -335,7 +333,7 @@ final class Runs {
     }
     Future<?> closing = o.closing;
     if (o.recorded && o.options.mayTakeBack) {
-      closing = core.submit(() -> closeOnStart(def.name(), run.id()));
+      closing = core.submit(() -> closeOnStart(def, run));
     }
 
     String failure;
@@ -476,15 +474,21 @@ final class Runs {
   }
 
   /**
-   * Closes missed and stuck for a run that has started, and holds the run in {@code pendingRuns}
-   * until its finish is evaluated, so a check can evaluate it if this process stops between writing
-   * the finish and its evaluation. Never throws.
+   * Closes missed (when the run catches the schedule up) and stuck for a run that has started, and
+   * holds the run in {@code pendingRuns} until its finish is evaluated, so a check can evaluate it
+   * if this process stops between writing the finish and its evaluation. {@code run} is the run as
+   * it started. Never throws.
    */
-  @Nullable Void closeOnStart(String name, String runId) {
+  @Nullable Void closeOnStart(JobDef def, Run run) {
+    String name = def.name();
+    String runId = run.id();
     try {
       core.updateState(
           name,
-          s -> new Core.Changed<>(Evaluate.holdRun(Evaluate.onRunStart(s), runId), Boolean.TRUE));
+          s ->
+              new Core.Changed<>(
+                  Evaluate.holdRun(Evaluate.onRunStart(def.stored(), run, s, core.now()), runId),
+                  Boolean.TRUE));
     } catch (RuntimeException e) {
       core.report(e, "starting " + name);
     }
@@ -817,10 +821,14 @@ final class Runs {
     if (!evaluate) {
       return List.of();
     }
-    String id = run.id();
+    Run recorded = run;
     core.updateState(
         run.job(),
-        s -> new Core.Changed<>(Evaluate.holdRun(Evaluate.onRunStart(s), id), Boolean.TRUE));
+        s ->
+            new Core.Changed<>(
+                Evaluate.holdRun(
+                    Evaluate.onRunStart(def.stored(), recorded, s, core.now()), recorded.id()),
+                Boolean.TRUE));
     if (run.status().equals(RunStatus.RUNNING)) {
       return List.of();
     }

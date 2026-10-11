@@ -21,6 +21,12 @@ internal sealed record ParsedSchedule(ScheduleKind Kind, string Source, string? 
     /// <summary>The croner expression behind a cron, walked in its zone; null for an interval.</summary>
     internal CronExpression? Cron { get; init; }
 
+    /// <summary>
+    /// The same expression read in UTC, which stands for wall-clock time where a spring-forward
+    /// gap's moved slots are found; null for an interval.
+    /// </summary>
+    internal CronExpression? Wall { get; init; }
+
     /// <summary>Whether this is "every duration" rather than a cron.</summary>
     public bool IsInterval => Kind == ScheduleKind.Interval;
 
@@ -35,6 +41,13 @@ internal sealed record ParsedSchedule(ScheduleKind Kind, string Source, string? 
 
 /// <summary>When the next run is due, and when it is missed.</summary>
 internal readonly record struct Expectation(long DueAt, double Deadline);
+
+/// <summary>
+/// A spring-forward jump: <see cref="JumpAt"/>, the first minute on the later offset;
+/// <see cref="GapMs"/>, the later offset less the earlier one; and <see cref="BeforeMs"/>, the
+/// earlier offset, all in milliseconds.
+/// </summary>
+internal readonly record struct SpringJump(long JumpAt, long GapMs, long BeforeMs);
 
 /// <summary>
 /// The SDK's <c>schedule.ts</c>: schedules ("0 2 * * *", "@hourly", "every 5m") with their fire
@@ -117,12 +130,20 @@ internal static class Schedules
                 + "' or date. Please provide a valid IANA timezone (e.g., 'America/New_York',"
                 + " 'Europe/Stockholm'). Original error: Invalid time zone specified: " + zone);
         }
-        return new ParsedSchedule(ScheduleKind.Cron, text, zone.Length == 0 ? null : zone, 0) { Cron = cron };
+        return new ParsedSchedule(ScheduleKind.Cron, text, zone.Length == 0 ? null : zone, 0)
+        {
+            Cron = cron,
+            Wall = cron.InZone(TimeZoneInfo.Utc),
+        };
     }
 
     /// <summary>The croner expression behind a cron schedule.</summary>
     private static CronExpression CronOf(ParsedSchedule p) =>
         p.Cron ?? throw new ArgumentException("schedule \"" + p.Source + "\" was not made by parseSchedule");
+
+    /// <summary>The expression behind a cron schedule read in UTC: wall-clock time.</summary>
+    private static CronExpression WallOf(ParsedSchedule p) =>
+        p.Wall ?? throw new ArgumentException("schedule \"" + p.Source + "\" was not made by parseSchedule");
 
     /// <summary>
     /// <c>/^every\s+(.+)$/i</c>: "every" in any ASCII case, whitespace, and the rest, which must
@@ -228,11 +249,30 @@ internal static class Schedules
 
     /// <summary>
     /// The first fire strictly after <paramref name="from"/>, or null when the cron never fires
-    /// again. croner answers with times in the past when asked from inside the hour that repeats
-    /// when clocks go back, so its answers are filtered, and a stretch of nothing but past times is
-    /// stepped over an hour at a time.
+    /// again. On the night clocks spring forward every slot the pattern names still fires: one
+    /// whose local time the jump skips is moved forward by the gap's length (see
+    /// <see cref="SpringGap"/> and <see cref="GapFireAfter"/>), so the fires stay strictly
+    /// ascending whichever instant they are counted from.
     /// </summary>
-    private static long? FireAfter(CronExpression cron, long from)
+    private static long? FireAfter(ParsedSchedule parsed, long from)
+    {
+        long? found = CronerFireAfter(CronOf(parsed), from);
+        if (CountFrom(from) is not long start)
+        {
+            return found;
+        }
+        long? moved = GapFireAfter(parsed, start);
+        return moved is long m && (found is not long f || m < f) ? moved : found;
+    }
+
+    /// <summary>
+    /// The first fire strictly after <paramref name="from"/> as croner counts it, or null when the
+    /// cron never fires again. croner answers with times in the past when asked from inside the
+    /// hour that repeats when clocks go back, so its answers are filtered, and a stretch of nothing
+    /// but past times is stepped over an hour at a time. Asked from inside a spring-forward gap it
+    /// skips the slots moved out of it, which <see cref="FireAfter"/> adds back.
+    /// </summary>
+    private static long? CronerFireAfter(CronExpression cron, long from)
     {
         if (CountFrom(from) is not long start)
         {
@@ -258,11 +298,84 @@ internal static class Schedules
         return null;
     }
 
+    /// <summary>How far back a spring-forward jump is looked for: more than any gap a zone has had.</summary>
+    private const long JumpLookbackMs = 3 * 3_600_000L;
+
+    /// <summary>
+    /// <c>springGap</c>: the window a spring-forward jump moves skipped slots into, when
+    /// <paramref name="at"/> lies in one: from the jump for the gap's length (30 minutes on Lord
+    /// Howe Island, an hour in most zones). Null when <paramref name="at"/> is not within a gap's
+    /// length after a jump in the three hours before it.
+    /// </summary>
+    internal static SpringJump? SpringGap(CronExpression cron, long at) =>
+        FindSpringJump(cron, at) is SpringJump jump && at < jump.JumpAt + jump.GapMs ? jump : null;
+
+    /// <summary>
+    /// <c>springJump</c>: the spring-forward jump in the three hours up to <paramref name="at"/>,
+    /// found to the minute: the first minute on the later offset. Null when the offset at
+    /// <paramref name="at"/> is not ahead of the offset three hours before.
+    /// </summary>
+    private static SpringJump? FindSpringJump(CronExpression cron, long at)
+    {
+        // Every zone kept its local mean time, with no clock change, in the year 1.
+        if (at < Js.FirstDateMs + JumpLookbackMs || at >= Js.LastDateMs)
+        {
+            return null;
+        }
+        long after = UtcOffset(at, cron);
+        long before = UtcOffset(at - JumpLookbackMs, cron);
+        if (after <= before)
+        {
+            return null;
+        }
+        long lo = at - JumpLookbackMs;
+        long hi = at;
+        while (hi - lo > 60_000)
+        {
+            long mid = lo + (hi - lo) / 2;
+            if (UtcOffset(mid, cron) == after)
+            {
+                hi = mid;
+            }
+            else
+            {
+                lo = mid;
+            }
+        }
+        return new SpringJump(Js.FloorDiv(hi, 60_000L) * 60_000L, after - before, before);
+    }
+
+    /// <summary>
+    /// <c>gapFireAfter</c>: the first slot moved out of a spring-forward gap strictly after
+    /// <paramref name="start"/>, when <paramref name="start"/> lies in that gap's window, else
+    /// null. A slot whose local time the jump skips fires at that local time read on the earlier
+    /// offset, which is the same as moving it forward by the gap's length: 01:20 on the night
+    /// London skips 01:00 to 02:00 fires at 02:20 BST (01:20Z). croner moves them the same way
+    /// when asked from before the jump, but not from inside it.
+    /// </summary>
+    private static long? GapFireAfter(ParsedSchedule parsed, long start)
+    {
+        if (SpringGap(CronOf(parsed), start) is not SpringJump gap)
+        {
+            return null;
+        }
+        // Wall-clock time as if it were UTC: the slots the jump skips run from
+        // JumpAt + BeforeMs for GapMs.
+        List<long> slots = RunsAfter(WallOf(parsed), 1, start + gap.BeforeMs);
+        if (slots.Count == 0 || slots[0] >= gap.JumpAt + gap.BeforeMs + gap.GapMs)
+        {
+            return null;
+        }
+        return slots[0] - gap.BeforeMs;
+    }
+
     /// <summary>
     /// <c>firesBetween</c>: every fire of a cron strictly after <paramref name="from"/> and at or
     /// before <paramref name="to"/>, ascending, or null when there are more than
-    /// <paramref name="limit"/>. Fires are asked for in batches, and any that do not move forward
-    /// are dropped.
+    /// <paramref name="limit"/>: the fires <see cref="NextFire"/> gives one after another. Fires
+    /// are asked for in batches, and any that do not move forward are dropped (the hour that
+    /// repeats when clocks go back). Around a spring-forward gap, where croner's batch can skip a
+    /// moved slot or give one out of order, it counts with <see cref="FireAfter"/> instead.
     /// </summary>
     public static List<long>? FiresBetween(ParsedSchedule parsed, long from, long to, int limit)
     {
@@ -276,16 +389,49 @@ internal static class Schedules
         long last = start;
         for (int guard = 0; guard < 1000; guard++)
         {
+            if (SpringGap(cron, last) != null)
+            {
+                // Counting from inside a gap's window: croner would skip its moved slots.
+                if (FireAfter(parsed, last) is not long t || t > to)
+                {
+                    return output;
+                }
+                output.Add(t);
+                last = probe = t;
+                if (output.Count > limit)
+                {
+                    return null;
+                }
+                continue;
+            }
             List<long> batch = RunsAfter(cron, Math.Min(limit + 1 - output.Count, 24), probe);
             if (batch.Count == 0)
             {
                 return output;
             }
+            bool stepped = false;
             foreach (long t in batch)
             {
                 if (t <= last)
                 {
                     continue;
+                }
+                if (SpringGap(cron, t) != null)
+                {
+                    // The batch reached a gap's window, where its order is croner's: the next fire
+                    // is counted from the last one, and the rest with it.
+                    if (FireAfter(parsed, last) is not long next || next > to)
+                    {
+                        return output;
+                    }
+                    output.Add(next);
+                    last = probe = next;
+                    if (output.Count > limit)
+                    {
+                        return null;
+                    }
+                    stepped = true;
+                    break;
                 }
                 if (t > to)
                 {
@@ -297,6 +443,10 @@ internal static class Schedules
                 {
                     return null;
                 }
+            }
+            if (stepped)
+            {
+                continue;
             }
             long end = batch[^1];
             probe = end > probe ? end : probe + 3_600_000L;
@@ -318,7 +468,8 @@ internal static class Schedules
 
     /// <summary>
     /// <c>nextFire</c>: the next time the schedule fires strictly after <paramref name="from"/>;
-    /// for an interval, counted from the last run when there is one. Null when a cron never fires
+    /// for an interval, counted from the last run's start when there is one (see
+    /// <see cref="IntervalDue"/> for a run that outlasted its period). Null when a cron never fires
     /// again.
     /// </summary>
     public static long? NextFire(ParsedSchedule parsed, long from, long? lastRunAt)
@@ -327,25 +478,42 @@ internal static class Schedules
         {
             return Add(lastRunAt ?? from, parsed.EveryMs);
         }
-        return FireAfter(CronOf(parsed), from);
+        return FireAfter(parsed, from);
+    }
+
+    /// <summary>
+    /// <c>intervalDue</c>: when an interval of <paramref name="everyMs"/> is next due after a run:
+    /// a period after it started, or, when it finished (<paramref name="finishedAt"/> not null)
+    /// later than that, a period after it finished. A run that outlasts its period is not followed
+    /// by a missed alert the moment it ends.
+    /// </summary>
+    public static long IntervalDue(double everyMs, long startedAt, long? finishedAt)
+    {
+        long due = Add(startedAt, everyMs);
+        return finishedAt is long f && f > due ? Add(f, everyMs) : due;
     }
 
     /// <summary>
     /// <c>expectation</c>: when the schedule next wants a run, given the last one. For a cron that
     /// is the first fire the last run does not already cover; with no run yet, the first fire at or
     /// after registration. For an interval it is the last run's start (or registration) plus the
-    /// interval. Null for a cron that never fires again.
+    /// interval, or its finish plus the interval when it finished (<paramref name="lastFinishedAt"/>,
+    /// null while it runs) later than that (<see cref="IntervalDue"/>). Null for a cron that never
+    /// fires again.
     /// </summary>
-    public static Expectation? GetExpectation(ParsedSchedule parsed, long? lastRunAt, long registeredAt, double graceMs)
+    public static Expectation? GetExpectation(
+        ParsedSchedule parsed, long? lastRunAt, long registeredAt, double graceMs, long? lastFinishedAt = null)
     {
         long? due;
         if (parsed.IsInterval)
         {
-            due = Add(lastRunAt ?? registeredAt, parsed.EveryMs);
+            due = lastRunAt is long started
+                ? IntervalDue(parsed.EveryMs, started, lastFinishedAt)
+                : Add(registeredAt, parsed.EveryMs);
         }
         else if (lastRunAt is not long last)
         {
-            due = FireAfter(CronOf(parsed), registeredAt == long.MinValue ? registeredAt : registeredAt - 1);
+            due = FireAfter(parsed, registeredAt == long.MinValue ? registeredAt : registeredAt - 1);
         }
         else
         {
@@ -361,15 +529,20 @@ internal static class Schedules
     /// </summary>
     private static long? DueAfterRun(ParsedSchedule parsed, long startedAt)
     {
-        CronExpression cron = CronOf(parsed);
         // A fire at or before the start is covered by the run itself.
-        if (FireAfter(cron, startedAt) is not long next)
+        long? next = FireAfter(parsed, startedAt);
+        // Bounded: a gap holds at most a few hours of moved slots.
+        for (int guard = 0; next is long n && guard < 100_000; guard++)
         {
-            return null;
+            long? following = FireAfter(parsed, n);
+            bool covers = RunCovers(startedAt, n, following) || InSpringForwardGap(parsed, startedAt, n);
+            if (!covers)
+            {
+                return n;
+            }
+            next = following;
         }
-        long? following = FireAfter(cron, next);
-        bool covers = RunCovers(startedAt, next, following) || InSpringForwardGap(cron, startedAt, next);
-        return covers ? following : next;
+        return next;
     }
 
     /// <summary>
@@ -387,50 +560,28 @@ internal static class Schedules
     }
 
     /// <summary>
-    /// On the night clocks spring forward, a fire whose local time does not exist (02:30 when
-    /// 02:00 jumps to 03:00) is moved by croner to the same distance past the jump (03:30), while
-    /// vixie cron runs it at the jump itself (03:00). A run that starts at or after the jump, and
-    /// before the first fire after it when that fire lies within one gap of it, is taken to cover
-    /// that fire, so neither scheduler's run is reported as missed.
+    /// On the night clocks spring forward, a slot whose local time does not exist (02:30 when 02:00
+    /// jumps to 03:00) fires moved forward by the gap (03:30; see <see cref="GapFireAfter"/>), while
+    /// vixie cron runs every skipped job once, at the jump itself (03:00). A run that starts at or
+    /// after the jump (less a minute of slack), and before such a moved fire, is taken to cover it,
+    /// so neither scheduler's run is reported as missed. Only a moved slot that is not also a slot
+    /// of its own on the later offset counts: a cron that fires every 10 minutes moves 02:10 onto
+    /// its own 03:10, which was not skipped.
     /// </summary>
-    private static bool InSpringForwardGap(CronExpression cron, long startedAt, long fireAt)
+    private static bool InSpringForwardGap(ParsedSchedule parsed, long startedAt, long fireAt)
     {
-        const long lookback = 3 * 3_600_000L;
-        // Every zone kept its local mean time, with no clock change, in the year 1.
-        if (fireAt - lookback < Js.FirstDateMs)
+        if (SpringGap(CronOf(parsed), fireAt) is not SpringJump gap
+            || startedAt < gap.JumpAt - EarlySlackMs || startedAt >= fireAt)
         {
             return false;
         }
-        long after = UtcOffset(fireAt, cron);
-        long before = UtcOffset(fireAt - lookback, cron);
-        long gap = after - before;
-        if (gap <= 0)
+        CronExpression wall = WallOf(parsed);
+        bool Fires(long at)
         {
-            return false;
+            List<long> slot = RunsAfter(wall, 1, at - 1);
+            return slot.Count > 0 && slot[0] == at;
         }
-        // Find the jump: the first minute in the window with the later offset.
-        long lo = fireAt - lookback;
-        long hi = fireAt;
-        while (hi - lo > 60_000)
-        {
-            long mid = lo + (hi - lo) / 2;
-            if (UtcOffset(mid, cron) == after)
-            {
-                hi = mid;
-            }
-            else
-            {
-                lo = mid;
-            }
-        }
-        long jumpAt = Js.FloorDiv(hi, 60_000L) * 60_000L;
-        if (fireAt - jumpAt >= gap || startedAt < jumpAt - EarlySlackMs || startedAt >= fireAt)
-        {
-            return false;
-        }
-        // Only the first fire after the jump can be a moved one; a cron that also fires at the
-        // jump (every 10 minutes, say) was not moved at all.
-        return FireAfter(cron, jumpAt - 1) == fireAt;
+        return Fires(fireAt + gap.BeforeMs) && !Fires(fireAt + gap.BeforeMs + gap.GapMs);
     }
 
     /// <summary>The milliseconds the zone's wall clock is ahead of UTC at <paramref name="at"/>.</summary>

@@ -52,8 +52,8 @@ function describe(ctx: TriageContext): string {
   lines.push(`Job definition: ${JSON.stringify(alert.definition)}`);
   if (run) {
     lines.push("");
-    lines.push(`Triggering run: status ${run.status}, started ${stamp(run.startedAt)}, duration ${run.durationMs === null ? "unknown" : formatDuration(run.durationMs)}, trigger ${run.trigger}`);
-    if (Object.keys(run.metrics).length) lines.push(`Metrics: ${JSON.stringify(run.metrics)}`);
+    lines.push(`Triggering run: status ${run.status}, started ${stamp(run.startedAt)}, duration ${run.durationMs === null ? "unknown" : formatDuration(run.durationMs)}, trigger ${data(run.trigger)}`);
+    if (Object.keys(run.metrics).length) lines.push(`Metrics: ${data(JSON.stringify(run.metrics))}`);
     if (run.error) lines.push(`Error:\n${data(run.error.slice(0, 3000))}`);
     if (run.output) lines.push(`Output (tail):\n${data(run.output.slice(-3000))}`);
   }
@@ -62,7 +62,7 @@ function describe(ctx: TriageContext): string {
     lines.push("");
     lines.push("Earlier runs, newest first:");
     for (const r of earlier) {
-      lines.push(`- ${r.status}, ${stamp(r.startedAt)}, ${r.durationMs === null ? "unknown" : formatDuration(r.durationMs)}${r.error ? `, error: ${data(r.error.split("\n")[0]!.slice(0, 160))}` : ""}${Object.keys(r.metrics).length ? `, metrics ${JSON.stringify(r.metrics)}` : ""}`);
+      lines.push(`- ${r.status}, ${stamp(r.startedAt)}, ${r.durationMs === null ? "unknown" : formatDuration(r.durationMs)}${r.error ? `, error: ${data(r.error.split("\n")[0]!.slice(0, 160))}` : ""}${Object.keys(r.metrics).length ? `, metrics ${data(JSON.stringify(r.metrics))}` : ""}`);
     }
   }
   return lines.join("\n");

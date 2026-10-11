@@ -37,6 +37,9 @@ internal sealed class CronExpression
     /// <summary>The zone the expression is walked in.</summary>
     public TimeZoneInfo Zone { get; }
 
+    /// <summary>The same expression walked in another zone: in UTC it reads wall-clock time.</summary>
+    public CronExpression InZone(TimeZoneInfo zone) => new(_pattern, zone);
+
     /// <summary>Reads an expression, to be walked in <paramref name="zone"/>.</summary>
     /// <exception cref="CronException">With croner's message when it is not one.</exception>
     public static CronExpression Parse(string text, TimeZoneInfo zone)

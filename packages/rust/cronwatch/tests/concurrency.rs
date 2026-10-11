@@ -346,6 +346,19 @@ async fn start_checks_after_a_second_then_on_the_interval_until_stop() {
     assert_eq!(calls(), 2, "stopped");
 }
 
+#[tokio::test(start_paused = true)]
+async fn dropping_every_handle_stops_the_checks() {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    let calls = || store.running_runs_calls.load(Ordering::SeqCst);
+    k.cw.start_checking(Duration::from_secs(10));
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(calls(), 1, "the first check");
+    drop(k);
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(calls(), 1, "no client, no checks");
+}
+
 /// A client on a store whose first write of a job's definition waits until
 /// it is let go.
 fn held_upsert() -> (Kit, Arc<TestStore>) {

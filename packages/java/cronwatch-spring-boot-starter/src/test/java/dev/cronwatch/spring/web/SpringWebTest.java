@@ -107,7 +107,7 @@ class SpringWebTest {
               Set.of("date", "connection", "keep-alive"),
               Golden.MALFORMED_TARGETS,
               true);
-      assertEquals(Golden.CAPTURES - 2, matched);
+      assertEquals(Golden.CAPTURES - 2 - Golden.OUTSIDE_BASE.size(), matched);
     }
   }
 
@@ -119,7 +119,7 @@ class SpringWebTest {
       int matched =
           Golden.throughServer(
               seeded, port(context), Set.of("date", "connection"), Golden.MALFORMED_TARGETS);
-      assertEquals(Golden.CAPTURES - 2, matched);
+      assertEquals(Golden.CAPTURES - 2 - Golden.OUTSIDE_BASE.size(), matched);
     }
   }
 
@@ -148,6 +148,29 @@ class SpringWebTest {
           assertEquals(200, get(port, "/app/ops/cron/jobs/x").status(), type + ": the job page");
           assertEquals(200, get(port, "/app/ops/cron/api/jobs").status(), type + ": open");
           assertEquals(404, get(port, "/app/cronwatch/").status(), type + ": not at the default");
+        }
+      }
+    }
+  }
+
+  @Test
+  void onlyPathsUnderTheDashboardsPathAreItsThroughEach() throws Exception {
+    for (String type : List.of("servlet", "reactive")) {
+      try (Cronwatch cw = Cronwatch.builder().noCronSecret().noShutdownHook().build()) {
+        cw.run("x", job -> {});
+        try (ConfigurableApplicationContext context = start(cw, type, "cronwatch.web.token=tok")) {
+          int port = port(context);
+          List<Map.Entry<String, String>> auth = List.of(Map.entry("authorization", "Bearer tok"));
+          // Decided on the path with its dot segments resolved, as the routes decide: these go
+          // down the chain to the app, which has nothing there.
+          for (String path : List.of("/cronwatch/../api/jobs", "/cronwatchx")) {
+            RawHttp.Answer a = RawHttp.send(port, "GET", path, auth, null);
+            assertEquals(404, a.status(), type + " " + path);
+            assertEquals(null, a.header("x-robots-tag"), type + " " + path + ": the dashboard's");
+          }
+          RawHttp.Answer ours = RawHttp.send(port, "GET", "/cronwatch/./api/jobs", auth, null);
+          assertEquals(200, ours.status(), type + ": under the path");
+          assertTrue(ours.text().contains("\"jobs\""), type + ": " + ours.text());
         }
       }
     }

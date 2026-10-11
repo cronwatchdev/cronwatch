@@ -149,7 +149,9 @@ func (c *Client) recordStart(ctx context.Context, def *jobDef, trigger, id strin
 		c.report(err, "recording "+name)
 	}
 	if recorded {
-		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) { return holdRun(onRunStart(s), run.ID), struct{}{}, nil }); err != nil {
+		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) {
+			return holdRun(onRunStart(def.stored, run, s, c.now()), run.ID), struct{}{}, nil
+		}); err != nil {
 			c.report(err, "starting "+name)
 		}
 	}

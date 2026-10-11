@@ -127,23 +127,23 @@ defmodule Cronwatch.Alerts.HardeningTest do
     assert err == "The operation was aborted due to timeout"
   end
 
-  test "an answer is read to one mebibyte at most" do
+  test "an answer is read to one mebibyte at most, an error to 64 KiB" do
     mib = Post.max_body()
     big = String.duplicate("x", 3 * mib)
 
-    # Whatever the status: 1 MiB either way.
     ok = HTTPServer.start(fn _ -> {200, [], big} end)
     assert {:ok, %{status: 200, body: body}} = Post.fetch(nil, 10_000, ok.url, [], "{}")
     assert byte_size(body) == mib
 
+    # An error answer is read only as far as its quoted start could need.
     refused = HTTPServer.start(fn _ -> {500, [], big} end)
     assert {:ok, %{status: 500, body: body}} = Post.fetch(nil, 10_000, refused.url, [], "{}")
-    assert byte_size(body) == mib
+    assert byte_size(body) == Post.error_read_max()
 
     # A refusal far past the cap is read to the cap, not refused whole.
     huge = HTTPServer.start(fn _ -> {500, [], String.duplicate("x", 9 * mib)} end)
     assert {:ok, %{status: 500, body: body}} = Post.fetch(nil, 10_000, huge.url <> "/p", [], "{}")
-    assert byte_size(body) == mib
+    assert byte_size(body) == Post.error_read_max()
 
     err = message(send!({Slack, webhook_url: refused.url <> "/T/B/x"}))
     assert JS.len16(err) <= byte_size("Slack webhook answered 500: ") + 200
@@ -290,7 +290,10 @@ defmodule Cronwatch.Alerts.HardeningTest do
     assert send!(spec) == :ok
     [req] = HTTPServer.requests(server)
     names = Enum.map(req.headers, &elem(&1, 0))
-    assert names == ~w(host content-type user-agent authorization x-cronwatch-signature content-length connection)
+
+    assert names ==
+             ~w(host content-type user-agent authorization x-cronwatch-signature x-cronwatch-timestamp x-cronwatch-timestamp-signature content-length connection)
+
     assert {"user-agent", "cronwatch"} in req.headers
     refute "accept-encoding" in names
   end

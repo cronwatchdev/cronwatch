@@ -151,9 +151,18 @@ def test_schedule_next_fire_for_intervals() -> None:
 def test_schedule_expectation() -> None:
     def check(c: dict[str, Any]) -> str | None:
         parsed = _schedule.parse_schedule(c["schedule"], c.get("timezone"))
-        return differs(c["expected"], _schedule.expectation(parsed, c["lastRunAt"], c["registeredAt"], c["graceMs"]))
+        return differs(c["expected"], _schedule.expectation(parsed, c["lastRunAt"], c["registeredAt"], c["graceMs"], c.get("lastFinishedAt")))
 
     each_case(SCHEDULE["expectation"], check)
+
+
+def test_schedule_fires_between() -> None:
+    def check(c: dict[str, Any]) -> str | None:
+        parsed = _schedule.parse_schedule(c["schedule"], c.get("timezone"))
+        fires = _schedule.fires_between(parsed, c["from"], c["to"], c["limit"])
+        return differs(c["fires"] if c["fires"] is None else _times(c["fires"]), fires if fires is None else _times(fires))
+
+    each_case(SCHEDULE["firesBetween"], check)
 
 
 def test_schedule_run_covers() -> None:
@@ -192,11 +201,36 @@ class Sim:
         return [compose_alert(draft, self.definition, now) for draft in settled.alerts]
 
     def start(self, run_id: str, now: int) -> dict[str, Any]:
-        self.runs.append(Run(id=run_id, job=self.definition.name, status="running", started_at=now))
+        run = Run(id=run_id, job=self.definition.name, status="running", started_at=now)
+        self.runs.append(run)
         self.seq += 1
         self.order[run_id] = self.seq
-        self.state = _evaluate.on_run_start(self.state)
+        self.state = _evaluate.on_run_start(self.definition, run.copy(), self.state, now)
         return {"state": self.state}
+
+    def record(self, run_id: str, started_at: int, now: int, fields: dict[str, Any]) -> dict[str, Any]:
+        """A run a source reports only once it is over (record_run): written
+        finished, then on_run_start and on_run_finish at `now`, as the client
+        does, so missed closes only when its start covers the fire."""
+        run = Run.from_dict(
+            {
+                "id": run_id,
+                "job": self.definition.name,
+                "status": fields["status"],
+                "startedAt": started_at,
+                "finishedAt": now,
+                "durationMs": max(0, now - started_at),
+                "error": fields.get("error"),
+                "output": fields.get("output"),
+                "metrics": fields.get("metrics", {}),
+                "trigger": "source",
+            }
+        )
+        self.runs.append(run)
+        self.seq += 1
+        self.order[run_id] = self.seq
+        self.state = _evaluate.on_run_start(self.definition, run.copy(), self.state, now)
+        return {"alerts": self.finish_run(run, now), "state": self.state}
 
     def finish_run(self, run: Run, now: int) -> list[Alert]:
         history = [r.copy() for r in self.sorted() if r.id != run.id]
@@ -258,6 +292,8 @@ def test_scenario(scenario: dict[str, Any]) -> None:
             actual = sim.start(event["id"], event["at"])
         elif op == "finish":
             actual = sim.finish(event["id"], event["at"], event)
+        elif op == "record":
+            actual = sim.record(event["id"], event["startedAt"], event["at"], event)
         elif op == "check":
             actual = sim.check(event["at"])
         elif op == "silence":
@@ -802,7 +838,8 @@ def channel_for(c: dict[str, Any], http: Any) -> Any:
     if c["channel"] == "discord":
         return alerts.Discord(webhook_url=options["webhookUrl"], link=given, http=http)
     if c["channel"] == "webhook":
-        return alerts.Webhook(options["url"], headers=options.get("headers"), secret=options.get("secret"), http=http)
+        clock = (lambda value=options["now"]: value) if "now" in options else None
+        return alerts.Webhook(options["url"], headers=options.get("headers"), secret=options.get("secret"), now=clock, http=http)
     keywords: dict[str, Any] = {}
     for key, value in options.items():
         if key == "link":
@@ -836,17 +873,35 @@ def test_channel_payloads() -> None:
 
 
 def test_webhook_payloads() -> None:
-    """The webhook's whole body, "schema": 1 first, and its signature, byte for byte."""
+    """The webhook's whole body, "schema": 1 first, and both its signatures, byte for byte."""
 
     def check(c: dict[str, Any]) -> str | None:
         http = FakeHTTP()
-        alerts.Webhook("https://hooks.example.com/cw", secret=c["secret"], http=http).send(Alert.from_dict(CHANNEL_ALERTS[c["alert"]]))
+        clock = int(c["timestamp"]) * 1000 + 999
+        alerts.Webhook("https://hooks.example.com/cw", secret=c["secret"], now=lambda: clock, http=http).send(Alert.from_dict(CHANNEL_ALERTS[c["alert"]]))
         request = http.requests[-1]
+        headers = request["headers"]
         mine = webhook.signature(c["secret"], request["body"])
-        return differs([c["body"], c["signature"], c["signature"]], [request["body"], request["headers"]["x-cronwatch-signature"], f"sha256={mine}"])
+        timestamped = webhook.signature(c["secret"], f"{c['timestamp']}.{request['body']}")
+        return differs(
+            [c["body"], c["signature"], c["signature"], c["timestamp"], c["timestampSignature"], c["timestampSignature"]],
+            [request["body"], headers["x-cronwatch-signature"], f"sha256={mine}", headers["x-cronwatch-timestamp"], headers["x-cronwatch-timestamp-signature"], f"sha256={timestamped}"],
+        )
 
-    assert len(CHANNELS["webhookPayloads"]) == 16
+    assert len(CHANNELS["webhookPayloads"]) == 32
     each_case(CHANNELS["webhookPayloads"], check)
+
+
+def test_slack_links() -> None:
+    """Slack's "open" link with the characters that would end it percent-encoded."""
+
+    def check(c: dict[str, Any]) -> str | None:
+        http = FakeHTTP()
+        alerts.Slack(webhook_url="https://hooks.slack.example/T/B/secret", link=lambda _alert: c["link"], http=http).send(Alert.from_dict(CHANNELS["alerts"][0]["alert"]))
+        return differs(c["text"], json.loads(http.requests[-1]["body"])["blocks"][0]["text"]["text"])
+
+    assert CHANNELS["slackLinks"]
+    each_case(CHANNELS["slackLinks"], check)
 
 
 def test_channel_failures() -> None:
@@ -1121,7 +1176,7 @@ SECTIONS = {
     "store.json": {"prune", "compareAndSetState", "updateRunIf", "foreignVersion", "nul", "foreignRows"},
     # urls is how fetch reads a URL, for ports with a URL parser of their own;
     # this port posts through urllib and reads only origins (test_channels.py).
-    "channels.json": {"alerts", "sends", "failures", "webhookPayloads", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls"},
+    "channels.json": {"alerts", "sends", "failures", "webhookPayloads", "slackLinks", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls"},
 }
 
 

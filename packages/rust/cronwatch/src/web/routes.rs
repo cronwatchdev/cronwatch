@@ -531,7 +531,10 @@ impl Routes {
         let (raw, query) = request_target(&req.target);
         let base = self.base_path(&req);
         let pathname = normalize_path(&raw);
-        let path = strip_base(&pathname, &base);
+        let Some(path) = strip_base(&pathname, &base) else {
+            // Not under the base at all: nothing here answers it, signed in or not.
+            return page(message_page("Not found", &pathname, &base, false), 404);
+        };
         let wants_html = !path.starts_with("/api");
         let outcome = CatchUnwind(Box::pin(self.serve(&mut req, &pathname, &path, &query, &base, wants_html))).await;
         let err = match outcome {

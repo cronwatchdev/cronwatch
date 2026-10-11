@@ -23,9 +23,9 @@ from typing import Any, TypeVar
 
 from .. import _js
 from .._duration import FIRST_DATE_MS, LAST_DATE_MS, format_duration
-from .._evaluate import grace_ms, is_stuck, timeout_ms
+from .._evaluate import finished_at_of, grace_ms, is_stuck, timeout_ms
 from .._format import and_list
-from .._schedule import ParsedSchedule, expectation, fires_between, parse_schedule
+from .._schedule import ParsedSchedule, expectation, fires_between, interval_due, parse_schedule
 from ..types import JobSummary, Run
 from ._escape import encode_uri_component, entries, h, name_html, text, to_fixed, truthy
 
@@ -196,8 +196,9 @@ def _is_open(job: JobSummary, condition: str) -> bool:
 
 def due_times(job: JobSummary, parsed: ParsedSchedule | None, runs: Sequence[Run], start: int, end: int) -> DueTimes:
     """When the job was due within `start` to `end`. A cron's fires come from
-    fires_between. An interval is due one period after each run started, and
-    after the last run once a period for as long as nothing runs (the times a
+    fires_between. An interval is due one period after each run started
+    (after it finished, for a run that outlasted the period: interval_due),
+    and after the last run once a period for as long as nothing runs (the times a
     missed interval job keeps being asked for); with no run yet, from its
     next expected time."""
     if parsed is None:
@@ -207,13 +208,13 @@ def due_times(job: JobSummary, parsed: ParsedSchedule | None, runs: Sequence[Run
         assert every is not None
         if (end - start) / every > MAX_TICKS:
             return DueTimes([], True)
-        starts = sorted(r.started_at for r in runs)
+        ordered = sorted(runs, key=lambda r: r.started_at)
+        dues = [interval_due(every, r.started_at, finished_at_of(r)) for r in ordered]
         times: set[Any] = set()
-        for begun in starts:
-            t = begun + every
+        for t in dues:
             if start <= t <= end:
                 times.add(t)
-        due: Any = starts[-1] + every if starts else job.next_expected_at
+        due: Any = dues[-1] if dues else job.next_expected_at
         if due is not None:
             if due < start:
                 due += math.ceil((start - due) / every) * every
@@ -234,11 +235,11 @@ def missed_at(job: JobSummary, parsed: ParsedSchedule | None, times: Sequence[in
     if parsed is None or not _is_open(job, "missed"):
         return None
     grace = _safely(lambda: grace_ms(job.definition), 0.0)
-    last = job.last_run.started_at if job.last_run is not None else None
-    if last is not None:
+    last_run = job.last_run
+    if last_run is not None:
 
         def expected() -> int | None:
-            found = expectation(parsed, last, last, grace)
+            found = expectation(parsed, last_run.started_at, last_run.started_at, grace, finished_at_of(last_run))
             return None if found is None else found.due_at
 
         return _safely(expected, None)

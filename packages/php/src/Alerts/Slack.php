@@ -10,7 +10,7 @@ use Cronwatch\Js;
 /**
  * Sends alerts to a Slack channel through an incoming webhook (alerts/slack.ts).
  *
- *     new Slack(webhookUrl: getenv('SLACK_WEBHOOK_URL'), link: fn (Alert $a) => "https://app.example.com/cronwatch/jobs/{$a->job}")
+ *     new Slack(webhookUrl: getenv('SLACK_WEBHOOK_URL'), link: fn (Alert $a) => 'https://app.example.com/cronwatch/jobs/' . rawurlencode($a->job))
  */
 final class Slack implements AlertChannel
 {
@@ -29,7 +29,8 @@ final class Slack implements AlertChannel
 
     /**
      * @param string $webhookUrl an incoming webhook URL from api.slack.com/messaging/webhooks
-     * @param (callable(Alert): string)|null $link link back to the job in your dashboard
+     * @param (callable(Alert): string)|null $link link back to the job in your dashboard; any `<`, `>`, or `|` in it is
+     *        percent-encoded, so it cannot end Slack's link early
      */
     public function __construct(#[\SensitiveParameter] private readonly string $webhookUrl, ?callable $link = null, ?Http $http = null)
     {
@@ -48,7 +49,7 @@ final class Slack implements AlertChannel
     public function send(Alert $alert, ChannelContext $context): void
     {
         $url = Shared::link($this->link, $alert);
-        $title = (self::EMOJI[$alert->type] ?? 'undefined') . ' *' . self::escape($alert->title) . '*' . ($url !== null ? " (<{$url}|open>)" : '');
+        $title = (self::EMOJI[$alert->type] ?? 'undefined') . ' *' . self::escape($alert->title) . '*' . ($url !== null ? ' (<' . self::linkTarget($url) . '|open>)' : '');
         $body = Js::slice16(self::codeBlockSafe(self::escape($alert->message)), 2900);
         $blocks = [
             ['type' => 'section', 'text' => ['type' => 'mrkdwn', 'text' => $title]],
@@ -65,7 +66,7 @@ final class Slack implements AlertChannel
         ]), ['content-type' => 'application/json']);
         if (!$response->ok()) {
             // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
-            throw new \RuntimeException("Slack webhook answered {$response->status}: " . Shared::errorBody(Js::wellFormed($response->body), Shared::urlSecrets($this->webhookUrl)));
+            throw new \RuntimeException("Slack webhook answered {$response->status}: " . Shared::errorBody(Shared::errorText($response), Shared::urlSecrets($this->webhookUrl)));
         }
     }
 
@@ -73,6 +74,12 @@ final class Slack implements AlertChannel
     private static function escape(string $text): string
     {
         return strtr($text, ['&' => '&amp;', '<' => '&lt;', '>' => '&gt;']);
+    }
+
+    /** A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|` percent-encoded, which ends neither the link nor its text. */
+    private static function linkTarget(string $url): string
+    {
+        return strtr($url, ['<' => '%3C', '>' => '%3E', '|' => '%7C']);
     }
 
     /** Breaks up ``` so text inside a code block cannot close it. */

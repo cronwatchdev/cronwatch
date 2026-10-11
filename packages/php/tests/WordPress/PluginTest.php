@@ -96,6 +96,18 @@ final class PluginTest extends TestCase
         $this->assertSame(['description' => 'WP-Cron hook publish_future_post, single events', 'tags' => ['wp-cron']], Jobs::options($jobs['wp:publish_future_post']));
     }
 
+    public function testTheDashboardsCheckIsReadAsTheDashboardReadsItsPath(): void
+    {
+        require_once dirname(__DIR__, 2) . '/wordpress/includes/AdminDashboard.php';
+        // Empty segments left out and each one percent-decoded, so an encoded "check" is the check too.
+        foreach (['/check', '/api/check', '//check/', '/api//check', '/%63heck', '/api/%63%68eck'] as $path) {
+            $this->assertTrue(\Cronwatch\WordPress\AdminDashboard::isCheck($path), $path);
+        }
+        foreach (['/', '/checks', '/api', '/jobs/check', '/check/x', '/api%2Fcheck', '/CHECK'] as $path) {
+            $this->assertFalse(\Cronwatch\WordPress\AdminDashboard::isCheck($path), $path);
+        }
+    }
+
     public function testTheSchemaPerServer(): void
     {
         $this->assertSame(['MySQL', '8.4.3'], WpdbStore::server('8.4.3'));

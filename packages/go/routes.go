@@ -398,7 +398,12 @@ func (rt *Routes) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, query := requestTarget(r)
 	base := rt.basePath(r, raw)
 	pathname := normalizePath(raw)
-	path := stripBase(pathname, base)
+	path, under := stripBase(pathname, base)
+	if !under {
+		// Not under the base at all: nothing here answers it, signed in or not.
+		page(messagePage("Not found", pathname, base, false), http.StatusNotFound).write(w)
+		return
+	}
 	wantsHTML := !strings.HasPrefix(path, "/api")
 	failed := func(err error) answer {
 		// A request that ended first (the caller gave up, its deadline

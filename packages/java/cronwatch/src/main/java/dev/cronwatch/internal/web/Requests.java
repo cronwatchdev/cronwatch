@@ -137,9 +137,18 @@ public final class Requests {
     return "/" + String.join("/", out);
   }
 
-  /** The path under the base, without a trailing slash. */
-  public static String stripBase(String pathname, String base) {
-    String path = pathname.startsWith(base) ? pathname.substring(base.length()) : pathname;
+  /**
+   * The path below the base, without a trailing slash, or null when the request is not under it.
+   * The pathname, its dot segments already resolved ({@link #normalizePath}), must be the base or
+   * start with the base and a "/": "/cronwatchapi/jobs" is not under "/cronwatch", and neither is
+   * "/cronwatch/../api/jobs" (read as "/api/jobs"). An empty base, for routes mounted at the root,
+   * takes every path.
+   */
+  public static @Nullable String stripBase(String pathname, String base) {
+    if (!base.isEmpty() && !pathname.equals(base) && !pathname.startsWith(base + "/")) {
+      return null;
+    }
+    String path = pathname.substring(base.length());
     if (path.isEmpty()) {
       path = "/";
     }

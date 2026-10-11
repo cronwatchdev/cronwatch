@@ -30,6 +30,13 @@ internal static class Post
     /// <summary>How much of an answer is read.</summary>
     public const int MaxBody = 1 << 20;
 
+    /// <summary>
+    /// How much of an error answer's body is read (64 KiB, the SDK's <c>ERROR_READ_MAX</c>), far
+    /// more than any secret plus <see cref="ErrorBodyMax"/> needs, so a provider (or something
+    /// posing as one) cannot make a send hold a body of any size.
+    /// </summary>
+    public const int ErrorReadMax = 64 * 1024;
+
     /// <summary>How much of an answer's body goes into an error, in UTF-16 code units.</summary>
     public const int ErrorBodyMax = 200;
 
@@ -238,22 +245,27 @@ internal static class Post
         }
         using (response)
         {
-            byte[] bytes = await ReadCappedAsync(response, token).ConfigureAwait(false);
+            bool ok = response.Status >= 200 && response.Status < 300;
+            byte[] bytes = await ReadCappedAsync(response, ok ? MaxBody : ErrorReadMax, keepPartial: !ok, token).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             return new Answer(response.Status, Text(bytes));
         }
     }
 
-    /// <summary>At most <see cref="MaxBody"/> bytes of the body, or none when it could not be read in time.</summary>
-    private static async Task<byte[]> ReadCappedAsync(TransportResponse response, CancellationToken token)
+    /// <summary>
+    /// At most <paramref name="cap"/> bytes of the body, the rest let go of with the response. A
+    /// body that could not be read in time is none, or, with <paramref name="keepPartial"/> (an
+    /// error answer, whose start is all an error message keeps), whatever was read of it.
+    /// </summary>
+    private static async Task<byte[]> ReadCappedAsync(TransportResponse response, int cap, bool keepPartial, CancellationToken token)
     {
         var chunk = new byte[16 * 1024];
         var output = new ArrayBufferWriter<byte>();
         try
         {
-            while (output.WrittenCount < MaxBody)
+            while (output.WrittenCount < cap)
             {
-                int want = Math.Min(chunk.Length, MaxBody - output.WrittenCount);
+                int want = Math.Min(chunk.Length, cap - output.WrittenCount);
                 int n = await response.Body.ReadAsync(chunk.AsMemory(0, want), token).AsTask().WaitAsync(token).ConfigureAwait(false);
                 if (n <= 0)
                 {
@@ -264,8 +276,9 @@ internal static class Post
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
-            // A body the deadline cut short, or one that could not be read, is none.
-            return [];
+            // A body the deadline cut short, or one that could not be read, is none; an error
+            // answer keeps what arrived, as the status is the error anyway.
+            return keepPartial ? output.WrittenSpan.ToArray() : [];
         }
         return output.WrittenSpan.ToArray();
     }

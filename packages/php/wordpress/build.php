@@ -10,17 +10,20 @@
  * readme.txt, includes/), the dashboard's stylesheet (css/dashboard.css,
  * written here from the library's Html::CSS, which the plugin enqueues) and
  * the library it runs on (lib/src, with its MIT LICENSE as lib/LICENSE),
- * less the library's files the plugin never runs (LEFT_OUT: the curl and
- * stream transport, since every request goes through wp_remote_post; every
- * alert channel but Slack and the webhook, the two the settings offer (email
- * goes through wp_mail), and the AWS signing only SES used; Claude triage;
- * the standalone dashboard's head, with its inline stylesheet and app.js,
- * since the plugin gives the dashboard its own; the development token's
- * file, since the plugin always gives the dashboard a token; the PDO stores, since the
- * plugin stores through $wpdb; the pg_cron source; the command-line check;
- * the PSR-15 adapters; the Laravel and Symfony integrations and what only
- * they use). Nothing else goes in: no tests, no Composer files, no build
- * script, no dotfiles.
+ * less the library's files the plugin never runs (LEFT_OUT): the curl and
+ * stream transport, since every request goes through wp_remote_post; Claude
+ * triage; the standalone dashboard's head, with its inline stylesheet and
+ * app.js, since the plugin gives the dashboard its own; the development
+ * token's file, since the plugin always passes the dashboard its token
+ * (null in wp-admin, where WordPress's sign-in stands for it, and the API's
+ * own in the REST route), so the dashboard never makes one; the PDO stores,
+ * since the plugin stores through $wpdb; the pg_cron source; the
+ * command-line check; the PSR-15 adapters; the Laravel and Symfony
+ * integrations, and the parts only they use (the bridge's embedded
+ * dashboard, job names, test alert, and unscheduled jobs, and the Watch
+ * attribute). Every alert channel goes in, since the settings offer each
+ * one. Nothing else goes in: no tests, no Composer files, no build script,
+ * no dotfiles.
  *
  * Each of the library's PHP files gets one line after its declare():
  * CRONWATCH_LIB_ANNOTATION, which tells the directory's Plugin Check (PHPCS
@@ -29,11 +32,10 @@
  * and everywhere the plugin shows one it escapes it (esc_html in wp-admin,
  * the dashboard's own escaping on its pages); the library runs outside
  * WordPress too, so it cannot call esc_html itself. Nothing else in a file
- * changes. The version is the library's
- * (Cronwatch::VERSION); the plugin header's Version and the readme's Stable
- * tag must match it, and the readme's changelog must have its section, and
- * the build stops when they do not. Entries carry a
- * fixed time, so the same sources give the same zip.
+ * changes. The version is the library's (Cronwatch::VERSION); the plugin
+ * header's Version and the readme's Stable tag must match it, and the
+ * readme's changelog must have its section, and the build stops when they
+ * do not. Entries carry a fixed time, so the same sources give the same zip.
  */
 
 declare(strict_types=1);

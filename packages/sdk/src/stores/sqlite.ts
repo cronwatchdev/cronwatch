@@ -19,7 +19,7 @@ export interface SqliteOptions {
  * choice for a single server. WAL mode, so the app's reads never block on a
  * run being written.
  */
-export function sqlite(options: SqliteOptions = {}): Store {
+export function sqlite(options: SqliteOptions = {}): Store & Required<Pick<Store, "lastRun">> {
   const p = tablePrefix(options.prefix);
   const sql = statements("sqlite", p);
   let db: Database.Database | null = options.database ?? null;

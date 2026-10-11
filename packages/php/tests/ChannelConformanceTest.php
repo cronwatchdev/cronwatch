@@ -134,14 +134,32 @@ final class ChannelConformanceTest extends TestCase
         });
     }
 
-    /** The webhook's body byte for byte, "schema": 1 first, and its signature, for every sample alert. */
+    /** The webhook's body byte for byte, "schema": 1 first, and its signatures, for every sample alert. */
     public function testWebhookPayloadsAndSignatures(): void
     {
         $this->eachCase(self::fixture()->webhookPayloads, function (\stdClass $c): ?string {
             $http = new FakeHttp();
-            (new Alerts\Webhook('https://hooks.example.com/cronwatch', secret: $c->secret, http: $http))->send(self::alert($c->alert), self::context());
+            $now = (int) $c->timestamp * 1000 + 999;
+            (new Alerts\Webhook('https://hooks.example.com/cronwatch', secret: $c->secret, http: $http, now: fn () => $now))->send(self::alert($c->alert), self::context());
             $request = $http->requests[count($http->requests) - 1];
-            return self::differs([$c->body, $c->signature, $c->signature], [$request['body'], $request['headers']['x-cronwatch-signature'] ?? null, 'sha256=' . Alerts\Webhook::signature($c->secret, $c->body)]);
+            return self::differs(
+                [$c->body, $c->signature, $c->signature, $c->timestamp, $c->timestampSignature, $c->timestampSignature],
+                [
+                    $request['body'], $request['headers']['x-cronwatch-signature'] ?? null, 'sha256=' . Alerts\Webhook::signature($c->secret, $c->body),
+                    $request['headers']['x-cronwatch-timestamp'] ?? null, $request['headers']['x-cronwatch-timestamp-signature'] ?? null,
+                    'sha256=' . Alerts\Webhook::signature($c->secret, "{$c->timestamp}.{$c->body}"),
+                ],
+            );
+        });
+    }
+
+    /** Slack's "open" link with the characters that would end it percent-encoded. */
+    public function testSlackLinks(): void
+    {
+        $this->eachCase(self::fixture()->slackLinks, function (\stdClass $c): ?string {
+            $http = new FakeHttp();
+            (new Alerts\Slack('https://hooks.slack.example/T/B/secret', link: fn () => $c->link, http: $http))->send(self::first(), self::context());
+            return self::differs($c->text, Js::parse($http->requests[0]['body'])->blocks[0]->text->text);
         });
     }
 

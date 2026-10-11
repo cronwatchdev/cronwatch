@@ -17,7 +17,8 @@ pub struct SlackOptions {
     /// An incoming webhook URL from api.slack.com/messaging/webhooks. It is
     /// its own credential: errors never quote it.
     pub webhook_url: String,
-    /// A link back to the job in your dashboard.
+    /// A link back to the job in your dashboard. Any `<`, `>`, or `|` in it
+    /// is percent-encoded, so it cannot end Slack's link early.
     pub link: Option<LinkFn>,
     /// Sends the request; `None` for the default [`ReqwestTransport`](super::ReqwestTransport).
     pub transport: Option<Arc<dyn Transport>>,
@@ -63,7 +64,7 @@ impl Channel for Slack {
             let link = link_for(&o.link, alert);
             let mut head = format!("{} *{}*", emoji(&alert.alert_type), escape(&alert.title));
             if !link.is_empty() {
-                head.push_str(&format!(" (<{link}|open>)"));
+                head.push_str(&format!(" (<{}|open>)", link_target(&link)));
             }
             let mut lone = LoneJson::new();
             let mut code: Vec<u16> = "```".encode_utf16().collect();
@@ -118,6 +119,12 @@ impl Channel for Slack {
 /// `<!channel>` and `<url|links>`.
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A link's URL as Slack's `<url|text>` can hold it: `<`, `>`, and `|`
+/// percent-encoded, which ends neither the link nor its text.
+fn link_target(url: &str) -> String {
+    url.replace('<', "%3C").replace('>', "%3E").replace('|', "%7C")
 }
 
 /// Breaks up ``` so text inside a code block cannot close it.

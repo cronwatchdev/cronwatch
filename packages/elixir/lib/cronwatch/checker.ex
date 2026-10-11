@@ -10,21 +10,31 @@ defmodule Cronwatch.Checker do
   #
   # When the instance stops, the interval stops and a check under way is
   # waited for before the rest of the instance (the task supervisor it runs
-  # under, the locks, the store) is stopped: the SDK's close(). The wait is
-  # bounded by the check's own limits (15 seconds a channel, 25 of triage,
-  # 20 of retries), so the child's shutdown is :infinity; a store call that
-  # hangs would hang the store's own shutdown too.
+  # under, the locks, the store) is stopped: the SDK's close(). The check's
+  # own limits (15 seconds a channel, 25 of triage, 20 of retries) keep it
+  # well inside a minute, but a store call that hangs has none, so the wait
+  # is bounded too: past a minute the check is killed and reported, and the
+  # child's shutdown allows for that wait and a little more.
 
   use GenServer
 
   alias Cronwatch.Check
   alias Cronwatch.Config
+  alias Cronwatch.Duration
   alias Cronwatch.Error
 
   require Logger
 
+  # How long a stopping instance waits for a check under way. The tests
+  # shorten it through the application environment (:check_shutdown), which
+  # apps leave alone.
+  @check_shutdown 60_000
+
+  defp check_shutdown, do: Application.get_env(:cronwatch, :check_shutdown, @check_shutdown)
+
   @doc false
-  def child_spec(name), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [name]}, shutdown: :infinity}
+  def child_spec(name),
+    do: %{id: __MODULE__, start: {__MODULE__, :start_link, [name]}, shutdown: check_shutdown() + 5_000}
 
   @doc false
   def start_link(name), do: GenServer.start_link(__MODULE__, name, name: server(name))
@@ -103,6 +113,20 @@ defmodule Cronwatch.Checker do
 
       {:DOWN, ^ref, :process, _, reason} ->
         finish(s, {:error, Error.other("the check stopped: #{Exception.format_exit(reason)}", reason)})
+    after
+      check_shutdown() ->
+        # A store call that hangs: the check is stopped rather than waited
+        # on for ever, unless it answered just now.
+        case Task.shutdown(s.task, :brutal_kill) do
+          {:ok, result} ->
+            finish(s, result)
+
+          _ ->
+            message =
+              "the check was stopped: it was still running #{Duration.format(check_shutdown())} after the instance began to stop"
+
+            finish(s, {:error, Error.other(message)})
+        end
     end
 
     :ok

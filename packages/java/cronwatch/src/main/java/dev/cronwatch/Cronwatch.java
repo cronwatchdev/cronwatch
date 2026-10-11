@@ -509,7 +509,7 @@ public final class Cronwatch implements AutoCloseable {
       recorded = false;
     }
     if (recorded) {
-      runs.closeOnStart(name, run.id());
+      runs.closeOnStart(def, run);
     }
     return new RunHandle(core, runs, def, run.id(), run, recorded, null);
   }
@@ -946,9 +946,10 @@ public final class Cronwatch implements AutoCloseable {
 
     /**
      * The environment to read when neither {@code CRONWATCH_ENV} nor {@code APP_ENV} is set, as
-     * they are read ({@code dev}, {@code local}, {@code test}, and {@code testing} are
-     * development): the Spring Boot starter gives the app's active profile. In development the
-     * dashboard makes a token of its own and a job's handler runs without a secret.
+     * they are read ({@code development}, {@code dev}, and {@code local} are development; {@code
+     * test} and {@code testing} are not): the Spring Boot starter gives the app's active profile.
+     * In development the dashboard makes a token of its own and a job's handler runs without a
+     * secret.
      */
     public Builder environment(String name) {
       this.environment = Objects.requireNonNull(name, "name");

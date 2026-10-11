@@ -157,8 +157,9 @@ final class Timeline
 
     /**
      * When the job was due within `from` to `to`. A cron's fires come from
-     * firesBetween. An interval is due one period after each run started, and
-     * after the last run once a period for as long as nothing runs (the times
+     * firesBetween. An interval is due one period after each run started
+     * (after it finished, for a run that outlasted the period: intervalDue),
+     * and after the last run once a period for as long as nothing runs (the times
      * a missed interval job keeps being asked for); with no run yet, from its
      * next expected time.
      *
@@ -175,16 +176,16 @@ final class Timeline
             if (($to - $from) / $every > self::MAX_TICKS) {
                 return ['times' => [], 'dense' => true];
             }
-            $starts = array_map(fn (Run $r) => $r->startedAt, $runs);
-            sort($starts);
+            $ordered = array_values($runs);
+            usort($ordered, fn (Run $a, Run $b) => $a->startedAt <=> $b->startedAt);
+            $dues = array_map(fn (Run $r) => Schedule::intervalDue($every, $r->startedAt, Evaluate::finishedAtOf($r)), $ordered);
             $times = [];
-            foreach ($starts as $start) {
-                $t = $start + $every;
+            foreach ($dues as $t) {
                 if ($t >= $from && $t <= $to) {
                     $times[(string) $t] = $t;
                 }
             }
-            $t = $starts !== [] ? $starts[count($starts) - 1] + $every : $job->nextExpectedAt;
+            $t = $dues !== [] ? $dues[count($dues) - 1] : $job->nextExpectedAt;
             if ($t !== null) {
                 if ($t < $from) {
                     $t += ceil(($from - $t) / $every) * $every;
@@ -215,9 +216,9 @@ final class Timeline
             return null;
         }
         $grace = self::safely(fn () => Evaluate::graceMs($job->definition), 0);
-        $last = $job->lastRun?->startedAt;
-        if ($last !== null) {
-            return self::safely(fn () => Schedule::expectation($parsed, $last, $last, $grace)?->dueAt, null);
+        $lastRun = $job->lastRun;
+        if ($lastRun !== null) {
+            return self::safely(fn () => Schedule::expectation($parsed, $lastRun->startedAt, $lastRun->startedAt, $grace, Evaluate::finishedAtOf($lastRun))?->dueAt, null);
         }
         $past = array_values(array_filter($times, fn ($t) => $t + $grace < $now));
         return $past === [] ? null : $past[count($past) - 1];

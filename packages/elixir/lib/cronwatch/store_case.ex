@@ -382,8 +382,12 @@ if Code.ensure_loaded?(ExUnit.CaseTemplate) do
 
       assert ids(must(c(store, :list_runs, ["a", 10]))) == ["r3", "r2", "r1"], "newest first"
       assert ids(must(c(store, :list_runs, ["a", 2]))) == ["r3", "r2"], "limit"
-      assert must(c(store, :last_run, ["a"])).id == "r3"
-      assert must(c(store, :last_run, ["none"])) == nil
+      # last_run is optional, so it is checked only when the store has it.
+      if Store.has?(store, :last_run, 1) do
+        assert must(c(store, :last_run, ["a"])).id == "r3"
+        assert must(c(store, :last_run, ["none"])) == nil
+      end
+
       assert ids(must(c(store, :running_runs))) == ["rb", "rc", "r3"], "oldest first, then insertion order"
       r1 = must(c(store, :get_run, ["r1"]))
       same_json("metrics", JS.stringify(r1.metrics), ~s({"n":1}))

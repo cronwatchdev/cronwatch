@@ -17,7 +17,7 @@ fn must(schedule: &str, zone: &str) -> Arc<Parsed> {
 }
 
 fn due(p: &Parsed, last_run_at: Option<i64>, registered_at: i64, grace: f64) -> i64 {
-    expect(p, last_run_at, registered_at, grace).expect("no expectation").due_at
+    expect(p, last_run_at, registered_at, grace, None).expect("no expectation").due_at
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn next_fire_of_crons_and_intervals() {
 fn expectation_for_a_cron_counts_forward_from_the_last_run() {
     let daily = must("0 2 * * *", "");
     let registered = utc(2026, 0, 4, 12, 0, 0);
-    let first = expect(&daily, None, registered, (10 * MINUTE) as f64).unwrap();
+    let first = expect(&daily, None, registered, (10 * MINUTE) as f64, None).unwrap();
     assert_eq!(first.due_at, utc(2026, 0, 5, 2, 0, 0));
     assert_eq!(first.deadline, utc(2026, 0, 5, 2, 10, 0) as f64);
     assert_eq!(
@@ -105,7 +105,7 @@ fn expectation_for_yearly_crons_and_intervals() {
     assert_eq!(due(&leap, Some(utc(2024, 1, 29, 0, 0, 1)), 0, 0.0), utc(2028, 1, 29, 0, 0, 0));
     let every = must("every 1h", "");
     let now = utc(2026, 0, 5, 9, 30, 0);
-    let e = expect(&every, Some(now - 2 * HOUR), now - DAY, (5 * MINUTE) as f64).unwrap();
+    let e = expect(&every, Some(now - 2 * HOUR), now - DAY, (5 * MINUTE) as f64, None).unwrap();
     assert_eq!(e.due_at, now - HOUR);
     assert_eq!(e.deadline, (now - HOUR + 5 * MINUTE) as f64);
     assert_eq!(due(&every, None, now - 30 * MINUTE, (5 * MINUTE) as f64), now + 30 * MINUTE);
@@ -177,7 +177,7 @@ fn a_date_no_month_has_never_fires() {
     // at the year croner does.
     let p = must("0 0 30 2 *", "UTC");
     assert_eq!(next_fire(&p, utc(2026, 0, 1, 0, 0, 0), None), None);
-    assert_eq!(expect(&p, None, utc(2026, 0, 1, 0, 0, 0), 0.0), None);
+    assert_eq!(expect(&p, None, utc(2026, 0, 1, 0, 0, 0), 0.0, None), None);
 }
 
 #[test]
@@ -196,15 +196,15 @@ fn a_far_start_counts_from_the_year_1_or_has_no_fire_after_it() {
                         "{schedule} {zone} from {t}: {f}"
                     );
                 }
-                let _ = expect(&p, Some(t), t, f64::MAX);
-                let _ = expect(&p, None, t, 0.0);
+                let _ = expect(&p, Some(t), t, f64::MAX, None);
+                let _ = expect(&p, None, t, 0.0, None);
                 let _ = fires_between(&p, t, i64::MAX, 50);
             }
         }
     }
     let p = must("0 2 * * *", "UTC");
     assert_eq!(due(&p, Some(i64::MIN), 0, 0.0), utc(1, 0, 1, 2, 0, 0));
-    assert_eq!(expect(&p, Some(i64::MAX), 0, 0.0), None);
+    assert_eq!(expect(&p, Some(i64::MAX), 0, 0.0, None), None);
     assert_eq!(next_fire(&p, utc(9999, 11, 30, 12, 0, 0), None), Some(utc(9999, 11, 31, 2, 0, 0)));
     assert_eq!(next_fire(&p, utc(9999, 11, 31, 2, 0, 0), None), None);
     assert_eq!(next_fire(&p, utc(5000, 0, 1, 0, 0, 0), None), Some(utc(5000, 0, 1, 2, 0, 0)));

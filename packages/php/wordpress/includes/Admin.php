@@ -317,6 +317,7 @@ final class Admin
         if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
             echo '<p>' . esc_html__('DISABLE_WP_CRON is set: make sure a system cron runs wp-cron.php or `wp cron event run --due-now`, and `wp cronwatch check`.', 'cronwatch') . '</p>';
         }
+        self::renderNextCheck();
 
         echo '<h2>' . esc_html__('Alerts', 'cronwatch') . '</h2>';
         echo '<p>' . esc_html__('Alerts are sent only where you set one up below. With none set they go to the PHP error log.', 'cronwatch') . '</p>';
@@ -362,6 +363,39 @@ final class Admin
 
         self::renderJobs();
         echo '</div>';
+    }
+
+    /** How long past its time the check event may be before the page says WP-Cron is not running it. */
+    public const CHECK_LATE = 600;
+
+    /**
+     * When the next check is due: a line when it is on time, a warning when
+     * it is late (WP-Cron is not running), and an error when there is none,
+     * which is only when scheduling it again failed (Plugin::ensureCheck()
+     * has run on admin_init, before this page).
+     */
+    private static function renderNextCheck(): void
+    {
+        $next = wp_next_scheduled(Plugin::CHECK_HOOK);
+        $now = time();
+        if (!is_int($next)) {
+            echo '<div class="notice notice-error inline"><p>' . esc_html__('No check is scheduled, and scheduling one failed, so missed and stuck events go unnoticed. Something stopped WordPress saving the event (a plugin filtering schedule_event, or the cron option not saving). Run `wp cronwatch check` from the system crontab every five minutes instead.', 'cronwatch') . '</p></div>';
+            return;
+        }
+        $at = wp_date((string) get_option('date_format') . ' ' . (string) get_option('time_format'), $next);
+        if ($next < $now - self::CHECK_LATE) {
+            /* translators: 1: a date and time; 2: a length of time, such as 5 mins. */
+            echo '<div class="notice notice-warning inline"><p>' . esc_html(sprintf(__('The check was due at %1$s (%2$s ago) and has not run: WP-Cron is not running on this site. Have a system cron run wp-cron.php or `wp cron event run --due-now`, and `wp cronwatch check`.', 'cronwatch'), (string) $at, human_time_diff($next, $now))) . '</p></div>';
+            return;
+        }
+        if ($next > $now) {
+            /* translators: 1: a date and time; 2: a length of time, such as 5 mins. */
+            $line = __('The next check is due at %1$s (in %2$s).', 'cronwatch');
+        } else {
+            /* translators: 1: a date and time; 2: a length of time, such as 5 mins. */
+            $line = __('The next check is due at %1$s (%2$s ago), when WP-Cron next runs.', 'cronwatch');
+        }
+        echo '<p>' . esc_html(sprintf($line, (string) $at, human_time_diff($next, $now))) . '</p>';
     }
 
     /**

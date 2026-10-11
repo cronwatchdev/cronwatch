@@ -25,7 +25,7 @@ import { webhook } from "../packages/sdk/dist/webhook.js";
 import { anthropic } from "../packages/sdk/dist/anthropic.js";
 import { formatDuration, formatRelative } from "../packages/sdk/src/duration.ts";
 import { environmentOf, secretOption } from "../packages/sdk/src/env.ts";
-import { expectation, nextFire, parseSchedule, runCovers } from "../packages/sdk/src/schedule.ts";
+import { expectation, firesBetween, nextFire, parseSchedule, runCovers } from "../packages/sdk/src/schedule.ts";
 import {
   alertKey,
   applySilence,
@@ -191,6 +191,31 @@ function scheduleCases() {
     ["30 1 * * *", LONDON, "2026-10-24T12:00:00Z", 3],
     ["0 0 * * *", "America/Santiago", "2026-09-05T12:00:00Z", 3],
     ["30 0 * * *", "Australia/Lord_Howe", "2026-10-03T00:00:00Z", 3],
+    // A cron that fires more than once inside the time clocks skip: every
+    // slot still fires, one the jump skips moved forward by the gap. London
+    // skips 01:00 to 02:00 on 2027-03-28 (01:00Z): 01:00Z, 01:20Z, 01:40Z.
+    // Lord Howe skips 02:00 to 02:30 on 2027-10-03 (15:30Z on the 2nd): 02:00
+    // and 02:20 move to 15:30Z and 15:50Z, around the real 02:40 at 15:40Z.
+    // Sydney skips 02:00 to 03:00 on 2027-10-03 (16:00Z on the 2nd). Counted
+    // one fire at a time, from before the gap, from each fire in it, and from
+    // between them.
+    ["*/20 1 * * *", LONDON, "2027-03-27T12:00:00Z", 4],
+    ["*/20 1 * * *", LONDON, "2027-03-28T00:59:00Z", 3],
+    ["*/20 1 * * *", LONDON, "2027-03-28T01:00:00Z", 3],
+    ["*/20 1 * * *", LONDON, "2027-03-28T01:10:00Z", 2],
+    ["*/20 1 * * *", LONDON, "2027-03-28T01:20:00Z", 2],
+    ["*/20 1 * * *", LONDON, "2027-03-28T01:40:00Z", 1],
+    ["*/20 1,2 * * *", LONDON, "2027-03-28T00:30:00Z", 4],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T00:00:00Z", 4],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:30:00Z", 2],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:35:00Z", 2],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:40:00Z", 2],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:50:00Z", 1],
+    ["0,40 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:00:00Z", 3],
+    ["*/20 2 * * *", "Australia/Sydney", "2027-10-02T12:00:00Z", 4],
+    ["*/20 2 * * *", "Australia/Sydney", "2027-10-02T16:00:00Z", 3],
+    ["*/20 2 * * *", "Australia/Sydney", "2027-10-02T16:30:00Z", 2],
+    ["0 30 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:30:00Z", 2],
     ["0 30 2 * * *", NY, "2026-03-07T12:00:00Z", 2],
     ["0 0 31 * *", "UTC", "2026-01-05T00:00:00Z", 4],
     ["0 0 29 2 *", "UTC", "2026-01-05T00:00:00Z", 2],
@@ -274,11 +299,13 @@ function scheduleCases() {
   }));
 
   const expectations = [];
-  const expect = (schedule, timezone, lastRunAt, registeredAt, graceMs) => {
+  // `lastFinishedAt`, when the last run has finished, is written only when given.
+  const expect = (schedule, timezone, lastRunAt, registeredAt, graceMs, lastFinishedAt = null) => {
     const parsed = parseSchedule(schedule, timezone);
-    const e = expectation(parsed, lastRunAt, registeredAt, graceMs);
+    const e = expectation(parsed, lastRunAt, registeredAt, graceMs, lastFinishedAt);
     expectations.push({
-      schedule, ...(timezone ? { timezone } : {}), lastRunAt, registeredAt, graceMs, expected: e ? { dueAt: e.dueAt, deadline: e.deadline } : null,
+      schedule, ...(timezone ? { timezone } : {}), lastRunAt, ...(lastFinishedAt !== null ? { lastFinishedAt } : {}), registeredAt, graceMs,
+      expected: e ? { dueAt: e.dueAt, deadline: e.deadline } : null,
     });
   };
   // Around ordinary fires: early, on time, late, and never ran.
@@ -319,6 +346,24 @@ function scheduleCases() {
   expect("0 * * * *", NY, Date.UTC(2026, 2, 8, 7, 0, 2), 0, 0);
   expect("0 0 1 1 *", "UTC", Date.UTC(2026, 0, 1, 0, 0, 3), Date.UTC(2025, 11, 31), 10 * MIN);
   expect("0 0 29 2 *", "UTC", Date.UTC(2024, 1, 29, 0, 0, 1), 0, 0);
+  // A run inside a spring-forward gap covers every slot moved out of it, as
+  // vixie cron runs each skipped job once at the jump; a slot the later
+  // offset has of its own (Lord Howe's real 02:40) is still due.
+  for (const [schedule, timezone, starts] of [
+    ["*/20 1 * * *", LONDON, ["2027-03-28T00:58:59Z", "2027-03-28T00:59:00Z", "2027-03-28T01:00:00Z", "2027-03-28T01:20:00Z", "2027-03-28T01:41:00Z"]],
+    ["*/20 2 * * *", "Australia/Lord_Howe", ["2027-10-02T15:29:00Z", "2027-10-02T15:30:00Z", "2027-10-02T15:40:00Z", "2027-10-02T15:45:00Z", "2027-10-02T15:50:00Z"]],
+    ["*/20 2 * * *", "Australia/Sydney", ["2027-10-02T16:00:00Z", "2027-10-02T16:21:00Z"]],
+  ]) {
+    for (const started of starts) expect(schedule, timezone, at(started), 0, 10 * MIN);
+  }
+  // An interval whose last run finished: within its period it is due a period
+  // after the start; past it, a period after the finish. A cron ignores the finish.
+  for (const finished of [0, 30 * MIN, HOUR - 1, HOUR, HOUR + 1, 90 * MIN, 5 * HOUR]) {
+    expect("every 1h", undefined, T0, T0 - DAY, 10 * MIN, T0 + finished);
+    expect("every 90s", NY, T0, T0 - DAY, 0, T0 + finished);
+    expect("0 * * * *", "UTC", T0, T0 - DAY, 10 * MIN, T0 + finished);
+  }
+  expect("every 1h", undefined, null, T0, 10 * MIN, T0 + 5 * HOUR);
   // A date no month has: nothing is ever due, so nothing is ever missed.
   expect("0 0 30 2 *", "UTC", null, T0 - DAY, 10 * MIN);
   expect("0 0 30 2 *", "UTC", T0 - HOUR, T0 - DAY, 10 * MIN);
@@ -354,7 +399,24 @@ function scheduleCases() {
     }
   }
 
-  return { parse, fires, nextFire: next, expectation: expectations, runCovers: covers, autumn };
+  // firesBetween, the dashboard timeline's fires: every fire strictly after
+  // `from` and at or before `to`, ascending, the same ones nextFire gives in
+  // turn; null past `limit`.
+  const between = [
+    ["*/20 1 * * *", LONDON, "2027-03-27T23:00:00Z", "2027-03-29T01:00:00Z", 330],
+    ["*/20 1 * * *", LONDON, "2027-03-28T01:00:00Z", "2027-03-28T02:00:00Z", 330],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T12:00:00Z", "2027-10-03T16:00:00Z", 330],
+    ["*/20 2 * * *", "Australia/Lord_Howe", "2027-10-02T15:30:00Z", "2027-10-02T16:00:00Z", 330],
+    ["*/20 2 * * *", "Australia/Sydney", "2027-10-02T12:00:00Z", "2027-10-03T17:00:00Z", 330],
+    ["*/5 * * * *", LONDON, "2027-03-28T00:00:00Z", "2027-03-28T03:00:00Z", 330],
+    ["*/30 * * * *", NY, "2026-11-01T04:00:00Z", "2026-11-01T08:00:00Z", 330],
+    ["30 1 * * *", LONDON, "2026-10-24T12:00:00Z", "2026-10-26T12:00:00Z", 330],
+    ["*/20 1 * * *", LONDON, "2027-03-27T23:00:00Z", "2027-03-29T01:00:00Z", 4],
+  ].map(([schedule, timezone, from, to, limit]) => ({
+    schedule, timezone, from: at(from), to: at(to), limit, fires: firesBetween(parseSchedule(schedule, timezone), at(from), at(to), limit),
+  }));
+
+  return { parse, fires, nextFire: next, expectation: expectations, runCovers: covers, autumn, firesBetween: between };
 }
 
 // ---------------------------------------------------------------- evaluate
@@ -389,8 +451,25 @@ class Sim {
     const run = { id, job: this.def.name, status: "running", startedAt: now, finishedAt: null, durationMs: null, error: null, output: null, metrics: {}, trigger: "run" };
     this.runs.push(run);
     this.order.set(id, ++this.seq);
-    this.state = onRunStart(this.state);
+    this.state = onRunStart(this.def, clone(run), this.state, now);
     return { state: clone(this.state) };
+  }
+
+  /**
+   * A run a source reports only once it is over (recordRun): written finished,
+   * then onRunStart and onRunFinish at `now`, as the client does, so missed
+   * closes only when its start covers the fire.
+   */
+  record(id, startedAt, now, fields) {
+    const run = {
+      id, job: this.def.name, status: "running", startedAt, finishedAt: now, durationMs: Math.max(0, now - startedAt),
+      error: null, output: null, metrics: {}, trigger: "source", ...fields,
+    };
+    this.runs.push(run);
+    this.order.set(id, ++this.seq);
+    this.state = onRunStart(this.def, clone(run), this.state, now);
+    const alerts = this.finishRun(run, now);
+    return { alerts, state: clone(this.state) };
   }
 
   finishRun(run, now) {
@@ -448,7 +527,16 @@ function clone(value) {
 function play({ name, definition, createdAt = T0 - DAY, steps }) {
   const sim = new Sim(definition, createdAt);
   const events = [];
+  // Ids are never reused: one a step names is taken, so a later generated id skips it.
+  const used = new Set();
   let ids = 0;
+  const fresh = () => {
+    let id;
+    do id = `r${++ids}`;
+    while (used.has(id));
+    used.add(id);
+    return id;
+  };
   const finishFields = (s) => {
     const fields = { status: s.status ?? "ok" };
     if (s.metrics) fields.metrics = s.metrics;
@@ -459,17 +547,22 @@ function play({ name, definition, createdAt = T0 - DAY, steps }) {
   };
   for (const step of steps) {
     if (step.op === "run") {
-      const id = `r${++ids}`;
+      const id = fresh();
       events.push({ op: "start", id, at: step.at, expect: sim.start(id, step.at) });
       const fields = finishFields(step);
       const end = step.at + (step.ms ?? 1000);
       events.push({ op: "finish", id, at: end, ...fields, expect: sim.finish(id, end, fields) });
     } else if (step.op === "start") {
-      const id = step.id ?? `r${++ids}`;
+      const id = step.id ?? fresh();
+      used.add(id);
       events.push({ op: "start", id, at: step.at, expect: sim.start(id, step.at) });
     } else if (step.op === "finish") {
       const fields = finishFields(step);
       events.push({ op: "finish", id: step.id, at: step.at, ...fields, expect: sim.finish(step.id, step.at, fields) });
+    } else if (step.op === "record") {
+      const id = fresh();
+      const fields = finishFields(step);
+      events.push({ op: "record", id, startedAt: step.startedAt, at: step.at, ...fields, expect: sim.record(id, step.startedAt, step.at, fields) });
     } else if (step.op === "check") {
       events.push({ op: "check", at: step.at, expect: sim.check(step.at) });
     } else if (step.op === "silence") {
@@ -494,6 +587,7 @@ const fail = (atMs, extra = {}) => ({ op: "run", at: atMs, status: "failed", ...
 const check = (atMs) => ({ op: "check", at: atMs });
 const start = (atMs, id) => ({ op: "start", at: atMs, ...(id ? { id } : {}) });
 const finish = (id, atMs, extra = {}) => ({ op: "finish", id, at: atMs, ...extra });
+const record = (startedAt, atMs, extra = {}) => ({ op: "record", startedAt, at: atMs, ...extra });
 const hourly = (n, from, extra = {}) => Array.from({ length: n }, (_, i) => run(from + i * HOUR, extra));
 
 function evaluateCases() {
@@ -891,6 +985,46 @@ function evaluateCases() {
       name: "a cron job whose last run started at the highest safe integer is never due again",
       definition: { name: "far", schedule: "0 2 * * *", timezone: NY, grace: "10m" },
       steps: [run(Number.MAX_SAFE_INTEGER - 1000), check(T0)],
+    },
+    {
+      name: "a cron run that started before the missed fire leaves missed open when it finishes",
+      definition: { name: "hourly", schedule: "0 * * * *", timezone: "UTC", grace: "10m", timeout: "3h" },
+      steps: [start(Date.UTC(2026, 0, 5, 10), "r1"), check(Date.UTC(2026, 0, 5, 10) + 75 * MIN), finish("r1", Date.UTC(2026, 0, 5, 10) + 90 * MIN), check(Date.UTC(2026, 0, 5, 10) + 91 * MIN), run(Date.UTC(2026, 0, 5, 10) + 2 * HOUR), check(Date.UTC(2026, 0, 5, 10) + 2 * HOUR + MIN)],
+    },
+    {
+      name: "a cron run that started before the missed fire leaves missed open when it fails",
+      definition: { name: "hourly", schedule: "0 * * * *", timezone: "UTC", grace: "10m", timeout: "3h" },
+      steps: [start(Date.UTC(2026, 0, 5, 10), "r1"), check(Date.UTC(2026, 0, 5, 10) + 75 * MIN), finish("r1", Date.UTC(2026, 0, 5, 10) + 90 * MIN, { status: "failed" }), check(Date.UTC(2026, 0, 5, 10) + 91 * MIN), run(Date.UTC(2026, 0, 5, 10) + 2 * HOUR), check(Date.UTC(2026, 0, 5, 10) + 2 * HOUR + MIN)],
+    },
+    {
+      name: "a run a source reports at its finish closes missed only when its start covers the fire",
+      definition: { name: "imported", schedule: "0 * * * *", timezone: "UTC", grace: "10m" },
+      createdAt: Date.UTC(2026, 0, 5, 10) - 2 * HOUR,
+      steps: [
+        run(Date.UTC(2026, 0, 5, 10)), check(Date.UTC(2026, 0, 5, 10) + 75 * MIN), record(Date.UTC(2026, 0, 5, 10) + 58 * MIN, Date.UTC(2026, 0, 5, 10) + 88 * MIN), check(Date.UTC(2026, 0, 5, 10) + 89 * MIN),
+        record(Date.UTC(2026, 0, 5, 10) + 59 * MIN, Date.UTC(2026, 0, 5, 10) + 89 * MIN), check(Date.UTC(2026, 0, 5, 10) + 90 * MIN), record(Date.UTC(2026, 0, 5, 10) + 62 * MIN, Date.UTC(2026, 0, 5, 10) + 92 * MIN), check(Date.UTC(2026, 0, 5, 10) + 93 * MIN),
+      ],
+    },
+    {
+      name: "an interval run that outlasts its period is followed by a full period",
+      definition: { name: "long", schedule: "every 1h", grace: "10m", timeout: "3h" },
+      createdAt: T0,
+      steps: [
+        start(T0, "r1"), check(T0 + 75 * MIN), finish("r1", T0 + 90 * MIN), check(T0 + 91 * MIN), check(T0 + 160 * MIN),
+        check(T0 + 160 * MIN + 1), run(T0 + 170 * MIN), check(T0 + 171 * MIN),
+      ],
+    },
+    {
+      name: "an interval run that finishes on its period, or within it, is due a period after its start",
+      definition: { name: "even", schedule: "every 1h", grace: "10m" },
+      createdAt: T0,
+      steps: [run(T0, { ms: HOUR }), check(T0 + 70 * MIN), check(T0 + 70 * MIN + 1), run(T0 + 71 * MIN, { ms: 30 * MIN }), check(T0 + 131 * MIN), check(T0 + 141 * MIN + 1)],
+    },
+    {
+      name: "an interval run marked timeout by a check counts as finished then",
+      definition: { name: "hung", schedule: "every 1h", grace: "10m", timeout: "90m" },
+      createdAt: T0,
+      steps: [start(T0, "r1"), check(T0 + 91 * MIN), check(T0 + 101 * MIN), check(T0 + 161 * MIN), check(T0 + 161 * MIN + 1)],
     },
   ];
   return { scenarios: scenarios.map(play) };
@@ -1984,7 +2118,17 @@ async function channelCases() {
     { channel: "discord", options: { webhookUrl: "https://discord.example/api/webhooks/1/x" }, make: (o) => discord(o) },
     { channel: "discord", options: { webhookUrl: "https://discord.example/api/webhooks/1/x", link: true }, make: (o) => discord({ ...o, link }) },
     { channel: "webhook", options: { url: "https://hooks.example.com/cronwatch?key=secret" }, make: (o) => webhook(o) },
-    { channel: "webhook", options: { url: "https://hooks.example.com:8443/in", secret: "s3cret", headers: { authorization: "Bearer abc" } }, make: (o) => webhook(o) },
+    // `now: <ms>` stands for a clock fixed at that time, which the timestamp is read from.
+    { channel: "webhook", options: { url: "https://hooks.example.com:8443/in", secret: "s3cret", headers: { authorization: "Bearer abc" }, now: T0 + 2500 }, make: (o) => webhook({ ...o, now: () => o.now }) },
+    // Headers of the app's own replace the defaults whatever their case, and never the signature headers.
+    {
+      channel: "webhook",
+      options: {
+        url: "https://hooks.example.com/in", secret: "s3cret", now: T0 + 999,
+        headers: { "Content-Type": "application/cloudevents+json", "USER-AGENT": " mine ", "X-CronWatch-Timestamp": "1", "X-CronWatch-Signature": "forged" },
+      },
+      make: (o) => webhook({ ...o, now: () => o.now }),
+    },
   ];
   const realFetch = globalThis.fetch;
   let response = { status: 200, body: "" };
@@ -2007,7 +2151,10 @@ async function channelCases() {
         await channel.send(clone(alert));
         sends.push({ channel: config.channel, options: config.options, alert: name, url: captured.url, headers: captured.headers, body: digest(captured.body) });
         if (config.channel === "webhook" && config.options.secret) {
-          webhookPayloads.push({ alert: name, secret: config.options.secret, body: captured.body, signature: captured.headers["x-cronwatch-signature"] });
+          webhookPayloads.push({
+            alert: name, secret: config.options.secret, body: captured.body, signature: captured.headers["x-cronwatch-signature"],
+            timestamp: captured.headers["x-cronwatch-timestamp"], timestampSignature: captured.headers["x-cronwatch-timestamp-signature"],
+          });
         }
       }
       // Slack and Discord also meet a proxy that echoes the request, URL and
@@ -2029,7 +2176,27 @@ async function channelCases() {
   } finally {
     globalThis.fetch = realFetch;
   }
-  return { alerts, sends, failures, webhookPayloads, ...(await providerCases(alerts)), ...(await twilioPartialCases(alerts)), ...textCutCases(alerts), urls: urlCases() };
+  // Slack's "open" link with the characters that would end it: `link` is what
+  // the link function returns, `text` the first block's mrkdwn.
+  const slackLinks = [];
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: { ...init.headers }, body: init.body };
+    return new Response("", { status: 200 });
+  };
+  try {
+    for (const target of [
+      "https://app.example/cronwatch/jobs/nightly",
+      "https://app.example/cronwatch/jobs/a|b<c>d?x=<y>&z=|",
+      "https://app.example/cronwatch/jobs/%7C?q=%3C",
+      "https://app.example/\u00e9|\u{1F600}>",
+    ]) {
+      await slack({ webhookUrl: "https://hooks.slack.example/T/B/secret", link: () => target }).send(clone(alerts[0].alert));
+      slackLinks.push({ link: target, text: JSON.parse(captured.body).blocks[0].text.text });
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  return { alerts, sends, failures, webhookPayloads, slackLinks, ...(await providerCases(alerts)), ...(await twilioPartialCases(alerts)), ...textCutCases(alerts), urls: urlCases() };
 }
 
 // A channel posts to its URL as fetch reads it, and the ports that carry

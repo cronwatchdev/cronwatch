@@ -76,9 +76,10 @@ final class Migrated implements Store, UpdatesRunIf, ComparesAndSetsState, Delet
         return $this->inner->listRuns($job, $limit);
     }
 
+    /** The newest run of a job: the store's own lastRun() when it has one, else the first of listRuns(). */
     public function lastRun(string $job): ?Run
     {
-        return $this->inner->lastRun($job);
+        return method_exists($this->inner, 'lastRun') ? $this->inner->lastRun($job) : ($this->inner->listRuns($job, 1)[0] ?? null);
     }
 
     public function runningRuns(): array

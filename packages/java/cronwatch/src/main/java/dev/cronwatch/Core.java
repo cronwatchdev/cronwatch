@@ -376,6 +376,17 @@ final class Core {
             return null;
           });
       ready = true;
+      List<String> missing = missingWrites(store);
+      if (!missing.isEmpty()) {
+        // Once per client: it still works, but only as long as one process at a time uses the
+        // store.
+        report(
+            "the store has no "
+                + String.join(" or ", missing)
+                + ", so two processes sharing it can overwrite each other's state or both evaluate"
+                + " the same run; it is safe only while one process at a time uses it",
+            "store");
+      }
       if (defaultStore && Env.environment(environmentFallback).equals("production")) {
         Env.LOGGER.log(
             System.Logger.Level.WARNING,
@@ -386,6 +397,27 @@ final class Core {
     } finally {
       readyLock.unlock();
     }
+  }
+
+  /**
+   * The SDK's two conditional writes a store leaves to {@link Store}'s defaults, in the SDK's
+   * order: {@code compareAndSetState}, then {@code updateRunIf}.
+   */
+  static List<String> missingWrites(Store store) {
+    List<String> missing = new ArrayList<>();
+    try {
+      Class<?> type = store.getClass();
+      if (type.getMethod("compareAndSetState", JobState.class, long.class).getDeclaringClass()
+          == Store.class) {
+        missing.add("compareAndSetState");
+      }
+      if (type.getMethod("updateRunIf", Run.class, List.class).getDeclaringClass() == Store.class) {
+        missing.add("updateRunIf");
+      }
+    } catch (NoSuchMethodException e) {
+      // Every Store has both; nothing to say.
+    }
+    return missing;
   }
 
   /**

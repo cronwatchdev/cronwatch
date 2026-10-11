@@ -321,6 +321,62 @@ async fn a_store_without_update_run_if_falls_back_to_a_read_and_a_write() {
     assert!(k.messages().iter().any(|m| m.contains("already finished")));
 }
 
+#[tokio::test]
+async fn a_store_without_the_conditional_writes_is_reported_once() {
+    let store = Arc::new(TestStore { no_run_if: true, no_cas: true, ..Default::default() });
+    let k = Kit::with(|b| b.store_arc(store));
+    let job = k.cw.job("plain", JobOptions::new()).unwrap();
+    job.run(|_| async { Ok::<_, Boom>(()) }).await.unwrap();
+    job.run(|_| async { Ok::<_, Boom>(()) }).await.unwrap();
+    let reported: Vec<String> =
+        k.errors.lock().unwrap().iter().filter(|(w, _)| w == "store").map(|(_, m)| m.clone()).collect();
+    assert_eq!(
+        reported,
+        [
+            "the store has no compare_and_set_state or update_run_if, so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it"
+        ]
+    );
+
+    let store = Arc::new(TestStore { no_run_if: true, ..Default::default() });
+    let k = Kit::with(|b| b.store_arc(store));
+    k.cw.job("plain", JobOptions::new()).unwrap().run(|_| async { Ok::<_, Boom>(()) }).await.unwrap();
+    assert!(
+        k.errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(w, m)| w == "store" && m.starts_with("the store has no update_run_if, so"))
+    );
+
+    let k = Kit::new();
+    k.cw.job("plain", JobOptions::new()).unwrap().run(|_| async { Ok::<_, Boom>(()) }).await.unwrap();
+    assert!(k.errors.lock().unwrap().iter().all(|(w, _)| w != "store"), "the memory store has both");
+}
+
+#[tokio::test]
+async fn a_run_a_source_reports_closes_missed_only_when_its_start_covers_the_fire() {
+    let k = Kit::new();
+    let ten = 1_767_607_200_000; // 2026-01-05 10:00Z
+    k.set(ten);
+    k.cw.job("imported", JobOptions::new().schedule("0 * * * *").timezone("UTC").grace("10m")).unwrap();
+    let mut first = Run::new("src:1", "imported", RunStatus::Ok, ten);
+    first.finished_at = Some(ten + MIN);
+    first.duration_ms = Some(MIN);
+    k.cw.record_run(first, RecordOptions::new()).await.unwrap();
+    k.set(ten + 75 * MIN);
+    k.check().await;
+    let missed = || async { k.summary("imported").await.unwrap().open.contains(&cronwatch::Condition::Missed) };
+    assert!(missed().await, "11:00 was missed");
+    for (id, started, closes) in [("src:2", 58, false), ("src:3", 59, true)] {
+        k.set(ten + (started + 30) * MIN);
+        let mut run = Run::new(id, "imported", RunStatus::Ok, ten + started * MIN);
+        run.finished_at = Some(k.now());
+        run.duration_ms = Some(30 * MIN);
+        k.cw.record_run(run, RecordOptions::new()).await.unwrap();
+        assert_eq!(!missed().await, closes, "a run from 10:{started}");
+    }
+}
+
 fn pg_run(id: &str, at: i64, status: RunStatus) -> Run {
     let mut run = Run::new(id, "db:vacuum", status, at);
     run.trigger = "pg_cron".into();

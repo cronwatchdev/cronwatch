@@ -39,4 +39,11 @@ final class Flaky extends QueueWorkerBase {
     }
   }
 
+  /**
+   * The attempts made at an item so far: a method of the worker's own.
+   */
+  public function attempts(string $id): int {
+    return (int) \Drupal::state()->get('cwt.attempts.' . $id, 0);
+  }
+
 }

@@ -161,7 +161,7 @@ Call `watch` before the scheduler starts, so no firing goes unrecorded; `close()
 
 **Runs.** A global `JobListener` opens each firing's run (trigger `quartz`) in the worker thread before `execute` and closes it after, failed with what the job threw (the `JobExecutionException`'s cause when it has one), so `Cronwatch.current()` works inside `execute`. A vetoed firing, and one `@DisallowConcurrentExecution` held back, opens nothing. In a clustered job store, a job a node was running when it died is fired again on another node, and that firing first finishes the earlier run, failed with `Quartz recovered the job after its node stopped`. Only the run of the node that died is finished so: a run of another node still alive, in a cluster of three or more, is left to finish.
 
-**The check.** `CronwatchQuartz.scheduleCheck(scheduler)` schedules `CronwatchCheckJob`, which runs the sync and a check every minute; in a clustered job store Quartz fires it on one node, so it runs once per cluster. Its runs are never a job.
+**The check.** `CronwatchQuartz.scheduleCheck(scheduler)` schedules `CronwatchCheckJob`, which runs the sync and a check every minute; in a clustered job store Quartz fires it on one node, so it runs once per cluster. Its runs are never a job. On a node whose scheduler is not watched it fails (a `JobExecutionException` saying the node has no live CronWatch watch), so Quartz records that the check did not run: watch the scheduler on every node that can fire it.
 
 ## JobRunr
 
@@ -186,9 +186,9 @@ In a Spring Boot app with JobRunr's own starter, give the filter to its backgrou
 
 **Which jobs.** Every recurring job is a job, named by its id, with its schedule: a cron in its zone, checked against JobRunr's own fire times, or `every <interval>` for a `Duration`. The recurring jobs are read when the integration starts and every minute besides (`readEvery` sets it), and a recurring job deleted is declared again without its schedule. A job that is not recurring is watched only when its JobRunr name (`@Job(name = "...")`) is given to `watchJob`, each attempt a run of the CronWatch job of that name, with no schedule, so a queue of a million emails is not a million runs.
 
-**Runs.** JobRunr calls the filter in the worker thread just before the job runs and just after, so each attempt is a run (trigger `jobrunr`) opened and closed around the job in its own thread, and `Cronwatch.current()` works inside it. A job that throws fails its run; JobRunr's retries are runs of their own (see [Retries](#retries)).
+**Runs.** JobRunr calls the filter in the worker thread just before the job runs and just after, so each attempt is a run (trigger `jobrunr`) opened and closed around the job in its own thread, and `Cronwatch.current()` works inside it. A job that throws fails its run; JobRunr's retries are runs of their own (see [Retries](#retries)). An attempt whose end JobRunr never reports to the filter (one that ended in an `Error`, or an orphan JobRunr moved on) is closed failed when JobRunr applies the job's next state on this server, when the job's next attempt starts here, or by the check once the run has outlived the job's timeout and JobRunr no longer has that attempt processing.
 
-**The check.** `CronwatchJobRunr.scheduleCheck(scheduler)` schedules a recurring job of its own (`cronwatch-check`) every minute, which runs the sync and a check once per minute across the servers sharing the storage provider. Its runs are never a job.
+**The check.** `CronwatchJobRunr.scheduleCheck(scheduler)` schedules a recurring job of its own (`cronwatch-check`) every minute, which runs the sync and a check once per minute across the servers sharing the storage provider. Its runs are never a job. It syncs and checks every watch live on the server that runs it, and on a server with none it fails (an `IllegalStateException` saying the node has no live CronWatch watch), so JobRunr shows the check as failed: watch JobRunr on every server that runs the check.
 
 ## A crontab
 

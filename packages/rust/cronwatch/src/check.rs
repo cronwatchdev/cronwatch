@@ -1,6 +1,7 @@
 //! Checks, reads, and the interval (client.ts `check()`, `jobs()`,
 //! `silence()`, `start()`).
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -372,7 +373,8 @@ impl Client {
     /// seconds at least). Not for serverless functions, where nothing runs
     /// between requests: call [`check`](Self::check) from a cron there
     /// instead. A second call does nothing, under either name; [`stop`](Self::stop)
-    /// stops it.
+    /// stops it, and so does dropping every handle to the client: the task
+    /// holds none of its own between checks.
     pub fn start_checking(&self, every: Duration) {
         let mut timer = lock(&self.inner.timer);
         if timer.is_some() {
@@ -387,7 +389,10 @@ impl Client {
                 "[cronwatch] start_checking() was called with Deliver::AtCheck, so these checks send no alerts. Another process must run checks with Deliver::Now (the default) to send them."
             );
         }
-        let client = self.clone();
+        // Only a weak reference: a client no one holds any more stops
+        // checking (and alerting) rather than run until the runtime ends.
+        let weak = Arc::downgrade(&self.inner);
+        let handle = self.inner.handle.clone();
         *timer = Some(self.inner.handle.spawn(async move {
             tokio::time::sleep(FIRST_CHECK_DELAY).await;
             let mut ticker =
@@ -397,8 +402,11 @@ impl Client {
             // check, and the ticks it outlasted are not run back to back
             // after it.
             loop {
-                let client = client.clone();
-                client.inner.handle.clone().spawn(async move {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let client = Client { inner };
+                handle.spawn(async move {
                     if let Err(err) = client.check().await {
                         client.report(err, "check");
                     }

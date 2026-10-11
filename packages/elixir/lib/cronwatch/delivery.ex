@@ -200,8 +200,10 @@ defmodule Cronwatch.Delivery do
           {:ok, {:error, reason}} ->
             {:error, reason}
 
+          # Described by its shape alone: an app's channel may answer with
+          # its own state, credentials and all.
           {:ok, other} ->
-            {:error, "channel #{name} answered #{inspect(other)}"}
+            {:error, "channel #{name} answered #{Config.shape(other)}, not :ok or {:error, reason}"}
 
           {:exit, reason} ->
             {:error, {:exit, reason}}

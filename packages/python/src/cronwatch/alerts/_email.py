@@ -6,7 +6,7 @@ same options:
     from_:          the sender, "alerts@example.com" or "CronWatch <alerts@example.com>"
     to:             one address or several
     subject_prefix: put in front of the title in the subject, "[prod]" say
-    link:           lambda alert: f"https://app.example.com/cronwatch/jobs/{alert.job}"
+    link:           lambda alert: f"https://app.example.com/cronwatch/jobs/{urllib.parse.quote(alert.job, safe='')}"
 """
 
 from __future__ import annotations

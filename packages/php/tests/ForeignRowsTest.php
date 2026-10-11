@@ -155,9 +155,9 @@ final class ForeignRowsTest extends TestCase
                 $this->assertEquals($state, json_decode((string) $raw, true), $job);
             }
 
-            $web = $cw->routes(token: 'tok', basePath: '/cronwatch');
+            $web = $cw->routes(token: 'a-token-long-enough-not-to-warn', basePath: '/cronwatch');
             foreach ($c['read']['pages'] as $page) {
-                $response = $web->handle(Request::create('GET', "http://app.test{$page['path']}", ['authorization' => 'Bearer tok'], ''));
+                $response = $web->handle(Request::create('GET', "http://app.test{$page['path']}", ['authorization' => 'Bearer a-token-long-enough-not-to-warn'], ''));
                 $this->assertSame($page['status'], $response->status, $page['path']);
             }
             $this->assertSame($c['read']['reported'], $reported());
@@ -437,9 +437,9 @@ final class ForeignRowsTest extends TestCase
                 $errors[] = "{$context}: {$e->getMessage()}";
             });
             $cw->check();
-            $web = $cw->routes(token: 'tok', basePath: '/cronwatch');
+            $web = $cw->routes(token: 'a-token-long-enough-not-to-warn', basePath: '/cronwatch');
             foreach (['/cronwatch/', '/cronwatch/jobs/far', '/cronwatch/api/jobs/far'] as $path) {
-                $response = $web->handle(Request::create('GET', "http://app.test{$path}", ['authorization' => 'Bearer tok'], ''));
+                $response = $web->handle(Request::create('GET', "http://app.test{$path}", ['authorization' => 'Bearer a-token-long-enough-not-to-warn'], ''));
                 $this->assertSame(200, $response->status, $path);
             }
             $this->assertSame([], $errors);

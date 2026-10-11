@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -182,7 +183,7 @@ func build(t *testing.T, name string, o *js.Object, client *http.Client) cronwat
 				headers[k] = text(h, k)
 			}
 		}
-		ch, err = Webhook(WebhookOptions{URL: text(o, "url"), Secret: text(o, "secret"), Headers: headers, HTTPClient: client})
+		ch, err = Webhook(WebhookOptions{URL: text(o, "url"), Secret: text(o, "secret"), Headers: headers, Now: now, HTTPClient: client})
 	case "resend":
 		ch, err = Resend(ResendOptions{EmailOptions: email, APIKey: text(o, "apiKey"), HTTPClient: client})
 	case "postmark":
@@ -304,7 +305,12 @@ func TestConformanceChannels(t *testing.T) {
 			t.Fatal("channels.json has no webhookPayloads")
 		}
 		for _, c := range cases {
-			ch, err := Webhook(WebhookOptions{URL: "https://hooks.example.com/x", Secret: text(c, "secret"), HTTPClient: client})
+			// The clock the fixture's send read its timestamp from, to the second.
+			seconds, err := strconv.ParseInt(text(c, "timestamp"), 10, 64)
+			if err != nil {
+				t.Fatalf("timestamp %q: %v", text(c, "timestamp"), err)
+			}
+			ch, err := Webhook(WebhookOptions{URL: "https://hooks.example.com/x", Secret: text(c, "secret"), Now: func() int64 { return seconds*1000 + 999 }, HTTPClient: client})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -326,6 +332,49 @@ func TestConformanceChannels(t *testing.T) {
 			if sig := "sha256=" + Signature(text(c, "secret"), text(c, "body")); sig != text(c, "signature") {
 				t.Errorf("%s: Signature gives %q, want %q", what, sig, text(c, "signature"))
 			}
+			if ts := got[0].header.Get("X-Cronwatch-Timestamp"); ts != text(c, "timestamp") {
+				t.Errorf("%s: timestamp %q, want %q", what, ts, text(c, "timestamp"))
+			}
+			if sig := got[0].header.Get("X-Cronwatch-Timestamp-Signature"); sig != text(c, "timestampSignature") {
+				t.Errorf("%s: timestamp signature %q, want %q", what, sig, text(c, "timestampSignature"))
+			}
+			if sig := "sha256=" + Signature(text(c, "secret"), text(c, "timestamp")+"."+text(c, "body")); sig != text(c, "timestampSignature") {
+				t.Errorf("%s: Signature of the timestamped body gives %q, want %q", what, sig, text(c, "timestampSignature"))
+			}
+		}
+	})
+
+	// Slack's "open" link with the characters that would end it: link is
+	// what the link function returns, text the first block's mrkdwn.
+	t.Run("slackLinks", func(t *testing.T) {
+		cases := objects(field(f, "slackLinks"))
+		if len(cases) == 0 {
+			t.Fatal("channels.json has no slackLinks")
+		}
+		for _, c := range cases {
+			target := text(c, "link")
+			ch, err := Slack(SlackOptions{WebhookURL: "https://hooks.slack.example/T/B/secret", Link: func(cronwatch.Alert) string { return target }, HTTPClient: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec.reset(200, "")
+			if err := ch.Send(bg, first, cronwatch.ChannelContext{}); err != nil {
+				t.Fatalf("%s: %v", target, err)
+			}
+			got := rec.taken()
+			if len(got) != 1 {
+				t.Fatalf("%s: %d requests", target, len(got))
+			}
+			payload, err := js.Parse(got[0].body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocks, _ := field(payload.(*js.Object), "blocks").([]any)
+			mrkdwn, _ := field(blocks[0].(*js.Object), "text").(*js.Object)
+			if g := text(mrkdwn, "text"); g != text(c, "text") {
+				t.Errorf("%s: text %q, want %q", target, g, text(c, "text"))
+			}
+			count++
 		}
 	})
 

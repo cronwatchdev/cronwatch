@@ -674,14 +674,48 @@ internal static class Evaluate
             : double.NaN;
     }
 
+    /// <summary>When a run finished, or null while it runs (a run marked timeout has finished).</summary>
+    public static long? FinishedAtOf(Run run) => run.Status != RunStatus.Running ? run.FinishedAt : null;
+
     /// <summary>
-    /// Called when a run starts. Missed and stuck are about the absence of a run, so a run
-    /// starting closes them without an alert; the recovered message waits for a successful finish.
+    /// <c>catchesUp</c>: whether <paramref name="run"/> brings the schedule up to date at
+    /// <paramref name="now"/>, so missed may close for it: judged with it as the job's last run, as
+    /// <see cref="OnCheck"/> judges, the run the schedule wants next is not yet past its deadline.
+    /// A run that started before the fire missed opened for does not cover that fire, however late
+    /// it finishes, and neither does a run a source reports only once it is over whose start was
+    /// before it. Every run starting now covers it. A job with no schedule, or one that no longer
+    /// parses, has nothing due, so any run does.
     /// </summary>
-    public static JobState OnRunStart(JobState state)
+    public static bool CatchesUp(Definition def, Run run, long now)
+    {
+        if (!Truthy(def.Get("schedule")))
+        {
+            return true;
+        }
+        try
+        {
+            var exp = EvaluateDeps.Expectation(ScheduleOf(def), run.StartedAt, run.StartedAt, GraceMs(def), FinishedAtOf(run));
+            return exp == null || now <= exp.Value.Deadline;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Called when a run starts, or when a run a source reports is recorded. Missed and stuck are
+    /// about the absence of a run, so a run starting closes them without an alert; the recovered
+    /// message waits for a successful finish. Missed closes only when the run catches the schedule
+    /// up (<see cref="CatchesUp"/>), which a run starting now always does.
+    /// </summary>
+    public static JobState OnRunStart(Definition def, Run run, JobState state, long now)
     {
         var next = CloneState(state);
-        CloseCondition(next, Condition.Missed);
+        if (CatchesUp(def, run, now))
+        {
+            CloseCondition(next, Condition.Missed);
+        }
         CloseCondition(next, Condition.Stuck);
         return next.ToState();
     }
@@ -700,7 +734,9 @@ internal static class Evaluate
 
     /// <summary>
     /// Called when a run finishes with status ok, failed, or timeout. <paramref name="history"/> is
-    /// the job's earlier runs, newest first, not including this one.
+    /// the job's earlier runs, newest first, not including this one. Missed closes only when the
+    /// run catches the schedule up (<see cref="CatchesUp"/>): a run that started before the fire
+    /// missed opened for leaves it open.
     /// </summary>
     public static Evaluation OnRunFinish(Definition def, Run run, JobState state, IReadOnlyList<Run> history, long now)
     {
@@ -710,7 +746,10 @@ internal static class Evaluate
         if (run.Status == RunStatus.Ok)
         {
             next.ConsecutiveFailures = 0;
-            CloseCondition(next, Condition.Missed);
+            if (CatchesUp(def, run, now))
+            {
+                CloseCondition(next, Condition.Missed);
+            }
             CloseCondition(next, Condition.Stuck);
             CloseCondition(next, Condition.Failed);
 
@@ -769,7 +808,10 @@ internal static class Evaluate
         // failed or timeout
         // Held at 2^53 - 1: a count at the limit neither loses precision nor wraps below a threshold.
         next.ConsecutiveFailures = Math.Min(FailureCount(next.ConsecutiveFailures) + 1, MaxDurationMs);
-        CloseCondition(next, Condition.Missed);
+        if (CatchesUp(def, run, now))
+        {
+            CloseCondition(next, Condition.Missed);
+        }
         double threshold = FailuresBeforeAlert(def);
         bool timedOut = run.Status == RunStatus.Timeout;
         var condition = timedOut ? Condition.Stuck : Condition.Failed;
@@ -852,18 +894,19 @@ internal static class Evaluate
         ParsedSchedule parsed = ScheduleOf(def);
         double grace = GraceMs(def);
         long? lastRunAt = lastRun?.StartedAt;
-        var exp = EvaluateDeps.Expectation(parsed, lastRunAt, stored.CreatedAt, grace);
+        var exp = EvaluateDeps.Expectation(parsed, lastRunAt, stored.CreatedAt, grace, lastRun == null ? null : FinishedAtOf(lastRun));
         bool interval = EvaluateDeps.IsInterval(parsed);
         long? nextExpectedAt = interval
-            ? EvaluateDeps.NextFire(parsed, stored.CreatedAt, lastRunAt)
+            ? exp?.DueAt
             : EvaluateDeps.NextFire(parsed, now, null);
         if (exp == null)
         {
             return new CheckOutcome(new Evaluation(next.ToState(), alerts), nextExpectedAt, null);
         }
 
-        // An interval's next run is due a period after the last one started. If that run is
-        // still going, the job is busy, not late; stuck covers one that never ends.
+        // An interval's next run is due a period after the last one started, or after it finished
+        // when it outlasted the period (IntervalDue). If that run is still going, the job is busy,
+        // not late; stuck covers one that never ends.
         if (interval && lastRun != null && lastRun.Status == RunStatus.Running)
         {
             return new CheckOutcome(new Evaluation(next.ToState(), alerts), nextExpectedAt, exp.Value.DueAt);

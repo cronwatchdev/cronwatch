@@ -10,6 +10,7 @@ import dev.cronwatch.JobContext;
 import dev.cronwatch.JobOptions;
 import dev.cronwatch.JobState;
 import dev.cronwatch.Run;
+import dev.cronwatch.RunStatus;
 import dev.cronwatch.StoredJob;
 import dev.cronwatch.json.JsObject;
 import dev.cronwatch.json.Json;
@@ -131,6 +132,16 @@ class JdkServerTest {
     @Override
     public void updateRun(Run run) throws Exception {
       inner.updateRun(run);
+    }
+
+    @Override
+    public boolean updateRunIf(Run run, List<RunStatus> from) throws Exception {
+      return inner.updateRunIf(run, from);
+    }
+
+    @Override
+    public boolean compareAndSetState(JobState state, long expected) throws Exception {
+      return inner.compareAndSetState(state, expected);
     }
 
     @Override

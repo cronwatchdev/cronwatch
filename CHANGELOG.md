@@ -2,6 +2,101 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Fixed
+
+Every language:
+
+- A run that started before a missed fire no longer closes missed when it finishes. A cron job whose 02:00 run was still going at the 03:00 fire sent missed, then "recovered" when the run ended, then missed again for the same fire a minute later. Missed now closes only for a run that catches the schedule up, so it opens once and recovers once.
+- An interval job is no longer reported missed the moment a run that outlasted its period ends. When a run finishes later than its start plus the interval, the next run is due a period after the finish. The dashboard's timeline follows the same rule.
+- Inside a spring-forward gap, the checks and the timeline agree on one rule: every slot the pattern names still fires, a slot that falls in the gap moves forward by the gap's length (thirty minutes on Lord Howe Island), and one run at the jump covers every slot moved out of it. Before, the checks skipped some of those slots and the timeline others. Fall-back nights are unchanged.
+- The dashboard answers only at its base path and below it. A path such as `/cronwatch/../api/jobs` or `/cronwatchapi/jobs` was served as the dashboard's own API after its dot segments were resolved, which on a dashboard with no token of its own let a request past auth that matched on the path. Such paths are now answered 404 before any sign-in.
+- A Slack alert's link has `<`, `>`, and `|` percent-encoded, so a job name cannot break the link or add mrkdwn.
+- A user's webhook header replaces the default of the same name whatever its case, instead of being sent beside it, and can never replace the signature headers.
+- The trigger and metrics in a Claude triage prompt are fenced as job data, as the run's output and error already were.
+- Only the first 64 KiB of a refused alert's answer is read, and a body cut off by the deadline keeps what arrived. A successful answer is still read up to 1 MiB.
+
+TypeScript:
+
+- An `onError` that throws no longer stops a job from running, or loses its finish, when the store fails.
+
+Go:
+
+- Claude triage reads the job's earlier runs inside its own 25 second limit. A store that never answered that read held the shared check for good, so later checks, the dashboard's check, and the run that sent the alert all waited.
+
+Python:
+
+- A forked process (gunicorn with `preload_app`, Celery's prefork) resets every client's and store's locks and connections in the child before any thread runs, through `os.register_at_fork`. Before, a thread in the child could take a lock the parent held at the fork, or send queries down the parent's Postgres connection.
+- A malformed `Content-Length` on the WSGI dashboard or handler is answered 400 instead of 500, and is not reported to `on_error`.
+
+PHP:
+
+- `PostgresStore` and `MysqlStore` look in the catalog before creating their tables, and run no DDL when everything exists. On Postgres the DDL took a table lock on every request; on MySQL and MariaDB `CREATE TABLE IF NOT EXISTS` committed the app's open transaction when the store shared its connection.
+- Old runs are pruned once an hour across processes, as in the other languages, instead of on every check. The last prune time is kept in the state table under a reserved key.
+- The library no longer uses `ext-ctype`, which it did not require.
+- `SqliteStore` refuses a database file, or its directory, that the process cannot read and write, with a message that every process sharing it must run as the same user.
+
+Rust:
+
+- `start_checking` no longer keeps a client alive: dropping every handle stops the checks, as `stop()` does.
+
+Elixir:
+
+- Stopping the application waits at most 60 seconds for a check in flight, then stops it. A store call that never answered kept the release from shutting down.
+- The HTTP client closes its socket when a request fails to send, resolves IPv4 and IPv6 addresses at once, and gives each address a share of the deadline, so one unreachable address no longer uses all of it.
+- A custom channel's unexpected answer is described by its shape in the error report, never printed, so a secret it holds is not logged.
+- A run timeout longer than about 49 days is cancelled properly when its run ends.
+
+Java:
+
+- The servlet filter and the WebFlux filter decide which requests are the dashboard's from the normalised path, as the routes do.
+- The JobRunr and Quartz check jobs fail, so the scheduler shows it, on a node with no live CronWatch watch, instead of succeeding without checking.
+- JobRunr runs whose end JobRunr never reports are closed and dropped rather than kept for good.
+- More than one JobRunr watch in a JVM each get their checks; a second `watch` no longer replaces the first.
+
+.NET:
+
+- The Hangfire check job fails on a server that never called `UseCronwatch`, instead of succeeding without checking.
+- Hangfire's filter waits at most five seconds on the store when a job starts or ends, so a store outage no longer holds each worker for the store's whole timeout.
+- `MapCronwatch` keeps a `Cronwatch:Token` from configuration when the app passes its own `RoutesOptions` without a token.
+
+### Changed
+
+Every language:
+
+- A webhook with a secret also sends `X-CronWatch-Timestamp` (Unix seconds) and `X-CronWatch-Timestamp-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a full stop, and the body, so a receiver can refuse a replayed request. `X-CronWatch-Signature` is unchanged. Each webhook channel takes a clock option for tests.
+- A store without the conditional writes (`compareAndSetState` or `updateRunIf`, by each language's names) is reported once to `onError`, since processes sharing it can then judge a run twice or lose each other's updates.
+- `lastRun` is optional for a store of your own. Go moves it from `Store` to a new optional `LastRunner` interface, so code that calls `Store().LastRun` needs a type assertion; Rust and .NET give it a default; the built-in stores keep it.
+
+Python:
+
+- Django's `BASE_PATH` must be the prefix the dashboard's URLs are included under; a request outside it is answered 404.
+
+PHP:
+
+- A dashboard token shorter than 24 characters is reported once through `onError`, and still used.
+- The WordPress plugin needs WordPress 6.5 or newer, the Drupal and Craft API tokens need at least 24 characters, and the Craft dashboard answers only in the control panel. Each has its own changelog.
+
+.NET:
+
+- `MapCronwatch` requires authorization when the dashboard has no token of its own (`DashboardToken.None`); chain `AllowAnonymous()` to keep it open. `UseCronwatch` with no token logs a warning, once, that it relies on the app's authentication running first. New: `RoutesOptions.WithDefaultToken`, `WebhookOptions.Clock`.
+
+Java:
+
+- New: `Adapters.under(rawPath, base)`, the base path test the servlet and WebFlux filters use, and `WebhookOptions.now(LongSupplier)`.
+
+Rust:
+
+- `Cargo.lock` is committed, so CI and `cargo publish` build the same dependency versions from a commit.
+
+MCP server:
+
+- It refuses to start with a plain `http` URL to a host other than this machine; `--allow-http` or `CRONWATCH_ALLOW_HTTP=1` starts it with a warning.
+- Answers are kept to a size an agent can read (500 characters a line, 40,000 an answer, with a note of what was left out), job names are checked before any request, the dashboard's answers are read to at most 5 MB and checked for the fields each tool needs, and anything the dashboard says in an error is fenced as data.
+- `run_check` is marked open-world, since it sends alerts.
+- `@modelcontextprotocol/sdk` 1.31 or newer (GHSA-6qxp-vccf-f47h, in the SDK's OAuth client, which this server does not use).
+
 ## 0.13.1 - 2026-10-11
 
 ### Fixed

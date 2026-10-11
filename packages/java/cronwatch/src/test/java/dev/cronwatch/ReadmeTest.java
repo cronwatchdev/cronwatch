@@ -32,6 +32,8 @@ class ReadmeTest {
       import dev.cronwatch.store.MemoryStore;
       import dev.cronwatch.web.*;
       import java.net.InetSocketAddress;
+      import java.net.URLEncoder;
+      import java.nio.charset.StandardCharsets;
       import java.nio.file.Files;
       import java.nio.file.Path;
       import java.time.Duration;

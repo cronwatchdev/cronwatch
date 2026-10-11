@@ -86,7 +86,8 @@ class ScheduleConformanceTest {
               p,
               Fixtures.optInteger(c, "lastRunAt"),
               Fixtures.integer(c, "registeredAt"),
-              DurationConformanceTest.number(c.get("graceMs")));
+              DurationConformanceTest.number(c.get("graceMs")),
+              Fixtures.optInteger(c, "lastFinishedAt"));
       Object got =
           e == null ? null : new JsObject().set("dueAt", e.dueAt()).set("deadline", e.deadline());
       failures.same(
@@ -122,14 +123,31 @@ class ScheduleConformanceTest {
       failures.same("autumn " + c.get("schedule") + " in " + zone(c), out, c.get("next"));
     }
 
+    List<JsObject> between = Fixtures.objects(f, "firesBetween");
+    for (JsObject c : between) {
+      ParsedSchedule p = Schedules.parse(Fixtures.string(c, "schedule"), zone(c));
+      List<Long> got =
+          Schedules.firesBetween(
+              p,
+              Fixtures.integer(c, "from"),
+              Fixtures.integer(c, "to"),
+              (int) Fixtures.integer(c, "limit"));
+      failures.same(
+          "firesBetween " + c.get("schedule") + " in " + zone(c) + " from " + c.get("from"),
+          got,
+          c.get("fires"));
+    }
+
     failures.check("schedule");
     assertEquals(75, parse.size(), "parse cases");
-    assertEquals(70, fires.size(), "fires cases");
+    assertEquals(87, fires.size(), "fires cases");
     assertEquals(4, nextFire.size(), "nextFire cases");
-    assertEquals(575, expectation.size(), "expectation cases");
+    assertEquals(609, expectation.size(), "expectation cases");
+    assertEquals(9, between.size(), "firesBetween cases");
     assertEquals(13, runCovers.size(), "runCovers cases");
     assertEquals(8, autumn.size(), "autumn cases");
     DurationConformanceTest.known(
-        f, Set.of("parse", "fires", "nextFire", "expectation", "runCovers", "autumn"));
+        f,
+        Set.of("parse", "fires", "nextFire", "expectation", "runCovers", "autumn", "firesBetween"));
   }
 }

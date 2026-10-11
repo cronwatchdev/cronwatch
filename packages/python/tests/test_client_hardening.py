@@ -938,3 +938,130 @@ def test_a_date_in_digits_other_than_ascii_is_no_one_time_date_as_javascripts_di
         parse_schedule(text)
     with pytest.raises(ValueError, match="a one-time date is not supported"):
         parse_schedule("2026-12-01T00:00")
+
+
+def test_a_throwing_on_error_with_a_failing_store_still_runs_the_job_and_returns_its_result() -> None:
+    broken = {"upsert_job", "insert_run", "get_state", "set_state", "compare_and_set_state", "update_run", "update_run_if", "list_runs", "get_run"}
+    seen: list[str] = []
+
+    def on_error(_error: BaseException, where: str) -> None:
+        seen.append(where)
+        raise RuntimeError("logger down")
+
+    cw, _, _ = make(store=Flaky(MemoryStore(), broken), on_error=on_error)
+    ran = [0]
+
+    def ok(_ctx: Any) -> int:
+        ran[0] += 1
+        return 7
+
+    def own(_ctx: Any) -> None:
+        ran[0] += 1
+        raise ValueError("the job's own")
+
+    assert cw.run("t", ok) == 7
+    with pytest.raises(ValueError, match="the job's own"):
+        cw.run("t", own)
+    assert ran[0] == 2
+    assert seen and set(seen) == {"recording t"}, seen
+    # job.start() too: the handle comes back, and finishing it does not raise.
+    handle = cw.job("t").start()
+    assert handle.finish("done") is None
+
+
+def test_a_store_without_compare_and_set_state_or_update_run_if_is_reported_once_when_it_is_first_used() -> None:
+    class Plain:
+        """A memory store without the two conditional writes."""
+
+        def __init__(self) -> None:
+            self._store = MemoryStore()
+
+        def __getattr__(self, name: str) -> Any:
+            if name in ("compare_and_set_state", "update_run_if"):
+                raise AttributeError(name)
+            return getattr(self._store, name)
+
+    errors = Errors()
+    cw, _, _ = make(store=Plain(), on_error=errors)
+    cw.run("p", lambda ctx: None)
+    cw.run("p", lambda ctx: None)
+    cw.check()
+    assert errors.wheres == ["store"]
+    assert errors.messages[0] == (
+        "the store has no compare_and_set_state or update_run_if, so two processes sharing it can overwrite each other's state"
+        " or both evaluate the same run; it is safe only while one process at a time uses it"
+    )
+    one = Errors()
+    cw, _, _ = make(store=Wrapped(MemoryStore(), update_run_if=None), on_error=one)
+    cw.run("p", lambda ctx: None)
+    assert one.messages == [
+        "the store has no update_run_if, so two processes sharing it can overwrite each other's state"
+        " or both evaluate the same run; it is safe only while one process at a time uses it"
+    ]
+    # A store with both says nothing.
+    quiet = Errors()
+    cw, _, _ = make(on_error=quiet)
+    cw.run("p", lambda ctx: None)
+    assert quiet.items == []
+
+
+def test_a_cron_run_that_started_before_the_missed_fire_does_not_recover_missed_when_it_finishes() -> None:
+    from cronwatch._js import date_utc
+
+    cw, clock, alerts = make()
+    job = cw.job("hourly", schedule="0 * * * *", timezone="UTC", grace="10m", timeout="3h")
+    clock.set(date_utc(2026, 0, 5, 10, 0))
+    handle = job.start()
+    clock.set(date_utc(2026, 0, 5, 11, 15))
+    assert [str(a.type) for a in cw.check().alerts] == ["missed"], "11:00 never started"
+    clock.set(date_utc(2026, 0, 5, 11, 30))
+    handle.finish("done")
+    assert alerts.types() == ["missed"], "the 10:00 run does not cover 11:00, so nothing recovered"
+    clock.set(date_utc(2026, 0, 5, 11, 31))
+    assert cw.check().alerts == [], "and missed is not opened a second time"
+    assert [str(c) for c in cw.job_summary("hourly").open] == ["missed"]  # type: ignore[union-attr]
+    clock.set(date_utc(2026, 0, 5, 12, 0))
+    job.run(lambda ctx: None)
+    assert alerts.types() == ["missed", "recovered"]
+
+
+def test_a_run_a_source_reports_closes_missed_only_when_its_start_covers_the_fire() -> None:
+    from cronwatch._js import date_utc
+
+    cw, clock, alerts = make()
+    cw.job("imported", schedule="0 * * * *", timezone="UTC", grace="10m")
+    clock.set(date_utc(2026, 0, 5, 10, 0))
+    cw.record_run({"id": "a", "job": "imported", "status": "ok", "startedAt": clock.now(), "finishedAt": clock.now() + 1000, "durationMs": 1000})
+    clock.set(date_utc(2026, 0, 5, 11, 15))
+    assert [str(a.type) for a in cw.check().alerts] == ["missed"]
+    for run_id, minute, closes in (("b", 58, False), ("c", 59, True)):
+        started = date_utc(2026, 0, 5, 10, minute)
+        clock.set(started + 30 * MIN)
+        cw.record_run({"id": run_id, "job": "imported", "status": "ok", "startedAt": started, "finishedAt": clock.now(), "durationMs": 30 * MIN})
+        assert ("missed" not in [str(c) for c in cw.job_summary("imported").open]) is closes, run_id  # type: ignore[union-attr]
+    assert alerts.types() == ["missed", "recovered"]
+
+
+def test_an_interval_job_is_due_a_period_after_a_run_that_outlasted_the_period_finished() -> None:
+    from cronwatch._js import date_utc
+
+    cw, clock, alerts = make()
+    job = cw.job("every-hour", schedule="every 1h", grace="10m", timeout="3h")
+    clock.set(date_utc(2026, 0, 5, 10, 0))
+    handle = job.start()
+    clock.set(date_utc(2026, 0, 5, 11, 30))
+    handle.finish("done")
+    clock.set(date_utc(2026, 0, 5, 11, 31))
+    checked = cw.check()
+    assert checked.alerts == [], "not missed the moment it ends"
+    assert next(j for j in checked.jobs if j.name == "every-hour").next_expected_at == date_utc(2026, 0, 5, 12, 30)
+    clock.set(date_utc(2026, 0, 5, 12, 40))
+    assert cw.check().alerts == []
+    clock.set(date_utc(2026, 0, 5, 12, 41))
+    assert [str(a.type) for a in cw.check().alerts] == ["missed"]
+    assert alerts.alerts[0].to_dict()["details"] == {
+        "dueAt": date_utc(2026, 0, 5, 12, 30),
+        "deadline": date_utc(2026, 0, 5, 12, 40),
+        "graceMs": 10 * MIN,
+        "lastRunAt": date_utc(2026, 0, 5, 10, 0),
+    }

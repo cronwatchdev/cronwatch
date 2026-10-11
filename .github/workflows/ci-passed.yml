@@ -11,7 +11,9 @@
 # hand with a tag, it is the commit that tag names now. Either way it is the
 # job's output "sha", which the publish jobs check out, so what is published
 # is exactly what CI tested. A CI run that failed and was then run again
-# counts by its latest attempt.
+# counts by its latest attempt. A run that skipped the packages' jobs (a push
+# touching only site/ and deploy/) passed without testing them, so it does
+# not count.
 name: CI passed
 
 on:
@@ -61,7 +63,7 @@ jobs:
           appear=$((SECONDS + 600))
           while :; do
             run="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&branch=main&per_page=1" \
-              --jq '.workflow_runs[0] // empty | [.status, (.conclusion // "none"), .html_url] | @tsv')"
+              --jq '.workflow_runs[0] // empty | [.id, .status, (.conclusion // "none"), .html_url] | @tsv')"
             if [ -z "$run" ]; then
               if [ "$SECONDS" -ge "$appear" ]; then
                 echo "CI has no run on a push to main for $sha; push the tagged commit to main, let CI pass, then start this again."
@@ -69,9 +71,18 @@ jobs:
               fi
               echo "No CI run for $sha yet"
             else
-              IFS=$'\t' read -r status conclusion url <<< "$run"
+              IFS=$'\t' read -r id status conclusion url <<< "$run"
               if [ "$status" = "completed" ]; then
                 if [ "$conclusion" = "success" ]; then
+                  # A push touching only site/ and deploy/ skips the packages'
+                  # jobs and still passes; that run tested nothing a release
+                  # publishes. Every entry of the test job must have passed.
+                  tests="$(gh api --paginate "repos/$REPO/actions/runs/$id/jobs?filter=latest&per_page=100" \
+                    --jq '.jobs[] | select(.name == "test" or (.name | startswith("test ("))) | .conclusion // "none"')"
+                  if [ -z "$tests" ] || printf '%s\n' "$tests" | grep -qvx success; then
+                    echo "CI passed on $sha but did not run the packages' tests (a push touching only site/ and deploy/ skips them): $url"
+                    exit 1
+                  fi
                   echo "CI passed on $sha: $url"
                   echo "sha=$sha" >> "$GITHUB_OUTPUT"
                   exit 0

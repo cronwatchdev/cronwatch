@@ -446,3 +446,62 @@ func TestALongHostOutsideASCIIIsNotRead(t *testing.T) {
 		t.Fatalf("took %v", d)
 	}
 }
+
+// triageReadHangs is a store whose read of a job's last five runs, the
+// read triage makes, answers only when its context ends.
+type triageReadHangs struct{ *MemoryStore }
+
+func (s triageReadHangs) ListRuns(ctx context.Context, job string, limit int) ([]Run, error) {
+	if limit == 5 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.MemoryStore.ListRuns(ctx, job, limit)
+}
+
+// The audit: triage read the job's runs with no deadline, before its own
+// timer started, so a store that never answered held the shared check for
+// good. The read counts toward the triage's timeout now.
+func TestATriageWhoseStoreReadHangsDoesNotHoldTheCheck(t *testing.T) {
+	shorten(t, &triageTimeout, 50*time.Millisecond)
+	var clock atomic.Int64
+	clock.Store(1767605400000)
+	errs := &errorsOf{}
+	alerts := &alertsOf{}
+	var triaged atomic.Bool
+	cw := MustNew(WithStore(triageReadHangs{NewMemoryStore()}), WithClock(clock.Load), WithAlerts(alerts), WithErrorHandler(errs.add), WithoutCronSecret(),
+		WithTriage(func(context.Context, TriageContext) (string, error) {
+			triaged.Store(true)
+			return "a diagnosis", nil
+		}))
+	if _, err := cw.Job("minutely", Schedule("every 1m")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cw.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	clock.Add(3_600_000)
+	done := make(chan error, 1)
+	go func() {
+		_, err := cw.Check(context.Background())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check is still held by the store's read")
+	}
+	sameStrings(t, "alerts", alerts.types(), []string{"missed"})
+	sameStrings(t, "errors", errs.wheres(), []string{"triage for minutely"})
+	if triaged.Load() {
+		t.Error("triage ran without the job's runs")
+	}
+	alerts.mu.Lock()
+	if alerts.list[0].Triage != nil || !alerts.list[0].TriageTried {
+		t.Error("a triage whose read timed out is tried once and gives nothing")
+	}
+	alerts.mu.Unlock()
+}

@@ -21,7 +21,9 @@ public abstract class ChannelBuilder<B extends ChannelBuilder<B>> {
 
   /**
    * A link back to the job in your dashboard: {@code alert ->
-   * "https://app.example.com/cronwatch/jobs/" + alert.job()}. Null or {@code ""} is no link.
+   * "https://app.example.com/cronwatch/jobs/" + URLEncoder.encode(alert.job(), UTF_8)}. Null or
+   * {@code ""} is no link. Slack percent-encodes any {@code <}, {@code >}, or {@code |} in it, so
+   * it cannot end Slack's link early.
    */
   public B link(Function<Alert, @Nullable String> link) {
     this.link = Objects.requireNonNull(link, "link");

@@ -51,6 +51,7 @@ defmodule Cronwatch.Core do
       Locks.with_lock(c.name, :ready, fn ->
         unless Runs.flag?(c.name, :ready) do
           if Store.has?(c.store, :init, 0), do: store!(c, :init, [])
+          report_missing(c)
 
           if c.default_store and Cronwatch.Env.production?() do
             Logger.warning(
@@ -65,6 +66,23 @@ defmodule Cronwatch.Core do
     end
 
     :ok
+  end
+
+  # Once per instance: a store without the conditional writes still works,
+  # but only as long as one process at a time uses it.
+  defp report_missing(c) do
+    missing =
+      for {fun, arity} <- [compare_and_set_state: 2, update_run_if: 2],
+          not Store.has?(c.store, fun, arity),
+          do: Atom.to_string(fun)
+
+    if missing != [] do
+      message =
+        "the store has no #{Enum.join(missing, " or ")}, so two processes sharing it can overwrite " <>
+          "each other's state or both evaluate the same run; it is safe only while one process at a time uses it"
+
+      report(c, Error.other(message), "store")
+    end
   end
 
   @doc """

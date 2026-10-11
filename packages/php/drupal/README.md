@@ -23,7 +23,7 @@ Installing makes three tables in the site's database (`cronwatch_jobs`, `cronwat
 
 - **Cron.** Every cron run, whatever starts it (Automated Cron after a page, `drush cron`, a system cron requesting `/cron/<key>`), is a run of the job `drupal:cron`, and each module's `hook_cron` in it a run of `drupal:<module>`, with what it logged and the exception it threw. Drupal carries on past a module's exception, so that module's run fails and the others and the cron run itself do not.
 - **The schedule.** Drupal's cron has no schedule per hook: every `hook_cron` runs on every cron run. So only `drupal:cron` has one, the site's: the one under the settings (what your crontab does, `*/15 * * * *` or `every 1h`), else Automated Cron's interval (`every 3h` by default), else none. When cron stops, that is one missed alert, not one per module.
-- **Queues.** Choose queue workers under the settings, or mark a worker class `#[Cronwatch\Watch]`, and every item it processes is a run of `drupal:queue:<worker>` (in cron, `drush queue:run`, anywhere). An item that throws, or asks to be requeued, is a failed attempt; the attempt that succeeds closes the alert.
+- **Queues.** Choose queue workers under the settings, or mark a worker class `#[Cronwatch\Watch]`, and every item it processes is a run of `drupal:queue:<worker>` (in cron, `drush queue:run`, anywhere). An item that throws, or asks to be requeued, is a failed attempt; the attempt that succeeds closes the alert. A watched worker is wrapped (Drupal has no one place that runs queue items to hook instead): a method of the worker's own is passed on to it, but an `instanceof` test of its class is false, so leave a queue unwatched if other code tests for its worker's class.
 
 A module's code can log to its run with `Cronwatch\Cronwatch::current()?->log('...')` and record numbers with `->metric('name', 1.5)`.
 
@@ -62,7 +62,7 @@ A channel's key is named `<provider>_<field>`, as the settings form names it: `p
 
 Reports, CronWatch (`/admin/reports/cronwatch`), for users with "View the CronWatch dashboard": the jobs' health, the last day as a timeline, each job's runs and output. Silencing, forgetting, and "Run check now" need "Administer CronWatch" as well, and carry Drupal's CSRF token.
 
-The JSON API that [`@cronwatch/mcp`](https://www.npmjs.com/package/@cronwatch/mcp) talks to is off until a token is set in `settings.php` (`$settings['cronwatch_token'] = '...'`, or the `CRONWATCH_TOKEN` environment variable); it is then at `https://example.com/cronwatch/api`, with the token as a bearer token.
+The JSON API that [`@cronwatch/mcp`](https://www.npmjs.com/package/@cronwatch/mcp) talks to is off until a token is set in `settings.php` (`$settings['cronwatch_token'] = '...'`, or the `CRONWATCH_TOKEN` environment variable); it is then at `https://example.com/cronwatch/api`, with the token as a bearer token. The token needs at least 24 characters (`openssl rand -hex 24` makes one); a shorter one keeps the API shut (503), and the reason is in the site's log and on CronWatch's settings.
 
 ## Settings in settings.php
 

@@ -117,16 +117,24 @@ func normalizePath(raw string) string {
 	return "/" + strings.Join(out, "/")
 }
 
-// stripBase is the path under the base, without a trailing slash.
-func stripBase(pathname, base string) string {
-	path := strings.TrimPrefix(pathname, base)
+// stripBase is the path under the base, without a trailing slash, or false
+// when the request is not under it. The pathname, its dot segments already
+// resolved (normalizePath), must be the base or start with the base and a
+// "/": "/cronwatchapi/jobs" is not under "/cronwatch", and neither is
+// "/cronwatch/../api/jobs" (read as "/api/jobs"). An empty base, for routes
+// mounted at the root, takes every path.
+func stripBase(pathname, base string) (string, bool) {
+	if base != "" && pathname != base && !strings.HasPrefix(pathname, base+"/") {
+		return "", false
+	}
+	path := pathname[len(base):]
 	if path == "" {
 		path = "/"
 	}
 	if len(path) > 1 && strings.HasSuffix(path, "/") {
 		path = path[:len(path)-1]
 	}
-	return path
+	return path, true
 }
 
 // safeDecode is decodeURIComponent, or false where it would throw: an

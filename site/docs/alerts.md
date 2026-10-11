@@ -18,7 +18,7 @@ import { slack } from "@cronwatch/sdk/slack";
 
 slack({
   webhookUrl: process.env.SLACK_WEBHOOK_URL!,
-  link: (alert) => `https://app.example.com/cronwatch/jobs/${alert.job}`,   // optional "open" link
+  link: (alert) => `https://app.example.com/cronwatch/jobs/${encodeURIComponent(alert.job)}`,   // optional "open" link
 });
 ```
 
@@ -35,7 +35,7 @@ Job output is shown inside a code block it cannot break out of, and messages nev
 
 ## Webhook
 
-POSTs the alert as JSON to any URL: the [alert payload](#the-alert-payload) below, with `"schema": 1` as its first field. With a `secret`, each request carries `X-CronWatch-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw body. A failed request is reported with the URL's origin only, since a webhook's path often holds its credential.
+POSTs the alert as JSON to any URL: the [alert payload](#the-alert-payload) below, with `"schema": 1` as its first field. With a `secret`, each request carries `X-CronWatch-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw body, and, so a receiver can refuse a captured request sent again, `X-CronWatch-Timestamp` (Unix seconds) with `X-CronWatch-Timestamp-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a full stop, and the raw body. A failed request is reported with the URL's origin only, since a webhook's path often holds its credential.
 
 ```ts
 import { webhook } from "@cronwatch/sdk/webhook";
@@ -53,7 +53,7 @@ const received = Buffer.from(request.headers.get("x-cronwatch-signature") ?? "")
 const ok = received.length === expected.length && timingSafeEqual(received, expected);
 ```
 
-`timingSafeEqual` throws when the two buffers differ in length, so compare the lengths first: a request with no signature, or a short one, is then refused rather than crashing the handler. Hash the raw body as it arrived, before any JSON parsing. Without the SDK, `createHmac("sha256", secret).update(rawBody).digest("hex")` from `node:crypto` gives the same hex.
+`timingSafeEqual` throws when the two buffers differ in length, so compare the lengths first: a request with no signature, or a short one, is then refused rather than crashing the handler. Hash the raw body as it arrived, before any JSON parsing. To refuse replays, check the timestamped signature instead: compute `signature(secret, `${timestamp}.${rawBody}`)` with the `X-CronWatch-Timestamp` value, compare it with `X-CronWatch-Timestamp-Signature` the same way, and refuse a timestamp more than five minutes from your clock. Retries of an undelivered alert are new requests with a new timestamp; if a repeat matters, dedupe on the alert's `job`, `type`, `at`, and `run.id`, which a retry keeps. Without the SDK, `createHmac("sha256", secret).update(rawBody).digest("hex")` from `node:crypto` gives the same hex.
 
 ## Email, SMS, and error trackers
 

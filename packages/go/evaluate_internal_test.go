@@ -76,7 +76,7 @@ func TestMissedClosedByARunStartStillRecovers(t *testing.T) {
 		t.Fatal(types(missed.alerts), err)
 	}
 	// A run starts (closing missed without a message) and fails, below the alert threshold.
-	started := onRunStart(missed.state)
+	started := onRunStart(d, startingRun("j", t0), missed.state, t0)
 	if len(started.Open) != 0 {
 		t.Error("missed closed")
 	}
@@ -85,7 +85,7 @@ func TestMissedClosedByARunStartStillRecovers(t *testing.T) {
 		t.Error(types(failed.alerts))
 	}
 	// The next success owes the recovery.
-	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+tHour, 1000), onRunStart(failed.state), nil, t0+tHour+1000)
+	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+tHour, 1000), onRunStart(d, startingRun("j", t0+tHour), failed.state, t0+tHour), nil, t0+tHour+1000)
 	if strings.Join(types(good.alerts), ",") != "recovered" || js.Stringify(good.alerts[0].Details.jsValue()) != `{"after":["missed"]}` {
 		t.Error(types(good.alerts))
 	}
@@ -98,7 +98,7 @@ func TestStuckClosedByTheNextStartIsRecoveredByALaterSuccess(t *testing.T) {
 		t.Fatal(types(stuck.alerts))
 	}
 	// The next run starts in another process, so its finish sees stuck already closed.
-	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+tMin, 1000), onRunStart(stuck.state), nil, t0+2*tMin)
+	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+tMin, 1000), onRunStart(d, startingRun("j", t0+tMin), stuck.state, t0+tMin), nil, t0+2*tMin)
 	if js.Stringify(good.alerts[0].Details.jsValue()) != `{"after":["stuck"]}` {
 		t.Error(js.Stringify(good.alerts[0].Details.jsValue()))
 	}
@@ -256,7 +256,7 @@ func TestAFractionalThresholdIsKeptInTheDetails(t *testing.T) {
 	var drafts []alertDraft
 	for i := range 3 {
 		at := t0 + int64(i)*tHour
-		e, err := onRunFinish(d, testRun("j", StatusFailed, at, 1000), onRunStart(state), nil, at+1000)
+		e, err := onRunFinish(d, testRun("j", StatusFailed, at, 1000), onRunStart(d, startingRun("j", at), state, at), nil, at+1000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,4 +279,9 @@ func TestAFractionalThresholdIsKeptInTheDetails(t *testing.T) {
 	if back := js.Stringify(detailsFrom(AlertFailed, v.(*js.Object)).jsValue()); back != got {
 		t.Errorf("read back: %s", back)
 	}
+}
+
+// startingRun is a run of job as it starts at at, still running.
+func startingRun(job string, at int64) Run {
+	return Run{ID: "starting", Job: job, Status: StatusRunning, StartedAt: at, Metrics: Metrics{}, Trigger: "run"}
 }

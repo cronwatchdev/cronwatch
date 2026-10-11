@@ -246,13 +246,15 @@ export interface Store {
    * This is what lets exactly one of several processes finishing the same run
    * evaluate it; the others see false and report the run as already finished.
    * A store without it falls back to getRun then updateRun, which is safe only
-   * when one process at a time finishes a given run.
+   * when one process at a time finishes a given run; the client reports that
+   * once, through onError, when it first uses the store.
    */
   updateRunIf?(run: Run, fromStatuses: Run["status"][]): Promise<boolean>;
   getRun(id: string): Promise<Run | null>;
   /** Newest first. */
   listRuns(job: string, limit: number): Promise<Run[]>;
-  lastRun(job: string): Promise<Run | null>;
+  /** The newest run of a job. The client never calls it; the built-in stores keep it for callers of their own. */
+  lastRun?(job: string): Promise<Run | null>;
   runningRuns(): Promise<Run[]>;
   getState(job: string): Promise<JobState | null>;
   /** Write a job's state unconditionally. Used only when compareAndSetState is missing. */
@@ -263,7 +265,8 @@ export interface Store {
    * whether it wrote. This is what keeps two processes sharing a store from
    * overwriting each other's updates: the client reads, computes, and on a
    * refused write reads again. A store without it falls back to setState,
-   * which is safe only when one process at a time writes a job's state.
+   * which is safe only when one process at a time writes a job's state; the
+   * client reports that once, through onError, when it first uses the store.
    */
   compareAndSetState?(state: JobState, expectedVersion: number): Promise<boolean>;
   /** Delete finished runs that started before this time. Returns how many. */

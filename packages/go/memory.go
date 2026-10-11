@@ -32,6 +32,7 @@ var (
 	_ RunUpdater    = (*MemoryStore)(nil)
 	_ StateComparer = (*MemoryStore)(nil)
 	_ RunDeleter    = (*MemoryStore)(nil)
+	_ LastRunner    = (*MemoryStore)(nil)
 )
 
 // Text is held as the SQL stores write it (see sqlstore), without U+0000,

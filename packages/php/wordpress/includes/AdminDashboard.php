@@ -96,12 +96,28 @@ final class AdminDashboard
         }
         $globals = Request::fromGlobals($server, Request::readInput());
         $request = new Request($method, Request::normalizePath(self::MARKER . $path), implode('&', $query), $globals->headers, $globals->body(), $globals->origin);
-        if ($method === 'POST' && ($path === '/check' || $path === '/api/check')) {
+        if ($method === 'POST' && self::isCheck(substr($request->path, strlen(self::MARKER)))) {
             // The plugin's check: WP-Cron's events declared as jobs first.
             Plugin::prepare();
         }
         $dashboard = new Dashboard(Plugin::client(), token: null, basePath: self::MARKER, origin: self::origin(admin_url()), empty: self::emptyBoard(), head: [self::class, 'head']);
         return self::rewrite($dashboard->handle($request));
+    }
+
+    /**
+     * Whether a path of the dashboard's is its check, /check or /api/check,
+     * read as the dashboard reads it: empty segments left out, each one
+     * percent-decoded (as Drupal's and Craft's DashboardController do).
+     */
+    public static function isCheck(string $path): bool
+    {
+        $parts = [];
+        foreach (explode('/', $path) as $part) {
+            if ($part !== '') {
+                $parts[] = rawurldecode($part);
+            }
+        }
+        return $parts === ['check'] || $parts === ['api', 'check'];
     }
 
     /**

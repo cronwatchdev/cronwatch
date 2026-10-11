@@ -4,7 +4,9 @@ import dev.cronwatch.Cronwatch;
 import dev.cronwatch.CronwatchException;
 import dev.cronwatch.JobOptions;
 import dev.cronwatch.ObservedRun;
+import dev.cronwatch.Run;
 import dev.cronwatch.RunOptions;
+import dev.cronwatch.RunStatus;
 import dev.cronwatch.bridge.Entry;
 import dev.cronwatch.bridge.FireTimes;
 import dev.cronwatch.bridge.ScheduleException;
@@ -19,7 +21,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,7 +34,10 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jobrunr.jobs.Job;
 import org.jobrunr.jobs.RecurringJob;
+import org.jobrunr.jobs.filters.ApplyStateFilter;
 import org.jobrunr.jobs.filters.JobServerFilter;
+import org.jobrunr.jobs.states.FailedState;
+import org.jobrunr.jobs.states.JobState;
 import org.jobrunr.jobs.states.ProcessingState;
 import org.jobrunr.jobs.states.StateName;
 import org.jobrunr.scheduling.JobScheduler;
@@ -60,10 +67,13 @@ import org.jspecify.annotations.Nullable;
  * Cronwatch#current()} and {@code job.log} work inside it. Each attempt is a run (trigger {@code
  * jobrunr}, id {@code jobrunr:<app>:<job id>:<attempt>}), so a retry is a run of its own, as the
  * gem's Sidekiq rules have it: failing attempts open one failed alert and the one that succeeds
- * closes it. An attempt deleted from JobRunr's dashboard while it runs is given back, not judged;
- * one that ends in an {@code Error}, which JobRunr reports to no filter, is closed failed when the
- * job's next attempt opens. Recurring jobs are the CronWatch jobs named by their ids; a job that is
- * not recurring is watched only when its JobRunr name is given to {@link JobRunrOptions#watchJob}.
+ * closes it. An attempt deleted from JobRunr's dashboard while it runs is given back, not judged.
+ * One JobRunr never reports the end of to a filter (an {@code Error}, or an orphan moved on) is
+ * closed failed when JobRunr applies the job's next state in this JVM ({@link #onStateApplied}),
+ * when the job's next attempt opens, or by the check once the check has marked its run timed out
+ * and JobRunr no longer has that attempt processing. Recurring jobs are the CronWatch jobs named by
+ * their ids; a job that is not recurring is watched only when its JobRunr name is given to {@link
+ * JobRunrOptions#watchJob}.
  *
  * <p>A recurring job's cron is read in its zone and checked against JobRunr's own fire times
  * ({@link SchedulerBridge#checkFires}); one JobRunr reads differently is reported once and watched
@@ -72,7 +82,7 @@ import org.jspecify.annotations.Nullable;
  * deleted is declared again without its schedule, so it is never reported missed. Jobs are tagged
  * {@code jobrunr} and {@code jobrunr:<app>}.
  */
-public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
+public final class CronwatchJobRunr implements JobServerFilter, ApplyStateFilter, AutoCloseable {
   /** The tag every job this integration declares carries. */
   public static final String TAG = "jobrunr";
 
@@ -84,14 +94,22 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
 
   private static final String SCHEDULER = "JobRunr";
 
-  /** The integration the check job runs, the one watched last in this JVM. */
-  private static volatile @Nullable CronwatchJobRunr current;
+  /** The integrations watching in this JVM, each of which the check job runs. */
+  private static final Set<CronwatchJobRunr> LIVE = ConcurrentHashMap.newKeySet();
+
+  /** What a server with no live watch fails the check job with. */
+  static final String NO_WATCH =
+      "cronwatch: this node has no live CronWatch watch of JobRunr, so the check did not run; call"
+          + " CronwatchJobRunr.watch(cw, storageProvider) on every server that runs the check";
 
   private final Cronwatch cw;
   private final StorageProvider storage;
   private final JobRunrOptions options;
   private final Watch watch;
-  private final Map<UUID, ObservedRun> open = new ConcurrentHashMap<>();
+  private final Map<UUID, Opened> open = new ConcurrentHashMap<>();
+
+  /** A run open around an attempt, and which attempt of the job it is. */
+  private record Opened(ObservedRun run, long attempt) {}
 
   private final ReentrantLock lock = new ReentrantLock();
   private final Condition wake = lock.newCondition();
@@ -124,13 +142,13 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
   /**
    * Watches the recurring jobs {@code storage} holds: they are declared now, and read again every
    * minute. Give the returned filter to the background job server, so each attempt is recorded.
-   * {@link #close} stops it.
+   * {@link #close} stops it. Each watch live in the JVM is synced and checked by the check job.
    */
   public static CronwatchJobRunr watch(
       Cronwatch cw, StorageProvider storage, JobRunrOptions options) {
     CronwatchJobRunr w = new CronwatchJobRunr(cw, storage, options);
     w.read();
-    current = w;
+    LIVE.add(w);
     Thread.ofVirtual().name("cronwatch-jobrunr").start(w::readLoop);
     return w;
   }
@@ -150,24 +168,94 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
   }
 
   /**
-   * The check job's work, run by JobRunr: {@link #sync} within 30 seconds, then a check, on the
-   * integration watched in this JVM. Never throws, and is never retried.
+   * The check job's work, run by JobRunr, on every integration watching in this JVM: {@link #sync}
+   * within 30 seconds, then a check of each client, then the runs JobRunr will never report the end
+   * of are closed. A failed sync or check is reported to the client's error handler. Never retried.
+   *
+   * @throws IllegalStateException when nothing in this JVM watches JobRunr, so JobRunr records the
+   *     check as failed rather than as a check that ran
    */
   @org.jobrunr.jobs.annotations.Job(name = "CronWatch check", retries = 0)
   public static void runCheck() {
-    CronwatchJobRunr w = current;
-    if (w != null && !w.isClosed()) {
-      w.checkNow();
+    List<CronwatchJobRunr> live = new ArrayList<>();
+    for (CronwatchJobRunr w : LIVE) {
+      if (!w.isClosed()) {
+        live.add(w);
+      }
+    }
+    if (live.isEmpty()) {
+      throw new IllegalStateException(NO_WATCH);
+    }
+    for (CronwatchJobRunr w : live) {
+      SchedulerBridge.syncWithin(w.cw, w.syncTimeout, "jobrunr", w::sync);
+    }
+    // Two watches of one client (two storage providers, say) check it once.
+    Set<Cronwatch> checked = Collections.newSetFromMap(new IdentityHashMap<>());
+    for (CronwatchJobRunr w : live) {
+      if (checked.add(w.cw)) {
+        w.checkClient();
+      }
+    }
+    for (CronwatchJobRunr w : live) {
+      w.sweep();
     }
   }
 
+  /** {@link #runCheck}'s work for this watch alone. */
   void checkNow() {
     SchedulerBridge.syncWithin(cw, syncTimeout, "jobrunr", this::sync);
+    checkClient();
+    sweep();
+  }
+
+  private void checkClient() {
     try {
       cw.check();
     } catch (RuntimeException e) {
       cw.reportError(e, "jobrunr");
     }
+  }
+
+  /**
+   * Closes, failed, each run of this JVM's whose attempt JobRunr will never report the end of here:
+   * the check has marked it timed out, so it outlived the job's timeout (or its row is gone), and
+   * JobRunr no longer has that attempt processing (another server moved the orphan on, or it was
+   * deleted). One JobRunr still has processing is kept, to be closed when it ends.
+   */
+  void sweep() {
+    for (Map.Entry<UUID, Opened> e : List.copyOf(open.entrySet())) {
+      Opened o = e.getValue();
+      try {
+        if (processing(e.getKey(), o.attempt())) {
+          continue;
+        }
+        Run stored = cw.getRun(o.run().id());
+        if (stored != null && stored.status().equals(RunStatus.RUNNING)) {
+          continue;
+        }
+        if (open.remove(e.getKey(), o)) {
+          unfinished(o.run());
+        }
+      } catch (RuntimeException ex) {
+        cw.reportError(ex, "jobrunr");
+      }
+    }
+  }
+
+  /** Whether JobRunr has the job's {@code attempt}th attempt processing now. */
+  private boolean processing(UUID id, long attempt) {
+    Job job;
+    try {
+      job = storage.getJobById(id);
+    } catch (RuntimeException e) {
+      // Gone (JobRunr's JobNotFoundException): nothing will end it.
+      return false;
+    }
+    return job != null && job.getState() == StateName.PROCESSING && attemptOf(job) == attempt;
+  }
+
+  private static long attemptOf(Job job) {
+    return Math.max(1, job.getJobStatesOfType(ProcessingState.class).count());
   }
 
   /** The watch that declares the recurring jobs, for an integration built on this one. */
@@ -197,8 +285,8 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
   }
 
   /**
-   * Stops watching: no attempt is recorded from now on, and the recurring jobs are no longer read.
-   * A run open now is still closed when its attempt ends.
+   * Stops watching: no attempt is recorded from now on, the recurring jobs are no longer read, and
+   * the check job no longer runs this watch. A run open now is still closed when its attempt ends.
    */
   @Override
   public void close() {
@@ -209,9 +297,7 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
     } finally {
       lock.unlock();
     }
-    if (current == this) {
-      current = null;
-    }
+    LIVE.remove(this);
   }
 
   private boolean isClosed() {
@@ -421,15 +507,16 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
           return;
         }
       }
-      long attempt = job.getJobStatesOfType(ProcessingState.class).count();
-      String id = "jobrunr:" + watch.appSlug() + ":" + job.getId() + ":" + Math.max(1, attempt);
+      long attempt = attemptOf(job);
+      String id = "jobrunr:" + watch.appSlug() + ":" + job.getId() + ":" + attempt;
       // Closed before the next opens, so the new run does not keep it as the current run to put
       // back when it ends.
-      ObservedRun stale = open.remove(job.getId());
+      Opened stale = open.remove(job.getId());
       if (stale != null) {
-        unfinished(stale);
+        unfinished(stale.run());
       }
-      open.put(job.getId(), cwJob.open(RunOptions.trigger(TRIGGER).withId(id)));
+      open.put(
+          job.getId(), new Opened(cwJob.open(RunOptions.trigger(TRIGGER).withId(id)), attempt));
     } catch (RuntimeException e) {
       cw.reportError(e, "jobrunr");
     }
@@ -449,14 +536,51 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
     }
   }
 
+  /**
+   * Closes a run JobRunr moved on from without reporting its end to {@code onProcessingSucceeded}
+   * or {@code onProcessingFailed}: the job failed outside the attempt (an orphan this server's
+   * JobRunr moved on, say), was deleted, or was scheduled or enqueued again while its run was open.
+   * In the usual course those two have closed the run already, before JobRunr applies the state.
+   */
   @Override
-  public void onProcessingSucceeded(Job job) {
-    ObservedRun run = open.remove(job.getId());
-    if (run == null) {
+  public void onStateApplied(Job job, JobState oldState, JobState newState) {
+    if (newState.getName() == StateName.PROCESSING) {
+      return;
+    }
+    Opened o = open.remove(job.getId());
+    if (o == null) {
       return;
     }
     try {
-      run.close(null);
+      switch (newState.getName()) {
+        case SUCCEEDED -> o.run().close(null);
+        case DELETED -> o.run().takeBack();
+        case FAILED -> {
+          FailedState failed = (FailedState) newState;
+          Exception thrown = failed.getException();
+          o.run()
+              .close(
+                  thrown != null
+                      ? unwrap(thrown)
+                      : new CronwatchException(
+                          CronwatchException.Kind.OTHER,
+                          "JobRunr marked the attempt failed: " + failed.getMessage()));
+        }
+        default -> unfinished(o.run());
+      }
+    } catch (RuntimeException e) {
+      cw.reportError(e, "jobrunr");
+    }
+  }
+
+  @Override
+  public void onProcessingSucceeded(Job job) {
+    Opened o = open.remove(job.getId());
+    if (o == null) {
+      return;
+    }
+    try {
+      o.run().close(null);
     } catch (RuntimeException e) {
       cw.reportError(e, "jobrunr");
     }
@@ -464,10 +588,11 @@ public final class CronwatchJobRunr implements JobServerFilter, AutoCloseable {
 
   @Override
   public void onProcessingFailed(Job job, Exception e) {
-    ObservedRun run = open.remove(job.getId());
-    if (run == null) {
+    Opened o = open.remove(job.getId());
+    if (o == null) {
       return;
     }
+    ObservedRun run = o.run();
     try {
       if (deletedWhileProcessing(job, e)) {
         // Deleted from JobRunr's dashboard while it ran: JobRunr interrupts it and drops the

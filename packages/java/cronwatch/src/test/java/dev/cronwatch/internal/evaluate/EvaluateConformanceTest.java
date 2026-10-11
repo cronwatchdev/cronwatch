@@ -101,9 +101,31 @@ class EvaluateConformanceTest {
       return switch (op) {
         case "start" -> {
           order.add(runs.size());
-          runs.add(Run.running(Fixtures.string(ev, "id"), def.name(), at, "run"));
-          state = Evaluate.onRunStart(state);
+          Run run = Run.running(Fixtures.string(ev, "id"), def.name(), at, "run");
+          runs.add(run);
+          state = Evaluate.onRunStart(def, run, state, at);
           yield new JsObject().set("state", state.toValue());
+        }
+        case "record" -> {
+          // A run a source reports only once it is over: written finished, then started and
+          // finished at once, so missed closes only when its start covers the fire.
+          long startedAt = Fixtures.integer(ev, "startedAt");
+          Metrics metrics =
+              ev.has("metrics") ? Metrics.fromValue(ev.get("metrics")) : Metrics.empty();
+          Run run =
+              Run.running(Fixtures.string(ev, "id"), def.name(), startedAt, "source")
+                  .finished(
+                      RunStatus.of(Objects.requireNonNull(Fixtures.string(ev, "status"))),
+                      at,
+                      Evaluate.runDuration(startedAt, at),
+                      Fixtures.string(ev, "error"),
+                      Fixtures.string(ev, "output"),
+                      metrics);
+          order.add(runs.size());
+          runs.add(run);
+          state = Evaluate.onRunStart(def, run, state, at);
+          List<Object> alerts = finishRun(run, at);
+          yield new JsObject().set("alerts", alerts).set("state", state.toValue());
         }
         case "finish" -> {
           int i = index(Objects.requireNonNull(Fixtures.string(ev, "id")));
@@ -202,7 +224,7 @@ class EvaluateConformanceTest {
     JsObject f = Fixtures.load("evaluate");
     Fixtures.Failures fails = new Fixtures.Failures();
     List<JsObject> scenarios = Fixtures.objects(f, "scenarios");
-    assertEquals(57, scenarios.size(), "evaluate.json scenarios");
+    assertEquals(63, scenarios.size(), "evaluate.json scenarios");
     int events = 0;
     for (JsObject sc : scenarios) {
       String name = Fixtures.string(sc, "name");

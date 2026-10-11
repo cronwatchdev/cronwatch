@@ -14,6 +14,7 @@ package cronwatch
 // viewer's zone.
 
 import (
+	"cmp"
 	"math"
 	"slices"
 	"strings"
@@ -116,8 +117,9 @@ func laneSchedule(job JobSummary) *schedule.Parsed {
 
 // dueTimes is when the job was due within from to to, ascending, or dense
 // when there are too many to draw one by one. A cron's fires come from its
-// schedule. An interval is due one period after each run started, and
-// after the last run once a period for as long as nothing runs; with no run
+// schedule. An interval is due one period after each run started (after
+// it finished, for a run that outlasted the period: schedule.IntervalDue),
+// and after the last run once a period for as long as nothing runs; with no run
 // yet, from its next expected time.
 func dueTimes(job JobSummary, parsed *schedule.Parsed, runs []Run, from, to int64) (times []int64, dense bool) {
 	if parsed == nil {
@@ -131,20 +133,21 @@ func dueTimes(job JobSummary, parsed *schedule.Parsed, runs []Run, from, to int6
 		if float64(to-from)/float64(every) > maxTicks {
 			return nil, true
 		}
-		starts := make([]int64, len(runs))
-		for i, r := range runs {
-			starts[i] = r.StartedAt
+		ordered := slices.Clone(runs)
+		slices.SortStableFunc(ordered, func(a, b Run) int { return cmp.Compare(a.StartedAt, b.StartedAt) })
+		dues := make([]int64, len(ordered))
+		for i, r := range ordered {
+			dues[i] = schedule.IntervalDue(every, r.StartedAt, finishedAtOf(r))
 		}
-		slices.Sort(starts)
 		set := map[int64]bool{}
-		for _, start := range starts {
-			if t := start + every; t >= from && t <= to {
+		for _, t := range dues {
+			if t >= from && t <= to {
 				set[t] = true
 			}
 		}
 		var next *int64
-		if len(starts) > 0 {
-			next = ptr(starts[len(starts)-1] + every)
+		if len(dues) > 0 {
+			next = ptr(dues[len(dues)-1])
 		} else if job.NextExpectedAt != nil {
 			next = ptr(*job.NextExpectedAt)
 		}
@@ -185,7 +188,7 @@ func missedAt(job JobSummary, parsed *schedule.Parsed, times []int64, now int64)
 	}
 	if job.LastRun != nil {
 		last := job.LastRun.StartedAt
-		exp, ok := schedule.Expect(parsed, &last, last, grace)
+		exp, ok := schedule.Expect(parsed, &last, last, grace, finishedAtOf(*job.LastRun))
 		if !ok {
 			return nil
 		}

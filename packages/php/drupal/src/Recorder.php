@@ -13,6 +13,7 @@ use Cronwatch\Bridge\Unscheduled;
 use Cronwatch\CheckResult;
 use Cronwatch\Cronwatch;
 use Cronwatch\Duration;
+use Cronwatch\Env;
 use Cronwatch\Job\JobHandle;
 use Cronwatch\Watch;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -71,6 +72,11 @@ final class Recorder {
    * `drush cron:run <job>`.
    */
   public const TRIGGER_ULTIMATE_CRON_MANUAL = 'ultimate-cron-manual';
+
+  /**
+   * The least an API token may be (tokenProblem()).
+   */
+  public const TOKEN_MIN = 24;
 
   private ?Cronwatch $client = NULL;
 
@@ -250,6 +256,29 @@ final class Recorder {
     catch (\Throwable) {
       return '';
     }
+  }
+
+  /**
+   * The JSON API's token: $settings['cronwatch_token'], else CRONWATCH_TOKEN.
+   *
+   * Empty when neither is set, and the API is not there.
+   */
+  public static function apiToken(): string {
+    $token = Settings::get('cronwatch_token');
+    return is_string($token) && $token !== '' ? $token : (string) Env::read('CRONWATCH_TOKEN');
+  }
+
+  /**
+   * Why the API refuses a token, or NULL when it takes it.
+   *
+   * A token shorter than TOKEN_MIN is refused, as the WordPress plugin
+   * refuses one typed in, and the API stays shut until it is longer.
+   */
+  public static function tokenProblem(string $token): ?string {
+    if ($token === '' || strlen($token) >= self::TOKEN_MIN) {
+      return NULL;
+    }
+    return sprintf("CronWatch's JSON API is off: its token (\$settings['cronwatch_token'] or CRONWATCH_TOKEN) has %d characters, and it needs at least %d. Make a longer one, such as the output of `openssl rand -hex 24`.", strlen($token), self::TOKEN_MIN);
   }
 
   /**

@@ -179,7 +179,7 @@ func TestConformanceSchedule(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e, ok := Expect(p, optional(field(c, "lastRunAt")), integer(field(c, "registeredAt")), number(field(c, "graceMs")))
+		e, ok := Expect(p, optional(field(c, "lastRunAt")), integer(field(c, "registeredAt")), number(field(c, "graceMs")), optional(field(c, "lastFinishedAt")))
 		var got any
 		if ok {
 			got = js.NewObject("dueAt", e.DueAt, "deadline", e.Deadline)
@@ -207,6 +207,23 @@ func TestConformanceSchedule(t *testing.T) {
 		}
 		same(t, fmt.Sprintf("autumn %s in %s", text(c, "schedule"), text(c, "timezone")), out, field(c, "next"))
 		counts["autumn"]++
+	}
+	for _, c := range cases(f, "firesBetween") {
+		p, err := Parse(text(c, "schedule"), text(c, "timezone"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fires, ok := FiresBetween(p, integer(field(c, "from")), integer(field(c, "to")), int(integer(field(c, "limit"))))
+		var got any
+		if ok {
+			list := make([]any, len(fires))
+			for i, t := range fires {
+				list[i] = t
+			}
+			got = list
+		}
+		same(t, fmt.Sprintf("firesBetween %s in %s from %v", text(c, "schedule"), text(c, "timezone"), field(c, "from")), got, field(c, "fires"))
+		counts["firesBetween"]++
 	}
 	t.Logf("schedule cases: %v", counts)
 }

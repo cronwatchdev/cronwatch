@@ -7,7 +7,7 @@ defmodule Cronwatch.Alerts.Post do
   # Rust port's `alerts::post`: the URL read as fetch reads it, only http and
   # https, headers checked as fetch checks them, one ten second deadline for
   # the whole request, a redirect refused rather than followed, at most 1 MiB
-  # of an answer read, and an error that names only the URL's origin, with
+  # of a successful answer read (64 KiB of any other), and an error that names only the URL's origin, with
   # every secret the caller holds cut out of a quoted answer before it is cut
   # to 200 characters.
   #
@@ -27,6 +27,7 @@ defmodule Cronwatch.Alerts.Post do
 
   @timeout 10_000
   @max_body 1_048_576
+  @error_read_max 65_536
   @error_body_max 200
 
   @typedoc "An answer: its status, and as much of its body as was read, as `response.text()` reads it."
@@ -40,9 +41,17 @@ defmodule Cronwatch.Alerts.Post do
   @spec timeout() :: non_neg_integer()
   def timeout, do: Application.get_env(:cronwatch, :post_timeout, @timeout)
 
-  @doc "How much of an answer is read: 1 MiB."
+  @doc "How much of a successful (2xx) answer is read: 1 MiB."
   @spec max_body() :: pos_integer()
   def max_body, do: @max_body
+
+  @doc """
+  How much of any other answer is read: 64 KiB, the SDK's `ERROR_READ_MAX`,
+  far more than any secret plus `error_body_max/0` needs, so a provider (or
+  something posing as one) cannot make a send hold a body of any size.
+  """
+  @spec error_read_max() :: pos_integer()
+  def error_read_max, do: @error_read_max
 
   @doc "How much of an answer's body goes into an error: 200 UTF-16 code units."
   @spec error_body_max() :: pos_integer()
@@ -177,7 +186,8 @@ defmodule Cronwatch.Alerts.Post do
         case safely(fn -> module.post(opts, request) end) do
           {:ok, %Response{status: status} = response} when is_integer(status) ->
             send(parent, {ref, :status, status})
-            send(parent, {ref, :body, read(response)})
+            cap = if status in 200..299, do: @max_body, else: @error_read_max
+            send(parent, {ref, :body, read(response, cap)})
 
           {:ok, other} ->
             send(parent, {ref, :error, {:bad_answer, other}})
@@ -252,12 +262,12 @@ defmodule Cronwatch.Alerts.Post do
     :throw, value -> {:error, {:throw, value}}
   end
 
-  # At most max_body bytes of the body, read a chunk at a time; a body that
+  # At most `cap` bytes of the body, read a chunk at a time; a body that
   # could not be read is none.
-  defp read(%Response{body: body}) when is_binary(body), do: binary_part(body, 0, min(byte_size(body), @max_body))
+  defp read(%Response{body: body}, cap) when is_binary(body), do: binary_part(body, 0, min(byte_size(body), cap))
 
-  defp read(%Response{body: next, close: close}) when is_function(next, 0) do
-    case read_chunks(next, [], 0) do
+  defp read(%Response{body: next, close: close}, cap) when is_function(next, 0) do
+    case read_chunks(next, [], 0, cap) do
       {:full, data} ->
         if close, do: safely(close)
         data
@@ -271,16 +281,16 @@ defmodule Cronwatch.Alerts.Post do
     end
   end
 
-  defp read(_), do: ""
+  defp read(_, _cap), do: ""
 
-  defp read_chunks(next, acc, n) do
+  defp read_chunks(next, acc, n, cap) do
     case safely(next) do
       {:ok, chunk} when is_binary(chunk) ->
-        room = @max_body - n
+        room = cap - n
         taken = binary_part(chunk, 0, min(byte_size(chunk), room))
         acc = [acc, taken]
         n = n + byte_size(taken)
-        if n >= @max_body, do: {:full, IO.iodata_to_binary(acc)}, else: read_chunks(next, acc, n)
+        if n >= cap, do: {:full, IO.iodata_to_binary(acc)}, else: read_chunks(next, acc, n, cap)
 
       :done ->
         {:done, IO.iodata_to_binary(acc)}

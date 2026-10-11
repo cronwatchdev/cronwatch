@@ -172,7 +172,7 @@ class ClientTest < Minitest::Test
     assert_equal [], gone.state.pending_recovery, "missed is not owed a second recovery"
     ok = Cronwatch::Run.new(id: "r2", job: "j", status: :ok, started_at: T0 + HOUR, finished_at: T0 + HOUR + 1000,
                             duration_ms: 1000, error: nil, output: nil, metrics: {}, trigger: "run")
-    done = Cronwatch::Evaluate.on_run_finish(bare, ok, Cronwatch::Evaluate.on_run_start(gone.state), [failed], T0 + HOUR + 1000)
+    done = Cronwatch::Evaluate.on_run_finish(bare, ok, Cronwatch::Evaluate.on_run_start(bare, ok, gone.state, T0 + HOUR + 1000), [failed], T0 + HOUR + 1000)
     assert_equal [{ after: [:failed] }], done.alerts.map(&:details)
   end
 

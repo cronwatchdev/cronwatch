@@ -1740,7 +1740,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a failure with markup in its output",
       "url": "https://hooks.example.com:8443/in",
@@ -1748,7 +1749,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5"
+        "x-cronwatch-signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=33cd36a56bce32340fe06394d161e401babc0cd5f98799cdf2f64aef27f3d9e3"
       },
       "body": {
         "length": 697,
@@ -1762,7 +1765,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a long triage, in its own block",
       "url": "https://hooks.example.com:8443/in",
@@ -1770,7 +1774,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2"
+        "x-cronwatch-signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=9584299f6d57f11556bf46794a289c915ccea29763e829b236a309791f28ab55"
       },
       "body": {
         "length": 4736,
@@ -1784,7 +1790,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a long message with a fence",
       "url": "https://hooks.example.com:8443/in",
@@ -1792,7 +1799,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f"
+        "x-cronwatch-signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=a7a52b07299ebe4bf8e7da60459eb8c77d7acf3fcc012a968448796eac7dc294"
       },
       "body": {
         "length": 10512,
@@ -1806,7 +1815,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "fences all the way past the cut",
       "url": "https://hooks.example.com:8443/in",
@@ -1814,7 +1824,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4"
+        "x-cronwatch-signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=43bde79509afc9b18fc9435fb92062dd7e38975d2c95a6180de323f06901d933"
       },
       "body": {
         "length": 18487,
@@ -1828,7 +1840,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "escapes that grow past the cut",
       "url": "https://hooks.example.com:8443/in",
@@ -1836,7 +1849,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b"
+        "x-cronwatch-signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=45a256f6995b403531e574f7e08b6962c86f936bd2d7fcd8b9c788cf7b84435e"
       },
       "body": {
         "length": 4881,
@@ -1850,7 +1865,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "accents and emoji",
       "url": "https://hooks.example.com:8443/in",
@@ -1858,7 +1874,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31"
+        "x-cronwatch-signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=98c89d54bbca03ca8c366eede5513eab2d8e38d4a3d3c1a56456007a9625a02f"
       },
       "body": {
         "length": 552,
@@ -1872,7 +1890,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "an empty triage",
       "url": "https://hooks.example.com:8443/in",
@@ -1880,7 +1899,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125"
+        "x-cronwatch-signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=52ccb054f6a3e83de50f37567f5c5bf28f99e6e0fda9569998f42a008d8d9c01"
       },
       "body": {
         "length": 709,
@@ -1894,7 +1915,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a missed run",
       "url": "https://hooks.example.com:8443/in",
@@ -1902,7 +1924,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c"
+        "x-cronwatch-signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=f96000b20473b42281e9e67316b4d9a65fe60c6c2d099d3bfef0e15652efd6db"
       },
       "body": {
         "length": 443,
@@ -1916,7 +1940,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a stuck run",
       "url": "https://hooks.example.com:8443/in",
@@ -1924,7 +1949,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487"
+        "x-cronwatch-signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=1efcf6a472ab382adee366abc427a7057a1997fa4f68a29067618bcc6d763382"
       },
       "body": {
         "length": 640,
@@ -1938,7 +1965,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "over budget, with a triage full of markdown",
       "url": "https://hooks.example.com:8443/in",
@@ -1946,7 +1974,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b"
+        "x-cronwatch-signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=27cdad976938ff921a6f117c3c35f00eddecd7c9ba9b7f6749e17e7ce586174a"
       },
       "body": {
         "length": 1782,
@@ -1960,7 +1990,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "under a floor",
       "url": "https://hooks.example.com:8443/in",
@@ -1968,7 +1999,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2"
+        "x-cronwatch-signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=260909af77f7521392b8d8a30195c2fe38ffb1bed16858bfa99531f8b30dcc6b"
       },
       "body": {
         "length": 608,
@@ -1982,7 +2015,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "slow",
       "url": "https://hooks.example.com:8443/in",
@@ -1990,7 +2024,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178"
+        "x-cronwatch-signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=245c156e1a1c25618618af831e0f1f709cc470e61d7c3c9c63d2577ddfad4a28"
       },
       "body": {
         "length": 500,
@@ -2004,7 +2040,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "recovered",
       "url": "https://hooks.example.com:8443/in",
@@ -2012,7 +2049,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6"
+        "x-cronwatch-signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=7d4d8da7215a026ce8f711ecf143ba14eccc88af549aa24b251ce343c609dc60"
       },
       "body": {
         "length": 484,
@@ -2026,7 +2065,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "no longer scheduled",
       "url": "https://hooks.example.com:8443/in",
@@ -2034,7 +2074,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d"
+        "x-cronwatch-signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=01c19cb3d1342d4f96fbfe6e57a4ca16c35c80dc263f00c91dbf3009adc7daf8"
       },
       "body": {
         "text": "{\"schema\":1,\"type\":\"recovered\",\"run\":null,\"details\":{\"after\":[\"missed\"],\"reason\":\"unscheduled\",\"since\":1767594600000},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"grace\":\"15m\"},\"title\":\"nightly is no longer scheduled\",\"message\":\"Missed since 2026-01-05 06:30:00 UTC (3h 1m ago). It has no schedule now, so nothing is due; the missed alert is closed.\",\"at\":1767605460000}"
@@ -2047,7 +2089,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a stuck run from a foreign row, before the year 1",
       "url": "https://hooks.example.com:8443/in",
@@ -2055,7 +2098,9 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8"
+        "x-cronwatch-signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=3b00aaae0381a2e0a407a080ee7672831992f91e533975cfb17cd7d946fcee88"
       },
       "body": {
         "length": 662,
@@ -2069,7 +2114,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "alert": "a failure from a foreign row, after 9999",
       "url": "https://hooks.example.com:8443/in",
@@ -2077,7 +2123,440 @@
         "content-type": "application/json",
         "user-agent": "cronwatch",
         "authorization": "Bearer abc",
-        "x-cronwatch-signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6"
+        "x-cronwatch-signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=6cd7e0242c98eda761d95ab1901ef5413f1968584cecd9d830e72c579a554c64"
+      },
+      "body": {
+        "length": 467,
+        "sha256": "a56039f4e32b6ad8b39e1bcf2792532e05ab6589d094c412b1e7514019d9cdb8"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a failure with markup in its output",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=58d4d93f281d12fa06f0f0dc98c593579220413d2ff6e47591a4de3893a9cf50"
+      },
+      "body": {
+        "length": 697,
+        "sha256": "3500190e7342efac144a69e70f0af12e7d136f57e43fb11b58e21ab68c7090a7"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a long triage, in its own block",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=4b251b8bd796d5fb62671b8c3d2af652b058d2b006699f89b693bda4a822de34"
+      },
+      "body": {
+        "length": 4736,
+        "sha256": "2b19b98f0ed79b98aa53168c8ddf32197e1336ce1014d83b1d2382834f239261"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a long message with a fence",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=4a9045ae3e40cd3fe2a4877c6ec85b7bcb765ea2a32d974753f8e31bfa8e280d"
+      },
+      "body": {
+        "length": 10512,
+        "sha256": "f5299f56c3fc67619414852c7d59468305e1b6c4396c193af147a0ade9bd03f4"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "fences all the way past the cut",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=244fa1738d005a115308dfc4f5b5ab7c70e952257fd1f0d72b3674aea4e92243"
+      },
+      "body": {
+        "length": 18487,
+        "sha256": "79dfd8be6931d188949f0c6d528d4c79e77772e2aa18398619586fd414e81102"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "escapes that grow past the cut",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=df9562a9fd52772186dd270424ce9d51df351bf1cc90f51093f24824a400c1fb"
+      },
+      "body": {
+        "length": 4881,
+        "sha256": "223d0db2ffa143b5ddafc933406beeeda89268f99d2696893a9e8040f2b87d91"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "accents and emoji",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=07348a1ba40d6ef5a929bd47b42ded63409c735cf904d07784b8ce7bc2b1f3ff"
+      },
+      "body": {
+        "length": 552,
+        "sha256": "68a7a971551f20d62ada7d90d68e86a31292bb71cda37cdf7296b754773f9bab"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "an empty triage",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=3fc2c8a344d632e889de67f714abfec6beb9b0c36395926da3f36aeb41646338"
+      },
+      "body": {
+        "length": 709,
+        "sha256": "b107a4ff5455206c8ad2b5b2ebf918338b0975e54d7623e6e931aaf9a0f77009"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a missed run",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=9e7e12f5c5abadf95b23ccac337b06e6e68fe9faa6c3061877601feff04e6cbe"
+      },
+      "body": {
+        "length": 443,
+        "sha256": "46917ae0c75ecf877f785102d39a093d49a6482be3476f77a2b472a23ba903dd"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a stuck run",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=31c1c46ab66208f46797c04645d2d2bbc857fd3684f3e27b98d3a37cad088c27"
+      },
+      "body": {
+        "length": 640,
+        "sha256": "877c15667d242df77fe0a3303c382f6e43ee08ff8f8bb1e7053310e411a423ca"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "over budget, with a triage full of markdown",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=42509fcda6568b49c2697fb32b55022d215604c51dce8159225776b8bf8d4f23"
+      },
+      "body": {
+        "length": 1782,
+        "sha256": "89c3b8eacd1197c96919742364b1f45a8513b886d97d31f3430e441e93aa7578"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "under a floor",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=dca9b86c125c61aa893b49cf64c5ac21133beeb2b0b7fbb13fbbde0741ec1545"
+      },
+      "body": {
+        "length": 608,
+        "sha256": "45d4bef6ed3a12d94420020347630bc73f6f44463dfa8ce517e730168e663294"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "slow",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=f3b505b6c303e753c6cb79811f4f3ce99bfbba6714bd9f8cea74818197569897"
+      },
+      "body": {
+        "length": 500,
+        "sha256": "1d51edcbf6460e5a5cc7d189bd58b9118f9f1a2cddcef8194bd8f96dcae14c8c"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "recovered",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=aa698a95f7fabc608fc7d1564044f92fa21db81a9bbe7460cc93c67523fc476c"
+      },
+      "body": {
+        "length": 484,
+        "sha256": "d287a874a752fb3df673137d8f5e060a0de640f2bf50e64029a2b975339369f7"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "no longer scheduled",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=5fa937f27eddd0fefb3ebbac8199a9d8cbd5cc46400bc65ffcf2b421594aae99"
+      },
+      "body": {
+        "text": "{\"schema\":1,\"type\":\"recovered\",\"run\":null,\"details\":{\"after\":[\"missed\"],\"reason\":\"unscheduled\",\"since\":1767594600000},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"grace\":\"15m\"},\"title\":\"nightly is no longer scheduled\",\"message\":\"Missed since 2026-01-05 06:30:00 UTC (3h 1m ago). It has no schedule now, so nothing is due; the missed alert is closed.\",\"at\":1767605460000}"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a stuck run from a foreign row, before the year 1",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=f9bb27d2ffe2261ef7d52286b840f323c0d85f7303747351ce220e354fcba085"
+      },
+      "body": {
+        "length": 662,
+        "sha256": "6763be3fea78462f000904618e35aa70be1bad0a2b608931b9b86426a411239c"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "a failure from a foreign row, after 9999",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=fe5b2f347a1450123c9480d470e746fc1ba76d91fcf125431ae489ae9e51844e"
       },
       "body": {
         "length": 467,
@@ -2310,7 +2789,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "status": 500,
       "body": "no",
@@ -2323,7 +2803,8 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "status": 400,
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -2336,11 +2817,63 @@
         "secret": "s3cret",
         "headers": {
           "authorization": "Bearer abc"
-        }
+        },
+        "now": 1767605402500
       },
       "status": 404,
       "body": "",
       "error": "Webhook https://hooks.example.com:8443 answered 404"
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "status": 500,
+      "body": "no",
+      "error": "Webhook https://hooks.example.com answered 500"
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "status": 400,
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "error": "Webhook https://hooks.example.com answered 400"
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "status": 404,
+      "body": "",
+      "error": "Webhook https://hooks.example.com answered 404"
     }
   ],
   "webhookPayloads": [
@@ -2348,97 +2881,275 @@
       "alert": "a failure with markup in its output",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000}",
-      "signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5"
+      "signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=33cd36a56bce32340fe06394d161e401babc0cd5f98799cdf2f64aef27f3d9e3"
     },
     {
       "alert": "a long triage, in its own block",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000,\"triage\":\"<b>Likely</b> cause & fix: tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\"}",
-      "signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2"
+      "signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=9584299f6d57f11556bf46794a289c915ccea29763e829b236a309791f28ab55"
     },
     {
       "alert": "a long message with a fence",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: long\",\"output\":\"````\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: long\\nOutput (tail):\\n````\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\"at\":1767605402000,\"triage\":\"short\"}",
-      "signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f"
+      "signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=a7a52b07299ebe4bf8e7da60459eb8c77d7acf3fcc012a968448796eac7dc294"
     },
     {
       "alert": "fences all the way past the cut",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: fences\",\"output\":\"```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: fences\\nOutput (tail):\\n```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>\",\"at\":1767605402000}",
-      "signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4"
+      "signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=43bde79509afc9b18fc9435fb92062dd7e38975d2c95a6180de323f06901d933"
     },
     {
       "alert": "escapes that grow past the cut",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: amp\",\"output\":\"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: amp\\nOutput (tail):\\n&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>\",\"at\":1767605402000}",
-      "signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b"
+      "signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=45a256f6995b403531e574f7e08b6962c86f936bd2d7fcd8b9c788cf7b84435e"
     },
     {
       "alert": "accents and emoji",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: café 😀\",\"output\":\"résumé 🚀 done\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: café 😀\\nOutput (tail):\\nrésumé 🚀 done\",\"at\":1767605402000,\"triage\":\"été 😀 `code` [link](x)\"}",
-      "signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31"
+      "signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=98c89d54bbca03ca8c366eede5513eab2d8e38d4a3d3c1a56456007a9625a02f"
     },
     {
       "alert": "an empty triage",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000,\"triage\":\"\"}",
-      "signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125"
+      "signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=52ccb054f6a3e83de50f37567f5c5bf28f99e6e0fda9569998f42a008d8d9c01"
     },
     {
       "alert": "a missed run",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"missed\",\"run\":null,\"details\":{\"dueAt\":1767603600000,\"deadline\":1767604500000,\"graceMs\":900000,\"lastRunAt\":null},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly missed its scheduled run\",\"message\":\"Due 2026-01-05 09:00:00 UTC (30m ago), and no run had started by 2026-01-05 09:15:00 UTC (15m ago) (grace 15m).\\nSchedule: 0 2 * * *.\\nLast run: never.\",\"at\":1767605400000}",
-      "signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c"
+      "signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=f96000b20473b42281e9e67316b4d9a65fe60c6c2d099d3bfef0e15652efd6db"
     },
     {
       "alert": "a stuck run",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"stuck\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"timeout\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":3600001,\"error\":null,\"output\":\"started\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly is stuck\",\"message\":\"Started 2026-01-05 09:30:00 UTC (1h ago) and never reported finishing. Marked as timed out after 1h.\\nOutput so far (tail):\\nstarted\\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.\",\"at\":1767609000000}",
-      "signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487"
+      "signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=1efcf6a472ab382adee366abc427a7057a1997fa4f68a29067618bcc6d763382"
     },
     {
       "alert": "over budget, with a triage full of markdown",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"over_budget\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{\"cost\":1.2},\"trigger\":\"run\"},\"details\":{\"breaches\":[{\"metric\":\"cost\",\"value\":1.2,\"limit\":1,\"basis\":\"budget\"}]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly went over budget\",\"message\":\"cost: 1.2, limit 1 (budget).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000,\"triage\":\"Check *this* _now_ ~maybe~ `x` | y (z) [a] <b> \\\\ dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}",
-      "signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b"
+      "signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=27cdad976938ff921a6f117c3c35f00eddecd7c9ba9b7f6749e17e7ce586174a"
     },
     {
       "alert": "under a floor",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"under_floor\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{\"rows\":0},\"trigger\":\"run\"},\"details\":{\"breaches\":[{\"metric\":\"rows\",\"value\":0,\"limit\":4812,\"basis\":\"the last 20 runs all reported more than 0, the lowest 4,812\"}]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly fell short\",\"message\":\"rows: 0 (the last 20 runs all reported more than 0, the lowest 4,812).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000}",
-      "signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2"
+      "signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=260909af77f7521392b8d8a30195c2fe38ffb1bed16858bfa99531f8b30dcc6b"
     },
     {
       "alert": "slow",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"slow\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":15000,\"error\":null,\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"durationMs\":15000,\"thresholdMs\":10000,\"basis\":\"maxDuration\"},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly was slow\",\"message\":\"Took 15s; the limit is 10s (maxDuration).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000}",
-      "signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178"
+      "signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=245c156e1a1c25618618af831e0f1f709cc470e61d7c3c9c63d2577ddfad4a28"
     },
     {
       "alert": "recovered",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"recovered\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"after\":[\"missed\",\"over_budget\"]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly recovered\",\"message\":\"A run 2026-01-05 09:30:00 UTC (1m ago) succeeded after: missed and over budget.\\nRan 2s.\",\"at\":1767605460000}",
-      "signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6"
+      "signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=7d4d8da7215a026ce8f711ecf143ba14eccc88af549aa24b251ce343c609dc60"
     },
     {
       "alert": "no longer scheduled",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"recovered\",\"run\":null,\"details\":{\"after\":[\"missed\"],\"reason\":\"unscheduled\",\"since\":1767594600000},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"grace\":\"15m\"},\"title\":\"nightly is no longer scheduled\",\"message\":\"Missed since 2026-01-05 06:30:00 UTC (3h 1m ago). It has no schedule now, so nothing is due; the missed alert is closed.\",\"at\":1767605460000}",
-      "signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d"
+      "signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=01c19cb3d1342d4f96fbfe6e57a4ca16c35c80dc263f00c91dbf3009adc7daf8"
     },
     {
       "alert": "a stuck run from a foreign row, before the year 1",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"stuck\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"timeout\",\"startedAt\":-9007199254740991,\"finishedAt\":1767605401500,\"durationMs\":9007199254740991,\"error\":null,\"output\":\"started\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly is stuck\",\"message\":\"Started before 0001-01-01 00:00:00 UTC and never reported finishing. Marked as timed out after 104249991d 8h.\\nOutput so far (tail):\\nstarted\\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.\",\"at\":1767605400000}",
-      "signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8"
+      "signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=3b00aaae0381a2e0a407a080ee7672831992f91e533975cfb17cd7d946fcee88"
     },
     {
       "alert": "a failure from a foreign row, after 9999",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":253402300800000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: far\",\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started after 9999-12-31 23:59:59 UTC, ran 2s.\\nError: far\",\"at\":1767605400000}",
-      "signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6"
+      "signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=6cd7e0242c98eda761d95ab1901ef5413f1968584cecd9d830e72c579a554c64"
+    },
+    {
+      "alert": "a failure with markup in its output",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000}",
+      "signature": "sha256=85a1084aa9a4a28906f402599ff3a0483dca7c1ef25985ffcc0288e8f65495d5",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=58d4d93f281d12fa06f0f0dc98c593579220413d2ff6e47591a4de3893a9cf50"
+    },
+    {
+      "alert": "a long triage, in its own block",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000,\"triage\":\"<b>Likely</b> cause & fix: tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\"}",
+      "signature": "sha256=11fcbcb93c88184101684425af4e833cf863ead7bdbe78d55a1c35417cb3a1b2",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=4b251b8bd796d5fb62671b8c3d2af652b058d2b006699f89b693bda4a822de34"
+    },
+    {
+      "alert": "a long message with a fence",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: long\",\"output\":\"````\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: long\\nOutput (tail):\\n````\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\"at\":1767605402000,\"triage\":\"short\"}",
+      "signature": "sha256=6929536d44c15c5d546bbbf12a47040946637bfd0230d33108420796b457fb6f",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=4a9045ae3e40cd3fe2a4877c6ec85b7bcb765ea2a32d974753f8e31bfa8e280d"
+    },
+    {
+      "alert": "fences all the way past the cut",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: fences\",\"output\":\"```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: fences\\nOutput (tail):\\n```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>```&<>\",\"at\":1767605402000}",
+      "signature": "sha256=c1e52d1a0a2a3537ae62aa67a140ffbaabad19e02ec831e483f837a262e92bf4",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=244fa1738d005a115308dfc4f5b5ab7c70e952257fd1f0d72b3674aea4e92243"
+    },
+    {
+      "alert": "escapes that grow past the cut",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: amp\",\"output\":\"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: amp\\nOutput (tail):\\n&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>\",\"at\":1767605402000}",
+      "signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=df9562a9fd52772186dd270424ce9d51df351bf1cc90f51093f24824a400c1fb"
+    },
+    {
+      "alert": "accents and emoji",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: café 😀\",\"output\":\"résumé 🚀 done\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: café 😀\\nOutput (tail):\\nrésumé 🚀 done\",\"at\":1767605402000,\"triage\":\"été 😀 `code` [link](x)\"}",
+      "signature": "sha256=394d423c1b8175cfb6abf138eaf9624e01d0533913e9c48c6bb99dd332c9de31",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=07348a1ba40d6ef5a929bd47b42ded63409c735cf904d07784b8ce7bc2b1f3ff"
+    },
+    {
+      "alert": "an empty triage",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: boom & <b>bust</b>\",\"output\":\"before\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: boom & <b>bust</b>\\nOutput (tail):\\nbefore\\n```\\n@everyone <!channel> [click](https://evil.example) *bold* _it_ ~s~ |pipe| \\\\back\",\"at\":1767605402000,\"triage\":\"\"}",
+      "signature": "sha256=7d3d1250742b52deced9efde24831172598887ddc23c73c472d632d96fe80125",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=3fc2c8a344d632e889de67f714abfec6beb9b0c36395926da3f36aeb41646338"
+    },
+    {
+      "alert": "a missed run",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"missed\",\"run\":null,\"details\":{\"dueAt\":1767603600000,\"deadline\":1767604500000,\"graceMs\":900000,\"lastRunAt\":null},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly missed its scheduled run\",\"message\":\"Due 2026-01-05 09:00:00 UTC (30m ago), and no run had started by 2026-01-05 09:15:00 UTC (15m ago) (grace 15m).\\nSchedule: 0 2 * * *.\\nLast run: never.\",\"at\":1767605400000}",
+      "signature": "sha256=64f7a33b5ec021c19142c175f5a47d7556a774b125fa7b1a8749cd2ea899e65c",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=9e7e12f5c5abadf95b23ccac337b06e6e68fe9faa6c3061877601feff04e6cbe"
+    },
+    {
+      "alert": "a stuck run",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"stuck\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"timeout\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":3600001,\"error\":null,\"output\":\"started\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly is stuck\",\"message\":\"Started 2026-01-05 09:30:00 UTC (1h ago) and never reported finishing. Marked as timed out after 1h.\\nOutput so far (tail):\\nstarted\\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.\",\"at\":1767609000000}",
+      "signature": "sha256=8c806f6580a32fc87f228e8e74c81f43eb447fa4b8c1409a580e7472eb75e487",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=31c1c46ab66208f46797c04645d2d2bbc857fd3684f3e27b98d3a37cad088c27"
+    },
+    {
+      "alert": "over budget, with a triage full of markdown",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"over_budget\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{\"cost\":1.2},\"trigger\":\"run\"},\"details\":{\"breaches\":[{\"metric\":\"cost\",\"value\":1.2,\"limit\":1,\"basis\":\"budget\"}]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly went over budget\",\"message\":\"cost: 1.2, limit 1 (budget).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000,\"triage\":\"Check *this* _now_ ~maybe~ `x` | y (z) [a] <b> \\\\ dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}",
+      "signature": "sha256=d365a63ed5c55ccb38c8b095da5c387b7e104410dc95ac30887593507c4d4a9b",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=42509fcda6568b49c2697fb32b55022d215604c51dce8159225776b8bf8d4f23"
+    },
+    {
+      "alert": "under a floor",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"under_floor\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{\"rows\":0},\"trigger\":\"run\"},\"details\":{\"breaches\":[{\"metric\":\"rows\",\"value\":0,\"limit\":4812,\"basis\":\"the last 20 runs all reported more than 0, the lowest 4,812\"}]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly fell short\",\"message\":\"rows: 0 (the last 20 runs all reported more than 0, the lowest 4,812).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000}",
+      "signature": "sha256=49bad8b46a26c1d3c1e4917e801fa6e276fc7c757834483193fb4cd2aa6c7bb2",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=dca9b86c125c61aa893b49cf64c5ac21133beeb2b0b7fbb13fbbde0741ec1545"
+    },
+    {
+      "alert": "slow",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"slow\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":15000,\"error\":null,\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"durationMs\":15000,\"thresholdMs\":10000,\"basis\":\"maxDuration\"},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly was slow\",\"message\":\"Took 15s; the limit is 10s (maxDuration).\\nStarted 2026-01-05 09:30:00 UTC (now).\",\"at\":1767605400000}",
+      "signature": "sha256=2e1bc154a081c232de72698826d6d423fa8c67c46b3431694b7763526c7fe178",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=f3b505b6c303e753c6cb79811f4f3ce99bfbba6714bd9f8cea74818197569897"
+    },
+    {
+      "alert": "recovered",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"recovered\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"ok\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":null,\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"after\":[\"missed\",\"over_budget\"]},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly recovered\",\"message\":\"A run 2026-01-05 09:30:00 UTC (1m ago) succeeded after: missed and over budget.\\nRan 2s.\",\"at\":1767605460000}",
+      "signature": "sha256=1ed6c34896eea07f5d8f9fc761a3646c3cb3896cc3ba41784078265ebdc1a9e6",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=aa698a95f7fabc608fc7d1564044f92fa21db81a9bbe7460cc93c67523fc476c"
+    },
+    {
+      "alert": "no longer scheduled",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"recovered\",\"run\":null,\"details\":{\"after\":[\"missed\"],\"reason\":\"unscheduled\",\"since\":1767594600000},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"grace\":\"15m\"},\"title\":\"nightly is no longer scheduled\",\"message\":\"Missed since 2026-01-05 06:30:00 UTC (3h 1m ago). It has no schedule now, so nothing is due; the missed alert is closed.\",\"at\":1767605460000}",
+      "signature": "sha256=13c4ade69c1170c17437372a205c2f2cb9fdeb63fa37a67673a7c2c971c1305d",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=5fa937f27eddd0fefb3ebbac8199a9d8cbd5cc46400bc65ffcf2b421594aae99"
+    },
+    {
+      "alert": "a stuck run from a foreign row, before the year 1",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"stuck\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"timeout\",\"startedAt\":-9007199254740991,\"finishedAt\":1767605401500,\"durationMs\":9007199254740991,\"error\":null,\"output\":\"started\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly is stuck\",\"message\":\"Started before 0001-01-01 00:00:00 UTC and never reported finishing. Marked as timed out after 104249991d 8h.\\nOutput so far (tail):\\nstarted\\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.\",\"at\":1767605400000}",
+      "signature": "sha256=80e51badca4778b362979f47d8c09184ced5d7da6f6e61e9a2a0a708662ac7b8",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=f9bb27d2ffe2261ef7d52286b840f323c0d85f7303747351ce220e354fcba085"
+    },
+    {
+      "alert": "a failure from a foreign row, after 9999",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":253402300800000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: far\",\"output\":null,\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started after 9999-12-31 23:59:59 UTC, ran 2s.\\nError: far\",\"at\":1767605400000}",
+      "signature": "sha256=37dc69586aa3949e648e316059244e9047b99ceee87db40a18416ef5f773a1e6",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=fe5b2f347a1450123c9480d470e746fc1ba76d91fcf125431ae489ae9e51844e"
+    }
+  ],
+  "slackLinks": [
+    {
+      "link": "https://app.example/cronwatch/jobs/nightly",
+      "text": ":x: *nightly failed* (<https://app.example/cronwatch/jobs/nightly|open>)"
+    },
+    {
+      "link": "https://app.example/cronwatch/jobs/a|b<c>d?x=<y>&z=|",
+      "text": ":x: *nightly failed* (<https://app.example/cronwatch/jobs/a%7Cb%3Cc%3Ed?x=%3Cy%3E&z=%7C|open>)"
+    },
+    {
+      "link": "https://app.example/cronwatch/jobs/%7C?q=%3C",
+      "text": ":x: *nightly failed* (<https://app.example/cronwatch/jobs/%7C?q=%3C|open>)"
+    },
+    {
+      "link": "https://app.example/é|😀>",
+      "text": ":x: *nightly failed* (<https://app.example/é%7C😀%3E|open>)"
     }
   ],
   "providerSends": [

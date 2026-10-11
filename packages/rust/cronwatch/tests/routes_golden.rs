@@ -71,7 +71,7 @@ fn read_golden() -> Vec<Capture> {
             }
         })
         .collect();
-    assert_eq!(captures.len(), 82, "golden.json's captures");
+    assert_eq!(captures.len(), 86, "golden.json's captures");
     captures
 }
 
@@ -325,13 +325,24 @@ async fn routes_match_the_sdk_golden_through_a_server_nested_in_axum() {
     let k = seed().await;
     // No base path: it is found from where axum nests the dashboard.
     let routes = k.cw.routes(RoutesOptions::new().token("tok")).unwrap();
-    let app = axum::Router::new().nest_service("/cronwatch", routes);
+    let app = axum::Router::new().nest_service("/cronwatch", routes.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let mut ids = Ids::default();
     for c in &captures {
         let path = resolve(&k.cw, &c.path).await;
+        if path != "/cronwatch" && !path.starts_with("/cronwatch/") {
+            // axum never routes a path outside the mount to the dashboard, so
+            // the captures that check the routes refuse one go to them directly.
+            let mut req = Request::new(c.method.as_str(), path.as_str()).with_header("host", "app.test");
+            for (name, value) in &c.headers {
+                req = req.with_header(name.as_str(), value);
+            }
+            let res = routes.handle(req).await;
+            compare(c, res.status, res.headers, &res.body, &mut ids, &[]);
+            continue;
+        }
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.unwrap();
         tokio::spawn(conn);

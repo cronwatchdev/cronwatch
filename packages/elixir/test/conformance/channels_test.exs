@@ -44,7 +44,10 @@ defmodule Cronwatch.Conformance.ChannelsTest do
 
   def build("webhook", o, t) do
     headers = if h = field(o, "headers"), do: Object.to_list(h), else: []
-    init(Webhook, url: field(o, "url"), secret: field(o, "secret"), headers: headers, transport: t)
+    # `now: <ms>` stands for a clock fixed at that time.
+    now = if ms = field(o, "now"), do: fn -> ms end
+
+    init(Webhook, url: field(o, "url"), secret: field(o, "secret"), headers: headers, now: now, transport: t)
   end
 
   defp link(o) do
@@ -140,7 +143,7 @@ defmodule Cronwatch.Conformance.ChannelsTest do
       length(list(f, "sends")) + length(list(f, "failures")) + length(list(field(f, "textCuts"), "errorBodies")) +
         length(list(field(f, "textCuts"), "discordDescriptions"))
 
-    assert count == 96 + 26 + 6 + 8
+    assert count == 112 + 29 + 6 + 8
   end
 
   test "conformance/channels.json: the webhook's payload, \"schema\":1 first, and its signature" do
@@ -154,7 +157,11 @@ defmodule Cronwatch.Conformance.ChannelsTest do
         {module, state} =
           build(
             "webhook",
-            Object.new([{"url", "https://hooks.example.com/x"}, {"secret", field(c, "secret")}]),
+            Object.new([
+              {"url", "https://hooks.example.com/x"},
+              {"secret", field(c, "secret")},
+              {"now", String.to_integer(field(c, "timestamp")) * 1000}
+            ]),
             Rec.spec(rec)
           )
 
@@ -162,6 +169,8 @@ defmodule Cronwatch.Conformance.ChannelsTest do
         :ok = module.send(state, Map.fetch!(alerts, field(c, "alert")), ctx())
         [got] = Rec.taken(rec)
         {_, signature} = List.keyfind(got.headers, "x-cronwatch-signature", 0)
+        {_, timestamp} = List.keyfind(got.headers, "x-cronwatch-timestamp", 0)
+        {_, timestamp_signature} = List.keyfind(got.headers, "x-cronwatch-timestamp-signature", 0)
 
         cond do
           got.body != field(c, "body") ->
@@ -169,6 +178,12 @@ defmodule Cronwatch.Conformance.ChannelsTest do
 
           signature != field(c, "signature") ->
             ["#{field(c, "alert")}: signature #{signature}, want #{field(c, "signature")}"]
+
+          timestamp != field(c, "timestamp") ->
+            ["#{field(c, "alert")}: timestamp #{timestamp}, want #{field(c, "timestamp")}"]
+
+          timestamp_signature != field(c, "timestampSignature") ->
+            ["#{field(c, "alert")}: timestamp signature #{timestamp_signature}, want #{field(c, "timestampSignature")}"]
 
           true ->
             []
@@ -178,10 +193,40 @@ defmodule Cronwatch.Conformance.ChannelsTest do
     assert failures == [],
            "channels.json webhookPayloads: #{length(failures)} cases differ:\n" <> Enum.join(failures, "\n")
 
-    assert length(cases) == 16
+    assert length(cases) == 32
 
     assert Webhook.signature("key", "The quick brown fox jumps over the lazy dog") ==
              "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+  end
+
+  test "conformance/channels.json: Slack's link, its <, >, and | percent-encoded" do
+    f = Conformance.fixture("channels")
+    {_, first} = alerts(f)
+    rec = Rec.start()
+    cases = list(f, "slackLinks")
+
+    failures =
+      Enum.flat_map(cases, fn c ->
+        target = field(c, "link")
+
+        {:ok, state} =
+          Slack.init(
+            webhook_url: "https://hooks.slack.example/T/B/secret",
+            link: fn _ -> target end,
+            transport: Rec.spec(rec)
+          )
+
+        Rec.answer_with(rec, 200, "")
+        :ok = Slack.send(state, first, ctx())
+        [got] = Rec.taken(rec)
+        {:ok, body} = JS.parse(got.body)
+        [block | _] = field(body, "blocks")
+        text = field(field(block, "text"), "text")
+        if text == field(c, "text"), do: [], else: ["#{target}: #{text}, want #{field(c, "text")}"]
+      end)
+
+    assert failures == [], "channels.json slackLinks:\n" <> Enum.join(failures, "\n")
+    assert length(cases) == 4
   end
 
   test "Discord's description is held to 4096 as a whole, the message cut and the triage whole" do

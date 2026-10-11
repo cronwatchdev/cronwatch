@@ -165,7 +165,7 @@ application = cw.routes()
   Without a token, in development, the routes make a token of their own and print a sign-in link to standard output on the first request. Anywhere else they answer 503. The environment is the first of `CRONWATCH_ENV`, `APP_ENV`, and `ENVIRONMENT` that holds more than spaces (where the SDK reads `NODE_ENV` third), trimmed and lowercased; `development`, `dev`, and `local` count as development (not `test` or `testing`), and `production` and `prod` as production, as in every CronWatch library.
 
   The link names the host only when `origin` is set or the request's host is loopback: `localhost`, a name ending in `.localhost`, `127.0.0.0/8`, or `::1`. Only a host that is one of those counts, so a Host header such as `localhost:1@evil.example` does not. Otherwise the link leaves the host out, since a client chooses it: `Sign in: /cronwatch/?token=... on this server (the first request's host is not local, so the link leaves it out)`.
-- `base_path`: where it is mounted. It defaults to the mount point the server reports (`SCRIPT_NAME`, or ASGI's `root_path`), so the mounts above need nothing more.
+- `base_path`: where it is mounted. It defaults to the mount point the server reports (`SCRIPT_NAME`, or ASGI's `root_path`), so the mounts above need nothing more. Only the base path and the paths under it are answered; any other path, `/cronwatchapi` beside `/cronwatch` say, is a 404 before any token is asked for.
 - `origin`: the public origin, such as `"https://app.example.com"`, to pin it whatever a request says. It then replaces the request's own for the cross-site check on writes, the cookie's `Secure` flag, redirects, and the sign-in line.
 - `trust_proxy`: take the origin from the first `X-Forwarded-Proto` and `X-Forwarded-Host`, as the SDK's option does. Off by default.
 
@@ -244,18 +244,19 @@ APScheduler 4 is still a pre-release that replaced the events and triggers this 
 
 `prefix` names the tables (`cronwatch_jobs`, `cronwatch_runs`, `cronwatch_state`): lowercase letters, digits, and underscores, not starting with a digit, at most 47 characters (Postgres cuts names past 63). Any other prefix raises `ValueError`.
 
-A store of your own is any object with the methods the memory store has: `upsert_job`, `get_job`, `list_jobs`, `delete_job`, `insert_run`, `update_run`, `update_run_if`, `get_run`, `list_runs`, `last_run`, `running_runs`, `get_state`, `set_state`, `prune`, and optionally `update_run_if`, `compare_and_set_state`, `init`, and `close`. They mean what the [TypeScript interface](/docs/stores/#writing-a-store) says, with epoch milliseconds for every time.
+A store of your own is any object with the methods the memory store has: `upsert_job`, `get_job`, `list_jobs`, `delete_job`, `insert_run`, `update_run`, `get_run`, `list_runs`, `running_runs`, `get_state`, `set_state`, `prune`, and optionally `update_run_if`, `compare_and_set_state`, `last_run` (the client never calls it), `init`, and `close`. They mean what the [TypeScript interface](/docs/stores/#writing-a-store) says, with epoch milliseconds for every time.
 
-`update_run_if` and `compare_and_set_state` are what keep two processes on one store from judging a run twice or losing each other's updates; see [two processes, one store](/docs/stores/#two-processes-one-store). Without them the client falls back to plain writes, which is safe only when one process uses the store.
+`update_run_if` and `compare_and_set_state` are what keep two processes on one store from judging a run twice or losing each other's updates; see [two processes, one store](/docs/stores/#two-processes-one-store). Without them the client falls back to plain writes, which is safe only when one process uses the store, and it says so once, through `on_error` as `"store"`, when it first uses the store.
 
 ## Alerts
 
 ```python
 import os
+from urllib.parse import quote
 from cronwatch import Console, Custom
 from cronwatch.alerts import Slack, Discord, Webhook
 
-Slack(webhook_url=os.environ["SLACK_WEBHOOK_URL"], link=lambda a: f"https://app.example.com/cronwatch/jobs/{a.job}")
+Slack(webhook_url=os.environ["SLACK_WEBHOOK_URL"], link=lambda a: f"https://app.example.com/cronwatch/jobs/{quote(a.job)}")
 Discord(webhook_url=os.environ["DISCORD_WEBHOOK_URL"])
 Webhook("https://hooks.example.com/cronwatch", secret=os.environ.get("CRONWATCH_WEBHOOK_SECRET"),
         headers={"X-Team": "ops"})
@@ -328,19 +329,27 @@ Each sends exactly the request the SDK's does: the same URL, headers, and body, 
 
 Each request gives up 10 seconds after it starts. A refused request raises `"<Provider> <origin> answered <status>: <start of the body>"`, never the URL's path, with the channel's keys cut out of the quoted body. No channel follows a redirect, so credentials never reach another address. [Alerts](/docs/alerts/#email-sms-and-error-trackers) describes what each one sends.
 
-One difference from Node: `urllib` honours the `HTTP_PROXY` and `HTTPS_PROXY` environment variables, which Node's `fetch` ignores by default.
+As with Node's `fetch`, a channel ignores `HTTP_PROXY`, `HTTPS_PROXY`, and the system's proxy settings: each alert goes straight to its host.
 
 The webhook posts the [alert payload](/docs/alerts/#the-alert-payload) with `"schema": 1` as its first field, the same fields in every language, described by its [JSON Schema](/docs/alerts/#the-webhooks-schema). Parse the fields (`type`, `details`), not `title` and `message`, whose wording is not promised.
 
-A webhook with a `secret` signs its body with `X-CronWatch-Signature: sha256=<hex>`. `cronwatch.alerts.webhook.signature(secret, body)` gives the hex, the HMAC-SHA256 of the raw body as it arrived (before any JSON parsing). Verifying it in Python:
+A webhook with a `secret` signs its body with `X-CronWatch-Signature: sha256=<hex>`, and sends `X-CronWatch-Timestamp` (unix seconds) with `X-CronWatch-Timestamp-Signature: sha256=<hex>`, which signs `<timestamp>.<raw body>`. `cronwatch.alerts.webhook.signature(secret, body)` gives the hex, the HMAC-SHA256 of what it is given. Check the timestamped one, over the raw body as it arrived (before any JSON parsing), and refuse a timestamp more than five minutes from your clock, so a captured alert cannot be sent to you again later:
 
 ```python
 import hmac
+import time
 from cronwatch.alerts.webhook import signature
 
-expected = "sha256=" + signature(secret, raw_body.decode())
-ok = hmac.compare_digest(expected, request.headers.get("X-CronWatch-Signature", ""))
+timestamp = request.headers.get("X-CronWatch-Timestamp", "")
+expected = "sha256=" + signature(secret, f"{timestamp}.{raw_body.decode()}")
+ok = (
+    hmac.compare_digest(expected, request.headers.get("X-CronWatch-Timestamp-Signature", ""))
+    and timestamp.isdigit()
+    and abs(time.time() - int(timestamp)) <= 300
+)
 ```
+
+`Webhook(..., now=)` is the clock the timestamp is read from, in epoch milliseconds, for tests. A header in `headers=` is matched without regard to case, so a `Content-Type` given there replaces the default rather than going beside it, and the signature headers are always the channel's own.
 
 `hmac_sha256_hex` is the old name of `signature`: it still works, with a `DeprecationWarning`, and goes in 1.0, since it was public by accident.
 

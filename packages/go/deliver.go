@@ -321,7 +321,8 @@ func (c *Client) sendOne(ctx context.Context, i int, ch Channel, alert Alert) bo
 }
 
 // addTriage sets the alert's triage to the diagnosis, or to none, so it is
-// tried once per alert. A triage that ran past its timeout and has still
+// tried once per alert. Reading the job's recent runs counts toward the
+// timeout. A triage that ran past its timeout and has still
 // not returned holds off the next one until it does, as a hung channel is.
 func (c *Client) addTriage(ctx context.Context, alert *Alert, timeout time.Duration) {
 	where := "triage for " + alert.Job
@@ -334,13 +335,20 @@ func (c *Client) addTriage(ctx context.Context, alert *Alert, timeout time.Durat
 		c.report(errors.New("an earlier triage is still running past its timeout"), where)
 		return
 	}
-	recent, err := c.store.ListRuns(storeCtx(ctx), alert.Job, 5)
+	// One deadline for the read of the job's runs and the triage both, so a
+	// store that never answers cannot hold the check past it.
+	tctx, cancel := context.WithTimeout(storeCtx(ctx), timeout)
+	defer cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	recent, err := c.store.ListRuns(tctx, alert.Job, 5)
 	if err != nil {
+		if tctx.Err() != nil {
+			err = fmt.Errorf("timed out after %dms", timeout.Milliseconds())
+		}
 		c.report(err, where)
 		return
 	}
-	tctx, cancel := context.WithTimeout(storeCtx(ctx), timeout)
-	defer cancel()
 	type answer struct {
 		text string
 		err  error
@@ -364,8 +372,6 @@ func (c *Client) addTriage(ctx context.Context, alert *Alert, timeout time.Durat
 		text, err := c.triage(tctx, tc)
 		done <- answer{text, err}
 	}()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
 	select {
 	case a := <-done:
 		if a.err != nil {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cronwatch } from "../src/index.js";
-import { expectation, firesBetween, nextFire, parseSchedule, runCovers } from "../src/schedule.js";
+import { expectation, firesBetween, intervalDue, nextFire, parseSchedule, runCovers } from "../src/schedule.js";
 import { MIN, HOUR } from "./helpers.js";
 
 const DAY = 86_400_000;
@@ -152,4 +152,51 @@ test("a date no month has never fires, and its job is checked like any other", a
   assert.deepEqual(alerts, []);
   assert.equal(jobs[0]!.health, "never_ran");
   assert.equal(jobs[0]!.nextExpectedAt, null);
+});
+
+test("an interval is due a period after the start, or after the finish of a run that outlasted it", () => {
+  assert.equal(intervalDue(HOUR, 0, null), HOUR, "still running");
+  assert.equal(intervalDue(HOUR, 0, 30 * MIN), HOUR);
+  assert.equal(intervalDue(HOUR, 0, HOUR), HOUR, "finishing at the period is not past it");
+  assert.equal(intervalDue(HOUR, 0, HOUR + 1), 2 * HOUR + 1);
+  const every = parseSchedule("every 1h");
+  assert.deepEqual(expectation(every, 0, -DAY, 10 * MIN, 90 * MIN), { dueAt: 150 * MIN, deadline: 160 * MIN });
+  assert.deepEqual(expectation(every, 0, -DAY, 10 * MIN), { dueAt: HOUR, deadline: HOUR + 10 * MIN }, "no finish: from the start");
+  assert.deepEqual(expectation(every, null, 0, 10 * MIN, 5 * HOUR), { dueAt: HOUR, deadline: HOUR + 10 * MIN }, "no run: from registration");
+  // A cron counts from the start alone.
+  const hourly = parseSchedule("0 * * * *", "UTC");
+  assert.deepEqual(expectation(hourly, 0, -DAY, 0, 90 * MIN), expectation(hourly, 0, -DAY, 0));
+});
+
+test("every slot a spring-forward gap skips still fires, moved forward by the gap, whatever it is counted from", () => {
+  const z = (iso: string) => Date.parse(iso);
+  const chain = (parsed: ReturnType<typeof parseSchedule>, from: string, n: number) => {
+    const out: string[] = [];
+    let t: number | null = z(from);
+    for (let i = 0; i < n && t !== null; i++) {
+      t = nextFire(parsed, t, null);
+      if (t !== null) out.push(new Date(t).toISOString());
+    }
+    return out;
+  };
+  // London skips 01:00 to 02:00 (an hour) at 01:00Z on 2027-03-28.
+  const london = parseSchedule("*/20 1 * * *", "Europe/London");
+  const londonNight = ["2027-03-28T01:00:00.000Z", "2027-03-28T01:20:00.000Z", "2027-03-28T01:40:00.000Z", "2027-03-29T00:00:00.000Z"];
+  assert.deepEqual(chain(london, "2027-03-27T12:00:00Z", 4), londonNight);
+  assert.deepEqual(chain(london, "2027-03-28T01:00:00Z", 3), londonNight.slice(1));
+  assert.deepEqual(chain(london, "2027-03-28T01:31:00Z", 2), londonNight.slice(2));
+  assert.deepEqual(firesBetween(london, z("2027-03-27T12:00:00Z"), z("2027-03-29T00:00:00Z"), 100)!.map((t) => new Date(t).toISOString()), londonNight);
+  // Lord Howe skips 02:00 to 02:30 (half an hour) at 15:30Z on 2027-10-02:
+  // 02:00 and 02:20 move to 15:30Z and 15:50Z, either side of the real 02:40.
+  const howe = parseSchedule("*/20 2 * * *", "Australia/Lord_Howe");
+  const howeNight = ["2027-10-02T15:30:00.000Z", "2027-10-02T15:40:00.000Z", "2027-10-02T15:50:00.000Z", "2027-10-03T15:00:00.000Z"];
+  assert.deepEqual(chain(howe, "2027-10-02T00:00:00Z", 4), howeNight);
+  assert.deepEqual(chain(howe, "2027-10-02T15:30:00Z", 3), howeNight.slice(1));
+  assert.deepEqual(chain(howe, "2027-10-02T15:40:00Z", 2), howeNight.slice(2));
+  assert.deepEqual(firesBetween(howe, z("2027-10-02T00:00:00Z"), z("2027-10-03T15:00:00Z"), 100)!.map((t) => new Date(t).toISOString()), howeNight);
+  // A run at the jump covers the slots moved out of the gap, as vixie cron
+  // runs each skipped job once there; Lord Howe's real 02:40 is still due.
+  assert.equal(expectation(london, z("2027-03-28T01:00:00Z"), 0, 0)!.dueAt, z("2027-03-29T00:00:00Z"));
+  assert.equal(expectation(howe, z("2027-10-02T15:30:00Z"), 0, 0)!.dueAt, z("2027-10-02T15:40:00Z"));
+  assert.equal(expectation(howe, z("2027-10-02T15:40:00Z"), 0, 0)!.dueAt, z("2027-10-03T15:00:00Z"));
 });

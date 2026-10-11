@@ -38,7 +38,7 @@ const created = new WeakMap<object, Set<string>>();
  * prepare, bind, and batch. Create it where the binding is, inside the
  * handler: `d1(env.DB)`.
  */
-export function d1(database: D1DatabaseLike, options: D1Options = {}): Store {
+export function d1(database: D1DatabaseLike, options: D1Options = {}): Store & Required<Pick<Store, "lastRun">> {
   if (!database || typeof database.prepare !== "function" || typeof database.batch !== "function") {
     throw new Error("cronwatch: d1() needs a D1 database binding, such as env.DB");
   }

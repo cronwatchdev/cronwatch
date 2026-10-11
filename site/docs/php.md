@@ -123,7 +123,7 @@ cronwatch: checked 3 jobs, sent 0 alerts
 
 The bootstrap file must declare every job, so a job that never ran at all is known and reported missed. Every job already in the store is checked from its stored definition too.
 
-Run one checker per store. Two checks against one database at the same moment can each send the same alert. `check()` returns a `CheckResult` with `checkedAt`, `jobs`, `alerts`, and `pruned`, and `summary()` is the line above. A worker loop (a queue consumer, a daemon) can call `$cw->check()` itself every few minutes instead of the crontab line.
+Run one checker per store. Two checks against one database at the same moment can each send the same alert. `check()` returns a `CheckResult` with `checkedAt`, `jobs`, `alerts`, and `pruned`, and `summary()` is the line above. Old runs are pruned at most once an hour across every process sharing the store: the time of the last prune is kept in the store's state table, so a check every minute from crontab, each in a process of its own, prunes once an hour, not every minute. A worker loop (a queue consumer, a daemon) can call `$cw->check()` itself every few minutes instead of the crontab line.
 
 ## The dashboard
 
@@ -147,12 +147,12 @@ $app->add(new \Cronwatch\Web\PsrMiddleware($cw->routes(), $factory, $factory)); 
 
 `$cw->routes(token:, basePath:, origin:, trustProxy:)`:
 
-- `token`: leave it out (or pass `Cronwatch\FromEnv::Read`) to read `CRONWATCH_TOKEN`; an empty string or one of only whitespace counts as unset, given or read, and so does a variable holding a word Laravel's `env()` reads as null, true, false, or empty (`null`, `(null)`, `true`, `false`, `(empty)`, and the like). Anything else that is not a string (`true`, a number) throws a `TypeError`. Everything needs it, as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps the browser signed in. `null` serves the routes open, for a mount behind your own auth, as it does in every language. Without a token:
+- `token`: leave it out (or pass `Cronwatch\FromEnv::Read`) to read `CRONWATCH_TOKEN`; an empty string or one of only whitespace counts as unset, given or read, and so does a variable holding a word Laravel's `env()` reads as null, true, false, or empty (`null`, `(null)`, `true`, `false`, `(empty)`, and the like). Anything else that is not a string (`true`, a number) throws a `TypeError`. Everything needs it, as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps the browser signed in. `null` serves the routes open, for a mount behind your own auth, as it does in every language. A token shorter than 24 characters still works, but is reported once through `onError` as short enough to guess; make one with `openssl rand -hex 24`. Without a token:
   - In development, the routes make one and keep it in a file in the system's temporary directory, so every request, in every PHP process, asks for the same one. They write a sign-in link to the server log when they make it.
   - The link names the host only when `origin` is set or the request's host is loopback: `localhost`, a name ending in `.localhost`, `127.0.0.0/8`, or `::1`. The host must read as one of these on its own, so a Host header such as `localhost:1@evil.example` does not count. Otherwise the link leaves the host out, since a client chooses it: `Sign in: /cronwatch/?token=... on this server (the first request's host is not local, so the link leaves it out)`.
   - Anywhere else, they answer 503.
   - The environment is the first of `CRONWATCH_ENV`, `APP_ENV`, and `WP_ENVIRONMENT_TYPE` whose value, trimmed, is not empty (where the SDK reads `NODE_ENV` third), lowercased; `development`, `dev`, and `local` count as development (not `test` or `testing`), `production` and `prod` as production.
-- `basePath`: where it is mounted. It defaults to the script for a path-info URL (`/cronwatch.php`), else `/cronwatch`.
+- `basePath`: where it is mounted. It defaults to the script for a path-info URL (`/cronwatch.php`), else `/cronwatch`. Only the base path and the paths under it are answered; anything else (`/cronwatchapi/jobs`, or `/cronwatch/../api/jobs`) is a 404, signed in or not.
 - `origin`: the public origin, such as `'https://app.example.com'`, to pin it whatever a request says. It then replaces the request's own for the cross-site check on writes, the cookie's `Secure` flag, and redirects.
 - `trustProxy`: take the origin from the first `X-Forwarded-Proto` and `X-Forwarded-Host`. Off by default.
 
@@ -206,7 +206,7 @@ A run that is never finished is marked stuck by the first check after the job's 
 
 `Cronwatch\Store\MemoryStore` is the default. It forgets when the process ends, so it is for tests and trying things out.
 
-`new SqliteStore($path = null, pdo: null, prefix: 'cronwatch_')` keeps everything in one file, in WAL mode. Without a path the file is `data/cronwatch.db` in the app's root (the directory holding `vendor/`), whatever the working directory, so the dashboard under PHP-FPM and the cron check share it and it is not put in a `public/` directory the web server hands out (unless the app's root is itself the document root); a relative path you give is the working directory's, so give an absolute one. The directory is made if it is missing and the file is created private (mode 0600). `pdo:` takes an open `PDO` of your own. The tables, statements, and JSON are the SDK's SQLite store's byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
+`new SqliteStore($path = null, pdo: null, prefix: 'cronwatch_')` keeps everything in one file, in WAL mode. Without a path the file is `data/cronwatch.db` in the app's root (the directory holding `vendor/`), whatever the working directory, so the dashboard under PHP-FPM and the cron check share it and it is not put in a `public/` directory the web server hands out (unless the app's root is itself the document root); a relative path you give is the working directory's, so give an absolute one. The directory is made if it is missing and the file is created private (mode 0600), so every process that uses it (the web server, the crontab line, a queue worker) must run as the same user: a check run from root's or a deploy user's crontab and a dashboard served as `www-data` cannot share one file. A file this process cannot read and write is refused with a message that says so. `pdo:` takes an open `PDO` of your own. The tables, statements, and JSON are the SDK's SQLite store's byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
 
 `new MysqlStore($url = null, $username = null, $password = null, pdo: null, prefix: 'cronwatch_')` is for MySQL 8.0.13 or newer and MariaDB 10.6 or newer. It takes a `mysql://` (or `mariadb://`) URL, a `mysql:` PDO DSN, or `DATABASE_URL` when given nothing. The URL's TLS parameters are used (`ssl-mode` or `sslmode`, `ssl-ca`, `ssl-cert`, `ssl-key`) and any other parameter is refused, so a URL that asks for TLS never connects without it. A CA file given with no mode checks the server's certificate against it; only `ssl-mode=REQUIRED` or `PREFERRED`, said outright, skip that check. It keeps the same three tables in MySQL's dialect: the JSON columns are `LONGTEXT` holding the SDK's JSON byte for byte, never MySQL's `JSON` type (which reorders keys), and names compare as bytes (`utf8mb4_bin`), as they do in SQLite and Postgres.
 
@@ -214,9 +214,9 @@ A run that is never finished is marked stuck by the first check after the job's 
 
 Given a URL or DSN, the MySQL and Postgres stores open a connection of their own in autocommit mode, so a run recorded inside your transaction is recorded when it happens and stays recorded if that transaction rolls back. They reconnect once when the server has gone away. Given your `PDO`, they share it, transactions and all.
 
-`prefix` names the tables (`cronwatch_jobs`, `cronwatch_runs`, `cronwatch_state`). Each store runs `CREATE TABLE IF NOT EXISTS` on first use; for a database user who may not create tables, make them once with `$store->init()` from a user who may, and wrap the store in `new Cronwatch\Store\Migrated($store)`, whose `init()` does nothing.
+`prefix` names the tables (`cronwatch_jobs`, `cronwatch_runs`, `cronwatch_state`). Each store makes its tables on first use in each process. The MySQL and Postgres stores look in the catalog first and run no DDL when the tables are there, since on a shared `PDO` MySQL's `CREATE TABLE` would commit your open transaction and Postgres's `CREATE INDEX IF NOT EXISTS` would hold a lock until it ends. For a database user who may not create tables, make them once with `$store->init()` from a user who may, and wrap the store in `new Cronwatch\Store\Migrated($store)`, whose `init()` does nothing.
 
-A store of your own implements `Cronwatch\Store\Store` (`init`, `upsertJob`, `getJob`, `listJobs`, `deleteJob`, `insertRun`, `updateRun`, `getRun`, `listRuns`, `lastRun`, `runningRuns`, `getState`, `setState`, `prune`, `close`), with epoch milliseconds for every time, and the conditional writes as interfaces of their own: `UpdatesRunIf`, `ComparesAndSetsState`, and `DeletesRunIf`. They mean what the [TypeScript interface](/docs/stores/#writing-a-store) says. The conditional writes are what keep PHP-FPM workers, queue workers, and cron scripts on one store from judging a run twice or losing each other's updates; see [two processes, one store](/docs/stores/#two-processes-one-store).
+A store of your own implements `Cronwatch\Store\Store` (`init`, `upsertJob`, `getJob`, `listJobs`, `deleteJob`, `insertRun`, `updateRun`, `getRun`, `listRuns`, `runningRuns`, `getState`, `setState`, `prune`, `close`), with epoch milliseconds for every time, and the conditional writes as interfaces of their own: `UpdatesRunIf`, `ComparesAndSetsState`, and `DeletesRunIf`. They mean what the [TypeScript interface](/docs/stores/#writing-a-store) says. The conditional writes are what keep PHP-FPM workers, queue workers, and cron scripts on one store from judging a run twice or losing each other's updates; see [two processes, one store](/docs/stores/#two-processes-one-store). A store without `UpdatesRunIf` or `ComparesAndSetsState` works, but is safe only while one process at a time uses it, and the client says so once, through `onError` as `store`. The built-in stores also have `lastRun($job)`, which the client never calls, so yours need not.
 
 ## Alerts
 
@@ -226,7 +226,7 @@ use Cronwatch\Alerts\Discord;
 use Cronwatch\Alerts\Slack;
 use Cronwatch\Alerts\Webhook;
 
-$link = fn (Alert $alert) => "https://app.example.com/cronwatch/jobs/{$alert->job}";
+$link = fn (Alert $alert) => 'https://app.example.com/cronwatch/jobs/' . rawurlencode($alert->job);
 
 $alerts = [
     new Slack(getenv('SLACK_WEBHOOK_URL'), link: $link),
@@ -294,14 +294,17 @@ Each sends exactly the request the SDK's does: the same URL, headers, and body, 
 
 Every channel takes `http:`, an `Cronwatch\Alerts\Http` to send through (`post($url, $body, $headers, $timeoutMs)`), for a proxy or a test double. `Cronwatch\Alerts\Transport::set($http)` sets the one every channel given none uses.
 
-A webhook posts the [alert payload](/docs/alerts/#the-alert-payload) with `"schema": 1` as its first field, the same body every language posts, described by [its JSON Schema](/docs/alerts/#the-webhooks-schema). Read its fields rather than `title` and `message`, whose wording is not promised. It takes `headers:` for headers of your own (`['Authorization' => 'Bearer ...']`), and with a `secret` signs its body with `X-CronWatch-Signature: sha256=<hex>`. `Webhook::signature($secret, $body)` is that HMAC-SHA256 as lowercase hex; verifying in PHP:
+A webhook posts the [alert payload](/docs/alerts/#the-alert-payload) with `"schema": 1` as its first field, the same body every language posts, described by [its JSON Schema](/docs/alerts/#the-webhooks-schema). Read its fields rather than `title` and `message`, whose wording is not promised. It takes `headers:` for headers of your own (`['Authorization' => 'Bearer ...']`), and with a `secret` signs each request: `X-CronWatch-Signature: sha256=<hex>` over the raw body, and `X-CronWatch-Timestamp: <unix seconds>` with `X-CronWatch-Timestamp-Signature: sha256=<hex>` over `<timestamp>.<raw body>`. A header of yours replaces the default of the same name in any case, and never one of these three. `Webhook::signature($secret, $text)` is the HMAC-SHA256 as lowercase hex; verifying the timestamped one in PHP, and refusing a timestamp more than five minutes from your clock, so a captured alert cannot be sent to you again later:
 
 ```php
 use Cronwatch\Alerts\Webhook;
 
 $body = file_get_contents('php://input');
-$expected = 'sha256=' . Webhook::signature($secret, $body);
-$ok = hash_equals($expected, $_SERVER['HTTP_X_CRONWATCH_SIGNATURE'] ?? '');
+$timestamp = $_SERVER['HTTP_X_CRONWATCH_TIMESTAMP'] ?? '';
+$expected = 'sha256=' . Webhook::signature($secret, "{$timestamp}.{$body}");
+$ok = preg_match('/^[0-9]+$/D', $timestamp) === 1
+    && abs(time() - (int) $timestamp) <= 300
+    && hash_equals($expected, $_SERVER['HTTP_X_CRONWATCH_TIMESTAMP_SIGNATURE'] ?? '');
 ```
 
 ### Processes that cannot send

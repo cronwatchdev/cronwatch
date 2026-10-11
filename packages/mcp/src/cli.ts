@@ -16,7 +16,13 @@ if (args.includes("--help") || args.includes("-h")) {
 
 Set them in the environment. --url and --token work too, but a flag shows up
 in the process list (ps) for anyone on the machine, so prefer the variable for
-the token. Add it to Claude Code with:
+the token.
+
+A plain http URL is refused unless it is this machine (localhost, 127.0.0.1,
+[::1]), since the token would cross the network unencrypted. For a private
+network you trust, pass --allow-http or set CRONWATCH_ALLOW_HTTP=1.
+
+Add it to Claude Code with:
 
   claude mcp add cronwatch -e CRONWATCH_URL=https://app.example.com/cronwatch -e CRONWATCH_TOKEN=... -- npx -y @cronwatch/mcp
 `);
@@ -25,16 +31,22 @@ the token. Add it to Claude Code with:
 
 const baseUrl = flag("--url") ?? process.env.CRONWATCH_URL;
 const token = flag("--token") ?? process.env.CRONWATCH_TOKEN ?? null;
+const allowHttp = args.includes("--allow-http") || process.env.CRONWATCH_ALLOW_HTTP === "1";
 
 if (baseUrl) {
+  let url: URL;
   try {
-    const { protocol, hostname } = new URL(baseUrl);
-    if (protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(hostname)) {
-      console.error(`cronwatch-mcp: ${baseUrl} is plain http, so the token travels unencrypted; use https.`);
-    }
+    url = new URL(baseUrl);
   } catch {
     console.error(`cronwatch-mcp: CRONWATCH_URL "${baseUrl}" is not a URL.`);
     process.exit(2);
+  }
+  if (url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+    if (!allowHttp) {
+      console.error(`cronwatch-mcp: ${baseUrl} is plain http, so the token would travel unencrypted; use https. For a private network you trust, pass --allow-http or set CRONWATCH_ALLOW_HTTP=1.`);
+      process.exit(2);
+    }
+    console.error(`cronwatch-mcp: ${baseUrl} is plain http, so the token travels unencrypted (allowed by --allow-http or CRONWATCH_ALLOW_HTTP).`);
   }
 }
 if (!baseUrl) {

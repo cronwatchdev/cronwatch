@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -73,6 +74,147 @@ class HardeningTest {
       out.add(a.type().value());
     }
     return out;
+  }
+
+  /**
+   * The SDK's T1: an error handler that throws cannot stop a run. With every store write failing
+   * and the handler throwing on each report, the function still runs and its answer (or its own
+   * error) comes back, and a started run still finishes without a throw.
+   */
+  @Test
+  void aThrowingErrorHandlerCannotStopTheRun() throws Exception {
+    Wrapped store = new Wrapped(new MemoryStore());
+    store.broken.addAll(
+        List.of("insertRun", "updateRun", "updateRunIf", "getRun", "getState", "upsertJob"));
+    AtomicInteger reports = new AtomicInteger();
+    try (Cronwatch cw =
+        Cronwatch.builder()
+            .store(store)
+            .alerts(List.of())
+            .noCronSecret()
+            .noShutdownHook()
+            .onError(
+                (where, e) -> {
+                  reports.incrementAndGet();
+                  throw new IllegalStateException("the handler broke");
+                })
+            .build()) {
+      assertEquals(Integer.valueOf(7), cw.call("t1", j -> 7));
+      IllegalArgumentException own =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  cw.run(
+                      "t1",
+                      j -> {
+                        throw new IllegalArgumentException("the job's own");
+                      }));
+      assertEquals("the job's own", own.getMessage());
+      RunHandle handle = cw.job("t1", JobOptions.builder()).start();
+      handle.finish();
+      assertTrue(reports.get() > 0, "the failures were reported");
+    }
+  }
+
+  /** A store of the app's own with neither conditional write, over the memory store. */
+  static class Plain implements Store {
+    final Store inner = new MemoryStore();
+
+    @Override
+    public void upsertJob(Definition definition, long now) throws Exception {
+      inner.upsertJob(definition, now);
+    }
+
+    @Override
+    public @Nullable StoredJob getJob(String name) throws Exception {
+      return inner.getJob(name);
+    }
+
+    @Override
+    public List<StoredJob> listJobs() throws Exception {
+      return inner.listJobs();
+    }
+
+    @Override
+    public void deleteJob(String name) throws Exception {
+      inner.deleteJob(name);
+    }
+
+    @Override
+    public void insertRun(Run run) throws Exception {
+      inner.insertRun(run);
+    }
+
+    @Override
+    public void updateRun(Run run) throws Exception {
+      inner.updateRun(run);
+    }
+
+    @Override
+    public @Nullable Run getRun(String id) throws Exception {
+      return inner.getRun(id);
+    }
+
+    @Override
+    public List<Run> listRuns(String job, int limit) throws Exception {
+      return inner.listRuns(job, limit);
+    }
+
+    @Override
+    public List<Run> runningRuns() throws Exception {
+      return inner.runningRuns();
+    }
+
+    @Override
+    public @Nullable JobState getState(String job) throws Exception {
+      return inner.getState(job);
+    }
+
+    @Override
+    public void setState(JobState state) throws Exception {
+      inner.setState(state);
+    }
+
+    @Override
+    public long prune(long before) throws Exception {
+      return inner.prune(before);
+    }
+  }
+
+  /** {@link Plain} with a conditional state write of its own. */
+  static final class WithCas extends Plain {
+    @Override
+    public boolean compareAndSetState(JobState state, long expected) throws Exception {
+      return inner.compareAndSetState(state, expected);
+    }
+  }
+
+  /**
+   * The SDK's T2: a store without compareAndSetState or updateRunIf works, and is reported once, as
+   * {@code store}, when the client first uses it.
+   */
+  @Test
+  void aStoreWithoutTheConditionalWritesIsReportedOnce() {
+    String tail =
+        ", so two processes sharing it can overwrite each other's state or both evaluate the same"
+            + " run; it is safe only while one process at a time uses it";
+    for (Map.Entry<Store, String> c :
+        List.of(
+            Map.<Store, String>entry(new Plain(), "compareAndSetState or updateRunIf"),
+            Map.<Store, String>entry(new WithCas(), "updateRunIf"))) {
+      Made m = Support.make(b -> b.store(c.getKey()));
+      try (Cronwatch cw = m.cw()) {
+        cw.run("plain", j -> {});
+        cw.run("plain", j -> {});
+        cw.check();
+        assertEquals(List.of("store"), m.errors().wheres(), c.getValue());
+        assertEquals(
+            List.of("the store has no " + c.getValue() + tail),
+            m.errors().messages(),
+            c.getValue());
+      }
+    }
+    assertEquals(List.of(), Core.missingWrites(new MemoryStore()));
   }
 
   @Test

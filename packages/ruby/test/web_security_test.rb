@@ -79,6 +79,24 @@ class WebSecurityTest < Minitest::Test
     assert_equal 400, send.call("POST", "/cronwatch/api/jobs/%zz/silence", BEARER).status
   end
 
+  # Only the base and the paths under it are the routes', judged after dot
+  # segments are resolved as new URL resolves them, before any sign-in.
+  def test_only_paths_under_the_base_are_answered_with_dot_segments_resolved_first
+    _, _, send = app
+    %w[/cronwatchapi/jobs /api/jobs /cronwatch/../api/jobs /cronwatch/%2E%2e/api/jobs /cronwatch/jobs/../../api/jobs].each do |path|
+      response = send.call("GET", path, BEARER)
+      assert_equal 404, response.status, path
+      assert_match(/Not found/, response.body, path)
+    end
+    assert_equal 404, send.call("GET", "/cronwatch-x/api/jobs").status, "not found before the token is asked for"
+    %w[/cronwatch/./api/jobs /cronwatch/jobs/../api/jobs /cronwatch/%2e/api/jobs].each do |path|
+      response = send.call("GET", path, BEARER)
+      assert_equal 200, response.status, path
+      assert_equal true, response.json["ok"], path
+    end
+    assert_equal 200, send.call("GET", "/cronwatch", BEARER).status, "the base itself is the dashboard"
+  end
+
   def test_runs_query_is_clamped_to_a_whole_number_in_range
     cw, _, send = app
     3.times { cw.run("r") { nil } }

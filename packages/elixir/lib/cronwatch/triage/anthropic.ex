@@ -299,10 +299,13 @@ defmodule Cronwatch.Triage.Anthropic do
         lines ++
           [
             "",
-            "Triggering run: status #{run.status}, started #{stamp(run.started_at)}, " <>
-              "duration #{duration(run)}, trigger #{run.trigger}"
+            Units.concat([
+              "Triggering run: status #{run.status}, started #{stamp(run.started_at)}, " <>
+                "duration #{duration(run)}, trigger ",
+              data(run.trigger)
+            ])
           ] ++
-          if(metrics?(run), do: ["Metrics: #{JS.stringify(run.metrics)}"], else: []) ++
+          if(metrics?(run), do: [Units.concat(["Metrics: ", data(JS.stringify(run.metrics))])], else: []) ++
           if(blank?(run.error), do: [], else: [Units.concat(["Error:\n", data(Units.head(run.error, 3000))])]) ++
           if(blank?(run.output),
             do: [],
@@ -333,7 +336,7 @@ defmodule Cronwatch.Triage.Anthropic do
                 [", error: ", data(Units.head(first, 160))]
               end
 
-            metrics = if metrics?(r), do: [", metrics #{JS.stringify(r.metrics)}"], else: []
+            metrics = if metrics?(r), do: [", metrics ", data(JS.stringify(r.metrics))], else: []
             Units.concat(["- #{r.status}, #{stamp(r.started_at)}, #{duration(r)}"] ++ error ++ metrics)
           end)
       end

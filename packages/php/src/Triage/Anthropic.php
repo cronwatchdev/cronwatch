@@ -104,9 +104,9 @@ final class Anthropic
         $lines[] = 'Job definition: ' . Js::stringify($alert->definition);
         if ($run !== null) {
             $lines[] = '';
-            $lines[] = "Triggering run: status {$run->status}, started " . self::stamp($run->startedAt) . ', duration ' . self::duration($run) . ", trigger {$run->trigger}";
+            $lines[] = "Triggering run: status {$run->status}, started " . self::stamp($run->startedAt) . ', duration ' . self::duration($run) . ', trigger ' . self::data($run->trigger);
             if ($run->metrics !== []) {
-                $lines[] = 'Metrics: ' . Js::stringify(Js::obj($run->metrics));
+                $lines[] = 'Metrics: ' . self::data(Js::stringify(Js::obj($run->metrics)));
             }
             if ($run->error !== null && $run->error !== '') {
                 $lines[] = "Error:\n" . self::data(Js::slice16($run->error, 3000));
@@ -121,7 +121,7 @@ final class Anthropic
             $lines[] = 'Earlier runs, newest first:';
             foreach ($earlier as $r) {
                 $error = $r->error !== null && $r->error !== '' ? ', error: ' . self::data(Js::slice16(explode("\n", $r->error)[0], 160)) : '';
-                $metrics = $r->metrics !== [] ? ', metrics ' . Js::stringify(Js::obj($r->metrics)) : '';
+                $metrics = $r->metrics !== [] ? ', metrics ' . self::data(Js::stringify(Js::obj($r->metrics))) : '';
                 $lines[] = "- {$r->status}, " . self::stamp($r->startedAt) . ', ' . self::duration($r) . $error . $metrics;
             }
         }
@@ -189,8 +189,9 @@ final class Anthropic
         // One attempt, no retries: a retry would run on after the alert has gone out without a diagnosis.
         $response = $this->http->post($request['url'], $request['body'], $request['headers'], $timeout);
         if (!$response->ok()) {
+            $text = Shared::errorText($response);
             throw new \RuntimeException('Anthropic ' . Shared::origin($this->url) . " answered {$response->status}"
-                . ($response->body !== '' ? ': ' . Shared::errorBody($response->body, [$this->apiKey]) : ''));
+                . ($text !== '' ? ': ' . Shared::errorBody($text, [$this->apiKey]) : ''));
         }
         return self::diagnosis(Js::parse($response->body));
     }

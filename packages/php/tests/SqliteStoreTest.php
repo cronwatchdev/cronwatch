@@ -88,6 +88,30 @@ final class SqliteStoreTest extends TestCase
         $store->close();
     }
 
+    /**
+     * A file this process cannot write (made by another user, private to
+     * them, or in a directory it may not write) is refused with a message
+     * that says every process must run as one user, rather than SQLite's
+     * "attempt to write a readonly database" at the first write.
+     */
+    public function testAFileThisProcessCannotWriteIsRefusedWithAMessageThatSaysWhy(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows' || (function_exists('posix_geteuid') && posix_geteuid() === 0)) {
+            $this->markTestSkipped('needs POSIX modes and a user other than root');
+        }
+        mkdir($this->dir);
+        chmod($this->dir, 0500);
+        try {
+            (new SqliteStore("{$this->dir}/shared.db"))->init();
+            $this->fail('refused');
+        } catch (\RuntimeException $error) {
+            $this->assertStringContainsString('SqliteStore cannot read and write', $error->getMessage());
+            $this->assertStringContainsString('must run as that same user', $error->getMessage());
+        } finally {
+            chmod($this->dir, 0700);
+        }
+    }
+
     public function testOpeningRetriesABusyDatabaseAndKeepsNothingFromAFailedOpen(): void
     {
         mkdir($this->dir);

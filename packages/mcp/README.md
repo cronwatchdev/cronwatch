@@ -36,6 +36,8 @@ Any stdio MCP client:
 
 Give the token through `CRONWATCH_TOKEN`, as above. The `--url` and `--token` flags still work, but a flag is visible to anyone who can list processes (`ps`), so keep the token in the environment. Node 22 or newer.
 
-`list_jobs`, `get_job`, and `get_setup_guide` are marked read-only; `silence_job` and `forget_job` are marked destructive, so clients that ask before destructive tools will ask. A run's error and output are written by the job, so tool results label them as untrusted data for the model to read, not follow.
+Use an `https` URL. The token goes with every request, so the server refuses to start with a plain `http` URL unless its host is this machine (`localhost`, `127.0.0.1`, or `[::1]`). For a private network you trust, pass `--allow-http` or set `CRONWATCH_ALLOW_HTTP=1`, and it starts with a warning.
+
+`list_jobs`, `get_job`, and `get_setup_guide` are marked read-only; `silence_job` and `forget_job` are marked destructive, so clients that ask before destructive tools will ask. `run_check` is marked open-world, since the alerts it sends leave the app. A run's error and output are written by the job, and an error's text by the dashboard, so tool results fence them as untrusted data for the model to read, not follow. Results are kept short: a line past 500 characters and a result past 40,000 are cut with a note saying so, `get_job` leaves out the older runs that do not fit, and an answer from the dashboard over 5 MB is not read. Job names are checked against the SDK's rule before any request.
 
 The token grants everything the dashboard can do. Docs: [cronwatch.dev/docs/mcp](https://cronwatch.dev/docs/mcp/). MIT.

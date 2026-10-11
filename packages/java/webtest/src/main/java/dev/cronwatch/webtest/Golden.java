@@ -49,7 +49,7 @@ public final class Golden {
   private static final long DAY = 24 * HOUR;
 
   /** How many captures golden.json holds. */
-  public static final int CAPTURES = 82;
+  public static final int CAPTURES = 86;
 
   /** One capture: the request sent and the SDK's answer. */
   public record Capture(
@@ -384,10 +384,19 @@ public final class Golden {
       Set.of("/cronwatch/jobs/%zz", "/cronwatch/api/jobs/%zz");
 
   /**
+   * The captures whose path is not under {@code /cronwatch}: the routes answer each with their own
+   * 404 page, but a server that mounts them at {@code /cronwatch} need not route them there at all,
+   * so through a server only the 404 is checked (straight into the routes, every byte is).
+   */
+  public static final Set<String> OUTSIDE_BASE =
+      Set.of("/cronwatchapi/jobs", "/api/jobs", "/cronwatch-x/api/jobs");
+
+  /**
    * Replays every capture through a server on {@code port} with the dashboard at {@code
    * /cronwatch}, ignoring what that server adds of its own. A capture whose path is in {@code
-   * refused} must be refused by the server itself with a 400, since it never reaches the routes;
-   * answers how many captures matched.
+   * refused} must be refused by the server itself with a 400, since it never reaches the routes,
+   * and one in {@link #OUTSIDE_BASE} must be answered 404, by the routes or the server; answers how
+   * many captures matched byte for byte.
    */
   public static int throughServer(Seeded seeded, int port, Set<String> ignored, Set<String> refused)
       throws IOException {
@@ -405,6 +414,10 @@ public final class Golden {
       RawHttp.Answer a = RawHttp.send(port, c.method(), path, c.headers(), body(c));
       if (refused.contains(c.path())) {
         assertEquals(400, a.status(), c.label() + ": refused by the server");
+        continue;
+      }
+      if (OUTSIDE_BASE.contains(c.path())) {
+        assertEquals(404, a.status(), c.label() + ": not found outside the base");
         continue;
       }
       compare(c, a.status(), a.headers(), a.body(), ids, ignored, packedTypes);

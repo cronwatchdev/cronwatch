@@ -16,7 +16,7 @@ export interface PostgresOptions {
  * Neon, Supabase, Railway, and the like, where there is no disk to keep a
  * SQLite file on. Times are stored as BIGINT epoch milliseconds.
  */
-export function postgres(options: PostgresOptions = {}): Store {
+export function postgres(options: PostgresOptions = {}): Store & Required<Pick<Store, "lastRun">> {
   const p = tablePrefix(options.prefix);
   const sql = statements("postgres", p);
   const owned = !options.pool;

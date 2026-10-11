@@ -668,12 +668,49 @@ public final class Evaluate {
   }
 
   /**
-   * Called when a run starts. Missed and stuck are about the absence of a run, so a run starting
-   * closes them without an alert; the recovered message waits for a successful finish.
+   * {@code finishedAtOf}: when a run finished, or null while it runs (a run marked timeout has).
    */
-  public static JobState onRunStart(JobState state) {
+  public static @Nullable Long finishedAtOf(Run run) {
+    return run.status().equals(RunStatus.RUNNING) ? null : run.finishedAt();
+  }
+
+  /**
+   * {@code catchesUp}: whether {@code run} brings the schedule up to date at {@code now}, so missed
+   * may close for it: judged with it as the job's last run, as {@link #onCheck} judges, the run the
+   * schedule wants next is not yet past its deadline. A run that started before the fire missed
+   * opened for does not cover that fire, however late it finishes, and neither does a run a source
+   * reports only once it is over whose start was before it. Every run starting now covers it. A job
+   * with no schedule, or one that no longer parses, has nothing due, so any run does.
+   */
+  public static boolean catchesUp(Definition def, Run run, long now) {
+    if (!truthy(def.get("schedule"))) {
+      return true;
+    }
+    try {
+      Schedules.Expectation exp =
+          Schedules.expectation(
+              parsedSchedule(def),
+              run.startedAt(),
+              run.startedAt(),
+              graceMs(def),
+              finishedAtOf(run));
+      return exp == null || (double) now <= exp.deadline();
+    } catch (RuntimeException e) {
+      return true;
+    }
+  }
+
+  /**
+   * Called when a run starts, or when a run a source reports is recorded. Missed and stuck are
+   * about the absence of a run, so a run starting closes them without an alert; the recovered
+   * message waits for a successful finish. Missed closes only when the run catches the schedule up
+   * ({@link #catchesUp}), which a run starting now always does.
+   */
+  public static JobState onRunStart(Definition def, Run run, JobState state, long now) {
     MutableState next = cloneState(state);
-    closeCondition(next, Condition.MISSED);
+    if (catchesUp(def, run, now)) {
+      closeCondition(next, Condition.MISSED);
+    }
     closeCondition(next, Condition.STUCK);
     return next.toState();
   }
@@ -690,7 +727,9 @@ public final class Evaluate {
 
   /**
    * Called when a run finishes with status ok, failed, or timeout. {@code history} is the job's
-   * earlier runs, newest first, not including this one.
+   * earlier runs, newest first, not including this one. Missed closes only when the run catches the
+   * schedule up ({@link #catchesUp}): a run that started before the fire missed opened for leaves
+   * it open.
    */
   public static Evaluation onRunFinish(
       Definition def, Run run, JobState state, List<Run> history, long now) {
@@ -699,7 +738,9 @@ public final class Evaluate {
 
     if (run.status().equals(RunStatus.OK)) {
       next.consecutiveFailures = 0;
-      closeCondition(next, Condition.MISSED);
+      if (catchesUp(def, run, now)) {
+        closeCondition(next, Condition.MISSED);
+      }
       closeCondition(next, Condition.STUCK);
       closeCondition(next, Condition.FAILED);
 
@@ -755,7 +796,9 @@ public final class Evaluate {
     // failed or timeout
     // Held at the top: a count at the limit neither loses precision nor wraps below a threshold.
     next.consecutiveFailures = Math.min(next.consecutiveFailures + 1, MAX_DURATION_MS);
-    closeCondition(next, Condition.MISSED);
+    if (catchesUp(def, run, now)) {
+      closeCondition(next, Condition.MISSED);
+    }
     double threshold = failuresBeforeAlert(def);
     boolean timedOut = run.status().equals(RunStatus.TIMEOUT);
     Condition condition = timedOut ? Condition.STUCK : Condition.FAILED;
@@ -834,18 +877,23 @@ public final class Evaluate {
     ParsedSchedule parsed = parsedSchedule(def);
     double grace = graceMs(def);
     Long lastRunAt = lastRun == null ? null : lastRun.startedAt();
-    Schedules.Expectation exp = Schedules.expectation(parsed, lastRunAt, stored.createdAt(), grace);
+    Schedules.Expectation exp =
+        Schedules.expectation(
+            parsed,
+            lastRunAt,
+            stored.createdAt(),
+            grace,
+            lastRun == null ? null : finishedAtOf(lastRun));
     boolean interval = parsed.kind() == Schedules.Kind.INTERVAL;
     Long nextExpectedAt =
-        interval
-            ? Schedules.nextFire(parsed, stored.createdAt(), lastRunAt)
-            : Schedules.nextFire(parsed, now, null);
+        interval ? (exp == null ? null : exp.dueAt()) : Schedules.nextFire(parsed, now, null);
     if (exp == null) {
       return new CheckOutcome(new Evaluation(next.toState(), alerts), nextExpectedAt, null);
     }
 
-    // An interval's next run is due a period after the last one started. If that run is still
-    // going, the job is busy, not late; stuck covers one that never ends.
+    // An interval's next run is due a period after the last one started, or after it finished
+    // when it outlasted the period (intervalDue). If that run is still going, the job is busy, not
+    // late; stuck covers one that never ends.
     if (interval && lastRun != null && lastRun.status().equals(RunStatus.RUNNING)) {
       return new CheckOutcome(new Evaluation(next.toState(), alerts), nextExpectedAt, exp.dueAt());
     }

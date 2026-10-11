@@ -466,8 +466,42 @@ defmodule Cronwatch.Conformance.CoreTest do
     case field(ev, "op") do
       "start" ->
         run = %Run{id: field(ev, "id"), job: Object.get(sim.def, "name"), status: "running", started_at: at}
-        sim = %{sim | runs: sim.runs ++ [{run, length(sim.runs)}], state: Evaluate.on_run_start(sim.state)}
+
+        sim = %{
+          sim
+          | runs: sim.runs ++ [{run, length(sim.runs)}],
+            state: Evaluate.on_run_start(sim.def, run, sim.state, at)
+        }
+
         {sim, state_only(sim)}
+
+      # A run a source reports only once it is over: written finished, then
+      # started and finished at `at`, as the client's record_run does.
+      "record" ->
+        started_at = field(ev, "startedAt")
+        {:ok, metrics} = Metrics.from_value(field(ev, "metrics"))
+
+        run = %Run{
+          id: field(ev, "id"),
+          job: Object.get(sim.def, "name"),
+          status: field(ev, "status"),
+          started_at: started_at,
+          finished_at: at,
+          duration_ms: max(at - started_at, 0),
+          metrics: metrics,
+          output: field(ev, "output"),
+          error: field(ev, "error"),
+          trigger: "source"
+        }
+
+        sim = %{
+          sim
+          | runs: sim.runs ++ [{run, length(sim.runs)}],
+            state: Evaluate.on_run_start(sim.def, run, sim.state, at)
+        }
+
+        {sim, alerts} = finish_run(sim, run, at)
+        {sim, %Object{pairs: [{"alerts", alerts}, {"state", JobState.to_value(sim.state)}]}}
 
       "finish" ->
         {run, _} = Enum.find(sim.runs, fn {r, _} -> r.id == field(ev, "id") end)

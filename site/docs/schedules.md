@@ -16,7 +16,7 @@ Every port applies these rules the same way: TypeScript, Ruby, Python, PHP, Go, 
 | Cron, five fields | `0 2 * * *` | minute hour day month weekday, standard syntax with `*/n`, ranges, and lists |
 | Cron, six fields | `0 */30 * * * *` | a leading seconds field |
 | Nickname | `@yearly` (or `@annually`), `@monthly`, `@weekly`, `@daily` (or `@midnight`), `@hourly` | each fires at the start of its period: `@weekly` is Sunday at 00:00, `@yearly` January 1st. `@reboot` is not a schedule and is refused |
-| Interval | `every 15m`, `every 6h`, `every 2d` | at least one second (`every 500ms` throws); counted from the last run's start, or from registration before the first run |
+| Interval | `every 15m`, `every 6h`, `every 2d` | at least one second (`every 500ms` throws); counted from the last run's start, or from its finish when it ran longer than the interval, or from registration before the first run |
 | None | | watched for failures, duration, and budgets; never missed |
 
 Two schedules that never make sense are settled the same way in every language. A one-time date in place of a cron expression (`2026-12-01T00:00:00`, or anything else with a colon after its first character) is refused when the job is declared: CronWatch watches jobs that repeat. A cron that names a date no month has (`0 0 30 2 *`, `0 0 31 4,6,9,11 *`) is accepted and never fires, so the job is never due and never missed; its runs are still watched for failures, duration, and budgets.
@@ -31,13 +31,13 @@ A cron expression is read in the process's timezone unless the job (or the clien
 
 Each `cw.check()` counts forward from the job's last run:
 
-1. Finds the **due time**: the first time the schedule fires after the last run started. A run covers a fire it started up to one minute before (schedulers sometimes fire a touch early), so a run at 01:59:30 counts for 02:00 and the next day's 02:00 is due. For a cron that fires more often than every two minutes, that slack shrinks to half the gap between fires, so one run never covers two. For an interval, the due time is the last run's start plus the interval.
+1. Finds the **due time**: the first time the schedule fires after the last run started. A run covers a fire it started up to one minute before (schedulers sometimes fire a touch early), so a run at 01:59:30 counts for 02:00 and the next day's 02:00 is due. For a cron that fires more often than every two minutes, that slack shrinks to half the gap between fires, so one run never covers two. For an interval, the due time is the last run's start plus the interval; when that run finished later than that (it ran longer than the interval), the due time is its finish plus the interval, so a long run is not reported missed the moment it ends.
 2. Adds `grace` (default `10m`) to get the **deadline**.
 3. If now is past the deadline, the job is **missed**. An interval job whose last run is still going is busy, not missed; **stuck** covers a run that never ends.
 
 Because the due time comes from the last run rather than from the latest fire, a job that runs more often than its grace (every five minutes with the default ten minutes of grace) is still caught, and so is a cron that fires once a year.
 
-A missed condition opens once and sends one alert. It closes, without a message, the moment a run starts; the recovered message is sent by the next successful run, even if the run that closed it failed. If a run never comes, you hear about it once, not every check.
+A missed condition opens once and sends one alert. It closes, without a message, the moment a run starts that catches the schedule up; a run that started before the missed fire (one still going when the fire was due) leaves it open when it finishes, so the same fire is never reported twice. The recovered message is sent by the next successful run, even if the run that closed it failed. If a run never comes, you hear about it once, not every check.
 
 A job that has never run counts from when it was first registered: the first check or run in a process that declared it. Its due time is the first fire at or after registration; a fire that happened before registration is not expected.
 
@@ -57,7 +57,7 @@ In Go the run's `ctx` is cancelled at the timeout, with a cause that names the j
 
 ## Next due
 
-The dashboard and API show `nextExpectedAt`: the next fire after now for a cron, or the last run's start plus the interval.
+The dashboard and API show `nextExpectedAt`: the next fire after now for a cron, or for an interval the due time above: the last run's start plus the interval, or its finish plus the interval when it ran longer.
 
 ## Choosing a grace period
 

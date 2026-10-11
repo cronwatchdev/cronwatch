@@ -580,6 +580,169 @@
       ]
     },
     {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806148800000,
+      "fires": [
+        1806195600000,
+        1806196800000,
+        1806198000000,
+        1806278400000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806195540000,
+      "fires": [
+        1806195600000,
+        1806196800000,
+        1806198000000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806195600000,
+      "fires": [
+        1806196800000,
+        1806198000000,
+        1806278400000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806196200000,
+      "fires": [
+        1806196800000,
+        1806198000000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806196800000,
+      "fires": [
+        1806198000000,
+        1806278400000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806198000000,
+      "fires": [
+        1806278400000
+      ]
+    },
+    {
+      "schedule": "*/20 1,2 * * *",
+      "timezone": "Europe/London",
+      "from": 1806193800000,
+      "fires": [
+        1806195600000,
+        1806196800000,
+        1806198000000,
+        1806278400000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822435200000,
+      "fires": [
+        1822491000000,
+        1822491600000,
+        1822492200000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822491000000,
+      "fires": [
+        1822491600000,
+        1822492200000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822491300000,
+      "fires": [
+        1822491600000,
+        1822492200000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822491600000,
+      "fires": [
+        1822492200000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822492200000,
+      "fires": [
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "0,40 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822489200000,
+      "fires": [
+        1822491000000,
+        1822491600000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "from": 1822478400000,
+      "fires": [
+        1822492800000,
+        1822494000000,
+        1822495200000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "from": 1822492800000,
+      "fires": [
+        1822494000000,
+        1822495200000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "from": 1822494600000,
+      "fires": [
+        1822495200000,
+        1822575600000
+      ]
+    },
+    {
+      "schedule": "0 30 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822491000000,
+      "fires": [
+        1822577400000,
+        1822663800000
+      ]
+    },
+    {
       "schedule": "0 30 2 * * *",
       "timezone": "America/New_York",
       "from": 1772884800000,
@@ -6716,6 +6879,394 @@
       }
     },
     {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "lastRunAt": 1806195539000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1806195600000,
+        "deadline": 1806196200000
+      }
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "lastRunAt": 1806195540000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1806278400000,
+        "deadline": 1806279000000
+      }
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "lastRunAt": 1806195600000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1806278400000,
+        "deadline": 1806279000000
+      }
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "lastRunAt": 1806196800000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1806278400000,
+        "deadline": 1806279000000
+      }
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "lastRunAt": 1806198060000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1806278400000,
+        "deadline": 1806279000000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "lastRunAt": 1822490940000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822491600000,
+        "deadline": 1822492200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "lastRunAt": 1822491000000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822491600000,
+        "deadline": 1822492200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "lastRunAt": 1822491600000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822575600000,
+        "deadline": 1822576200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "lastRunAt": 1822491900000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822575600000,
+        "deadline": 1822576200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "lastRunAt": 1822492200000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822575600000,
+        "deadline": 1822576200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "lastRunAt": 1822492800000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822575600000,
+        "deadline": 1822576200000
+      }
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "lastRunAt": 1822494060000,
+      "registeredAt": 0,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1822575600000,
+        "deadline": 1822576200000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767605400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767609000000,
+        "deadline": 1767609600000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767605400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767605490000,
+        "deadline": 1767605490000
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767605400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767607200000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767609000000,
+        "deadline": 1767609600000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767607200000,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767607290000,
+        "deadline": 1767607290000
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767607200000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767608999999,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767609000000,
+        "deadline": 1767609600000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767608999999,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767609089999,
+        "deadline": 1767609089999
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767608999999,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767609000000,
+        "deadline": 1767609600000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000000,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767609090000,
+        "deadline": 1767609090000
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000001,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767612600001,
+        "deadline": 1767613200001
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000001,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767609090001,
+        "deadline": 1767609090001
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767609000001,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767610800000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767614400000,
+        "deadline": 1767615000000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767610800000,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767610890000,
+        "deadline": 1767610890000
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767610800000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767623400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767627000000,
+        "deadline": 1767627600000
+      }
+    },
+    {
+      "schedule": "every 90s",
+      "timezone": "America/New_York",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767623400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 0,
+      "expected": {
+        "dueAt": 1767623490000,
+        "deadline": 1767623490000
+      }
+    },
+    {
+      "schedule": "0 * * * *",
+      "timezone": "UTC",
+      "lastRunAt": 1767605400000,
+      "lastFinishedAt": 1767623400000,
+      "registeredAt": 1767519000000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767607200000,
+        "deadline": 1767607800000
+      }
+    },
+    {
+      "schedule": "every 1h",
+      "lastRunAt": null,
+      "lastFinishedAt": 1767623400000,
+      "registeredAt": 1767605400000,
+      "graceMs": 600000,
+      "expected": {
+        "dueAt": 1767609000000,
+        "deadline": 1767609600000
+      }
+    },
+    {
       "schedule": "0 0 30 2 *",
       "timezone": "UTC",
       "lastRunAt": null,
@@ -8220,6 +8771,154 @@
         1793601000000,
         1793601000000
       ]
+    }
+  ],
+  "firesBetween": [
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806188400000,
+      "to": 1806282000000,
+      "limit": 330,
+      "fires": [
+        1806195600000,
+        1806196800000,
+        1806198000000,
+        1806278400000,
+        1806279600000,
+        1806280800000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806195600000,
+      "to": 1806199200000,
+      "limit": 330,
+      "fires": [
+        1806196800000,
+        1806198000000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822478400000,
+      "to": 1822579200000,
+      "limit": 330,
+      "fires": [
+        1822491000000,
+        1822491600000,
+        1822492200000,
+        1822575600000,
+        1822576800000,
+        1822578000000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Lord_Howe",
+      "from": 1822491000000,
+      "to": 1822492800000,
+      "limit": 330,
+      "fires": [
+        1822491600000,
+        1822492200000
+      ]
+    },
+    {
+      "schedule": "*/20 2 * * *",
+      "timezone": "Australia/Sydney",
+      "from": 1822478400000,
+      "to": 1822582800000,
+      "limit": 330,
+      "fires": [
+        1822492800000,
+        1822494000000,
+        1822495200000,
+        1822575600000,
+        1822576800000,
+        1822578000000
+      ]
+    },
+    {
+      "schedule": "*/5 * * * *",
+      "timezone": "Europe/London",
+      "from": 1806192000000,
+      "to": 1806202800000,
+      "limit": 330,
+      "fires": [
+        1806192300000,
+        1806192600000,
+        1806192900000,
+        1806193200000,
+        1806193500000,
+        1806193800000,
+        1806194100000,
+        1806194400000,
+        1806194700000,
+        1806195000000,
+        1806195300000,
+        1806195600000,
+        1806195900000,
+        1806196200000,
+        1806196500000,
+        1806196800000,
+        1806197100000,
+        1806197400000,
+        1806197700000,
+        1806198000000,
+        1806198300000,
+        1806198600000,
+        1806198900000,
+        1806199200000,
+        1806199500000,
+        1806199800000,
+        1806200100000,
+        1806200400000,
+        1806200700000,
+        1806201000000,
+        1806201300000,
+        1806201600000,
+        1806201900000,
+        1806202200000,
+        1806202500000,
+        1806202800000
+      ]
+    },
+    {
+      "schedule": "*/30 * * * *",
+      "timezone": "America/New_York",
+      "from": 1793505600000,
+      "to": 1793520000000,
+      "limit": 330,
+      "fires": [
+        1793507400000,
+        1793509200000,
+        1793511000000,
+        1793516400000,
+        1793518200000,
+        1793520000000
+      ]
+    },
+    {
+      "schedule": "30 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1792843200000,
+      "to": 1793016000000,
+      "limit": 330,
+      "fires": [
+        1792888200000,
+        1792978200000
+      ]
+    },
+    {
+      "schedule": "*/20 1 * * *",
+      "timezone": "Europe/London",
+      "from": 1806188400000,
+      "to": 1806282000000,
+      "limit": 4,
+      "fires": null
     }
   ]
 }

@@ -5,13 +5,11 @@ declare(strict_types=1);
 namespace Drupal\cronwatch\Controller;
 
 use Cronwatch\Bridge\EmbeddedDashboard;
-use Cronwatch\Env;
 use Cronwatch\Web\Dashboard;
 use Cronwatch\Web\HttpFoundation;
 use Cronwatch\Web\Request as InnerRequest;
 use Drupal\Core\Access\CsrfTokenGenerator;
 use Drupal\Core\Controller\ControllerBase;
-use Drupal\Core\Site\Settings;
 use Drupal\Core\Url;
 use Drupal\cronwatch\Recorder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -36,9 +34,11 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  *
  * /cronwatch/api/... is the JSON API for @cronwatch/mcp, with the
  * dashboard's token ($settings['cronwatch_token'] in settings.php, else
- * CRONWATCH_TOKEN). Without a token it is not there (404). A check through
- * it declares every job first, and only once the token is right: a caller
- * without it gets the dashboard's 401 having made nothing run.
+ * CRONWATCH_TOKEN). Without a token it is not there (404), and with one
+ * shorter than Recorder::TOKEN_MIN it is shut (503, the reason logged and
+ * shown on the settings page). A check through it declares every job
+ * first, and only once the token is right: a caller without it gets the
+ * dashboard's 401 having made nothing run.
  */
 final class DashboardController extends ControllerBase {
 
@@ -131,10 +131,15 @@ final class DashboardController extends ControllerBase {
    * The JSON API, for @cronwatch/mcp, with the dashboard's token.
    */
   public function api(Request $request): Response {
-    $token = Settings::get('cronwatch_token');
-    $token = is_string($token) && $token !== '' ? $token : Env::read('CRONWATCH_TOKEN');
-    if ($token === NULL || $token === '') {
+    $token = Recorder::apiToken();
+    if ($token === '') {
       throw new NotFoundHttpException();
+    }
+    $problem = Recorder::tokenProblem($token);
+    if ($problem !== NULL) {
+      // Shut, and said where the owner looks: the site's log and the settings page.
+      $this->getLogger('cronwatch')->error('@problem', ['@problem' => $problem]);
+      return new Response($problem . "\n", 503, ['Content-Type' => 'text/plain; charset=utf-8', 'Cache-Control' => 'no-store']);
     }
     $inner = HttpFoundation::toRequest($request);
     $at = strpos($inner->path, '/cronwatch/api');

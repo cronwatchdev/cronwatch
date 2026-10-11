@@ -38,6 +38,9 @@ pub fn is_unsupported(err: &BoxError) -> bool {
 /// Every method returns a boxed future so the trait is object safe. The
 /// three conditional writes are provided methods that answer
 /// [`Unsupported`]; a store that can make them in one step overrides them.
+/// A client reports once, through its error handler (`store`), when the
+/// store lacks `compare_and_set_state` or `update_run_if`: without them it
+/// is safe only while one process at a time uses it.
 pub trait Store: Send + Sync + 'static {
     /// Called once before first use: create tables here.
     fn init(&self) -> BoxFuture<'_, Result<(), BoxError>>;
@@ -57,7 +60,12 @@ pub trait Store: Send + Sync + 'static {
     fn get_run<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Option<Run>, BoxError>>;
     /// A job's newest runs first, at most `limit` of them.
     fn list_runs<'a>(&'a self, job: &'a str, limit: usize) -> BoxFuture<'a, Result<Vec<Run>, BoxError>>;
-    fn last_run<'a>(&'a self, job: &'a str) -> BoxFuture<'a, Result<Option<Run>, BoxError>>;
+    /// A job's newest run. The client never calls it; the built-in stores
+    /// keep it for callers of their own, and a store without its own answers
+    /// the first of `list_runs(job, 1)`.
+    fn last_run<'a>(&'a self, job: &'a str) -> BoxFuture<'a, Result<Option<Run>, BoxError>> {
+        Box::pin(async move { Ok(self.list_runs(job, 1).await?.into_iter().next()) })
+    }
     /// Every run still running, oldest first.
     fn running_runs(&self) -> BoxFuture<'_, Result<Vec<Run>, BoxError>>;
     /// `None` when the job has no state yet.

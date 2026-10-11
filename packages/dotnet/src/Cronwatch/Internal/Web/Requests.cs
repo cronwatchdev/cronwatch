@@ -146,10 +146,20 @@ internal static class Requests
         return "/" + string.Join('/', output);
     }
 
-    /// <summary>The path under the base, without a trailing slash.</summary>
-    public static string StripBase(string pathname, string basePath)
+    /// <summary>
+    /// The path under the base, without a trailing slash, or null when the request is not under
+    /// it. The pathname, its dot segments already resolved, must be the base or start with the base
+    /// and a "/": "/cronwatchapi/jobs" is not under "/cronwatch", and neither is
+    /// "/cronwatch/../api/jobs" (read as "/api/jobs"). An empty base, for routes mounted at the
+    /// root, takes every path.
+    /// </summary>
+    public static string? StripBase(string pathname, string basePath)
     {
-        string path = pathname.StartsWith(basePath, StringComparison.Ordinal) ? pathname[basePath.Length..] : pathname;
+        if (basePath.Length != 0 && pathname != basePath && !pathname.StartsWith(basePath + "/", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        string path = pathname[basePath.Length..];
         if (path.Length == 0)
         {
             path = "/";

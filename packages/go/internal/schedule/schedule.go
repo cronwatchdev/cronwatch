@@ -28,6 +28,9 @@ type Parsed struct {
 	EveryMs int64
 
 	cron *cron.Cron
+	// The pattern read in UTC, which stands for wall-clock time in
+	// gapFireAfter and inSpringForwardGap.
+	wall *cron.Cron
 }
 
 // JSValue is the SDK's JSON of a parsed schedule: {kind, source, timezone}
@@ -107,6 +110,10 @@ func parse(schedule, timezone string) (*Parsed, error) {
 	if err != nil {
 		return nil, fmt.Errorf("schedule \"%s\" is not a cron expression or \"every <duration>\": %s", schedule, err.Error())
 	}
+	wall, err := cron.New(text, time.UTC)
+	if err != nil {
+		return nil, err
+	}
 	if timezone != "" {
 		loc, err := cron.LoadZone(timezone)
 		if err != nil {
@@ -118,7 +125,7 @@ func parse(schedule, timezone string) (*Parsed, error) {
 			return nil, err
 		}
 	}
-	return &Parsed{Kind: "cron", Source: text, Timezone: timezone, cron: c}, nil
+	return &Parsed{Kind: "cron", Source: text, Timezone: timezone, cron: c, wall: wall}, nil
 }
 
 // every is /^every\s+(.+)$/i: "every" in any ASCII case, whitespace, and
@@ -155,14 +162,14 @@ var (
 // 9999. A time croner cannot answer for is moved by whole 400-year cycles
 // into the years it can, and its fires moved back, so this port answers
 // as the SDK does.
-func runsAfter(p *Parsed, n int, from int64) []int64 {
+func runsAfter(c *cron.Cron, n int, from int64) []int64 {
 	var shift int64
 	if from < cronerFirstMs {
 		shift = (cronerFirstMs - from + cycleMs - 1) / cycleMs * cycleMs
 	} else if from >= cronerLastMs {
 		shift = -((from-cronerLastMs)/cycleMs + 1) * cycleMs
 	}
-	runs := p.cron.NextRuns(n, from+shift)
+	runs := c.NextRuns(n, from+shift)
 	out := make([]int64, 0, len(runs))
 	for _, t := range runs {
 		t -= shift
@@ -190,18 +197,37 @@ func countFrom(from int64) (int64, bool) {
 }
 
 // fireAfter is the first fire strictly after from, or false when the cron
-// never fires again. Croner answers with times in the past when asked from
-// inside the hour that repeats when clocks go back, so its answers are
-// filtered, and a stretch of nothing but past times is stepped over an
-// hour at a time.
+// never fires again. On the night clocks spring forward every slot the
+// pattern names still fires: one whose local time the jump skips is moved
+// forward by the gap's length (see springGap and gapFireAfter), so the
+// fires stay strictly ascending whichever instant they are counted from.
 func fireAfter(p *Parsed, from int64) (int64, bool) {
+	found, ok := croneFireAfter(p, from)
+	start, inRange := countFrom(from)
+	if !inRange {
+		return found, ok
+	}
+	if moved, isMoved := gapFireAfter(p, start); isMoved && (!ok || moved < found) {
+		return moved, true
+	}
+	return found, ok
+}
+
+// croneFireAfter is the first fire strictly after from as croner counts
+// it, or false when the cron never fires again. Croner answers with times
+// in the past when asked from inside the hour that repeats when clocks go
+// back, so its answers are filtered, and a stretch of nothing but past
+// times is stepped over an hour at a time. Asked from inside a
+// spring-forward gap it skips the slots moved out of it, which fireAfter
+// adds back.
+func croneFireAfter(p *Parsed, from int64) (int64, bool) {
 	start, ok := countFrom(from)
 	if !ok {
 		return 0, false
 	}
 	probe := start
 	for attempt := 0; attempt < 4; attempt++ {
-		runs := runsAfter(p, 8, probe)
+		runs := runsAfter(p.cron, 8, probe)
 		if len(runs) == 0 {
 			return 0, false
 		}
@@ -215,25 +241,133 @@ func fireAfter(p *Parsed, from int64) (int64, bool) {
 	return 0, false
 }
 
+// gap is a spring-forward jump: jumpAt, the first minute on the later
+// offset; gapMs, the later offset less the earlier one (30 minutes on Lord
+// Howe Island, an hour in most zones); and beforeMs, the earlier offset.
+type gap struct {
+	jumpAt, gapMs, beforeMs int64
+}
+
+// jumpLookbackMs is how far back a spring-forward jump is looked for: more
+// than any gap a zone has had.
+const jumpLookbackMs = 3 * 3_600_000
+
+// springGap is the window a spring-forward jump moves skipped slots into,
+// when at lies in one: from the jump for the gap's length. False when at is
+// not within a gap's length after a jump in the three hours before it.
+func springGap(loc *time.Location, at int64) (gap, bool) {
+	g, ok := springJump(loc, at)
+	if !ok || at >= g.jumpAt+g.gapMs {
+		return gap{}, false
+	}
+	return g, true
+}
+
+// springJump is the spring-forward jump in the three hours up to at, found
+// to the minute: the first minute on the later offset. False when the
+// offset at at is not ahead of the offset three hours before.
+func springJump(loc *time.Location, at int64) (gap, bool) {
+	// Every zone kept its local mean time, with no clock change, in the year 1.
+	if at-jumpLookbackMs < js.FirstDateMs || at >= js.LastDateMs {
+		return gap{}, false
+	}
+	after := utcOffset(at, loc)
+	before := utcOffset(at-jumpLookbackMs, loc)
+	if after <= before {
+		return gap{}, false
+	}
+	lo, hi := at-jumpLookbackMs, at
+	for hi-lo > 60_000 {
+		mid := lo + (hi-lo)/2
+		if utcOffset(mid, loc) == after {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return gap{jumpAt: js.FloorDiv(hi, 60_000) * 60_000, gapMs: after - before, beforeMs: before}, true
+}
+
+// gapFireAfter is the first slot moved out of a spring-forward gap strictly
+// after start, when start lies in that gap's window, else false. A slot
+// whose local time the jump skips fires at that local time read on the
+// earlier offset, which is the same as moving it forward by the gap's
+// length: 01:20 on the night London skips 01:00 to 02:00 fires at 02:20
+// BST (01:20Z). Croner moves them the same way when asked from before the
+// jump, but not from inside it.
+func gapFireAfter(p *Parsed, start int64) (int64, bool) {
+	g, ok := springGap(zoneOf(p), start)
+	if !ok {
+		return 0, false
+	}
+	// Wall-clock time as if it were UTC: the slots the jump skips run from
+	// jumpAt + beforeMs for gapMs.
+	slots := runsAfter(p.wall, 1, start+g.beforeMs)
+	if len(slots) == 0 || slots[0] >= g.jumpAt+g.beforeMs+g.gapMs {
+		return 0, false
+	}
+	return slots[0] - g.beforeMs, true
+}
+
 // FiresBetween is every fire of a cron strictly after from and at or
-// before to, ascending, or false when there are more than limit. It asks
-// for fires in batches, far cheaper than one NextFire each, and drops any
-// that do not move forward (see fireAfter).
+// before to, ascending, or false when there are more than limit: the fires
+// NextFire gives one after another. It asks croner for fires in batches,
+// far cheaper than one NextFire each, and drops any that do not move
+// forward (the hour that repeats when clocks go back, see croneFireAfter).
+// Around a spring-forward gap, where croner's batch can skip a moved slot
+// or give one out of order, it counts with fireAfter instead.
 func FiresBetween(p *Parsed, from, to int64, limit int) ([]int64, bool) {
 	out := []int64{}
 	start, ok := countFrom(from)
 	if !ok {
 		return out, true
 	}
+	loc := zoneOf(p)
 	probe, last := start, start
+	// step adds the fire after last, counted by fireAfter, and says whether
+	// to count on; when not, over says whether out passed limit.
+	step := func() (goOn, over bool) {
+		t, ok := fireAfter(p, last)
+		if !ok || t > to {
+			return false, false
+		}
+		out = append(out, t)
+		last, probe = t, t
+		if len(out) > limit {
+			return false, true
+		}
+		return true, false
+	}
 	for guard := 0; guard < 1000; guard++ {
-		batch := runsAfter(p, min(limit+1-len(out), 24), probe)
+		if _, in := springGap(loc, last); in {
+			// Counting from inside a gap's window: croner would skip its moved slots.
+			if goOn, over := step(); over {
+				return nil, false
+			} else if !goOn {
+				return out, true
+			}
+			continue
+		}
+		batch := runsAfter(p.cron, min(limit+1-len(out), 24), probe)
 		if len(batch) == 0 {
 			return out, true
 		}
+		stepped := false
 		for _, t := range batch {
 			if t <= last {
 				continue
+			}
+			if _, in := springGap(loc, t); in {
+				// The batch reached a gap's window, where its order is
+				// croner's: the next fire is counted from the last one, and
+				// the rest with it.
+				if goOn, over := step(); over {
+					return nil, false
+				} else if !goOn {
+					return out, true
+				}
+				stepped = true
+				break
 			}
 			if t > to {
 				return out, true
@@ -243,6 +377,9 @@ func FiresBetween(p *Parsed, from, to int64, limit int) ([]int64, bool) {
 			if len(out) > limit {
 				return nil, false
 			}
+		}
+		if stepped {
+			continue
 		}
 		end := batch[len(batch)-1]
 		if end > probe {
@@ -255,7 +392,8 @@ func FiresBetween(p *Parsed, from, to int64, limit int) ([]int64, bool) {
 }
 
 // NextFire is the next time the schedule fires strictly after from; for an
-// interval, counted from the last run when there is one. False when a cron
+// interval, counted from the last run's start when there is one (see
+// IntervalDue for a run that outlasted its period). False when a cron
 // never fires again.
 func NextFire(p *Parsed, from int64, lastRunAt *int64) (int64, bool) {
 	if p.Kind == "interval" {
@@ -266,6 +404,18 @@ func NextFire(p *Parsed, from int64, lastRunAt *int64) (int64, bool) {
 		return base + p.EveryMs, true
 	}
 	return fireAfter(p, from)
+}
+
+// IntervalDue is when an interval of everyMs is next due after a run: a
+// period after it started, or, when it finished (finishedAt not nil) later
+// than that, a period after it finished. A run that outlasts its period is
+// not followed by a missed alert the moment it ends.
+func IntervalDue(everyMs, startedAt int64, finishedAt *int64) int64 {
+	due := startedAt + everyMs
+	if finishedAt != nil && *finishedAt > due {
+		return *finishedAt + everyMs
+	}
+	return due
 }
 
 // Expectation is when the next run is due, and when it is missed.
@@ -279,21 +429,21 @@ type Expectation struct {
 // given the last one. For a cron that is the first fire the last run does
 // not already cover; with no run yet, the first fire at or after
 // registration. For an interval it is the last run's start (or
-// registration) plus the interval. False for a cron that never fires again.
+// registration) plus the interval, or its finish plus the interval when it
+// finished (lastFinishedAt, nil while it runs) later than that
+// (IntervalDue). False for a cron that never fires again.
 //
 // Counting forward from the last run, rather than back from now, is what
 // lets a job whose period is shorter than its grace be missed at all, and
 // it works for a cron that fires once a year or less.
-func Expect(p *Parsed, lastRunAt *int64, registeredAt int64, graceMs float64) (Expectation, bool) {
+func Expect(p *Parsed, lastRunAt *int64, registeredAt int64, graceMs float64, lastFinishedAt *int64) (Expectation, bool) {
 	var due int64
 	var ok bool
 	switch {
+	case p.Kind == "interval" && lastRunAt == nil:
+		due, ok = registeredAt+p.EveryMs, true
 	case p.Kind == "interval":
-		base := registeredAt
-		if lastRunAt != nil {
-			base = *lastRunAt
-		}
-		due, ok = base+p.EveryMs, true
+		due, ok = IntervalDue(p.EveryMs, *lastRunAt, lastFinishedAt), true
 	case lastRunAt == nil:
 		due, ok = fireAfter(p, registeredAt-1)
 	default:
@@ -320,18 +470,19 @@ func DueAfterRun(p *Parsed, startedAt int64) (int64, bool) { return dueAfterRun(
 func dueAfterRun(p *Parsed, startedAt int64) (int64, bool) {
 	// A fire at or before the start is covered by the run itself.
 	next, ok := fireAfter(p, startedAt)
-	if !ok {
-		return 0, false
+	// Bounded: a gap holds at most a few hours of moved slots.
+	for guard := 0; ok && guard < 100_000; guard++ {
+		following, hasFollowing := fireAfter(p, next)
+		var f *int64
+		if hasFollowing {
+			f = &following
+		}
+		if !RunCovers(startedAt, next, f) && !inSpringForwardGap(p, startedAt, next) {
+			return next, true
+		}
+		next, ok = following, hasFollowing
 	}
-	following, hasFollowing := fireAfter(p, next)
-	var f *int64
-	if hasFollowing {
-		f = &following
-	}
-	if RunCovers(startedAt, next, f) || inSpringForwardGap(p, startedAt, next) {
-		return following, hasFollowing
-	}
-	return next, true
+	return next, ok
 }
 
 // RunCovers is whether a run starting at startedAt covers the fire at
@@ -347,45 +498,25 @@ func RunCovers(startedAt, dueAt int64, followingAt *int64) bool {
 	return startedAt >= dueAt-slack
 }
 
-// inSpringForwardGap: on the night clocks spring forward, a fire whose local
-// time does not exist (02:30 when 02:00 jumps to 03:00) is moved by croner
-// to the same distance past the jump (03:30), while vixie cron runs it at
-// the jump itself (03:00). A run that starts at or after the jump, and
-// before the first fire after it when that fire lies within one gap of it,
-// is taken to cover that fire, so neither scheduler's run is reported as
-// missed. A cron that really fires at 03:30 that night is treated the same
-// way, which only matters if it also ran early by up to an hour.
+// inSpringForwardGap: on the night clocks spring forward, a slot whose
+// local time does not exist (02:30 when 02:00 jumps to 03:00) fires moved
+// forward by the gap (03:30; see gapFireAfter), while vixie cron runs every
+// skipped job once, at the jump itself (03:00). A run that starts at or
+// after the jump (less a minute of slack), and before such a moved fire, is
+// taken to cover it, so neither scheduler's run is reported as missed. Only
+// a moved slot that is not also a slot of its own on the later offset
+// counts: a cron that fires every 10 minutes moves 02:10 onto its own
+// 03:10, which was not skipped.
 func inSpringForwardGap(p *Parsed, startedAt, fireAt int64) bool {
-	const lookback = 3 * 3_600_000
-	// Every zone kept its local mean time, with no clock change, in the year 1.
-	if fireAt-lookback < js.FirstDateMs {
+	g, ok := springGap(zoneOf(p), fireAt)
+	if !ok || startedAt < g.jumpAt-EarlySlackMs || startedAt >= fireAt {
 		return false
 	}
-	loc := zoneOf(p)
-	after := utcOffset(fireAt, loc)
-	before := utcOffset(fireAt-lookback, loc)
-	gap := after - before
-	if gap <= 0 {
-		return false
+	fires := func(at int64) bool {
+		slots := runsAfter(p.wall, 1, at-1)
+		return len(slots) > 0 && slots[0] == at
 	}
-	// Find the jump: the first minute in the window with the later offset.
-	lo, hi := fireAt-lookback, fireAt
-	for hi-lo > 60_000 {
-		mid := lo + (hi-lo)/2
-		if utcOffset(mid, loc) == after {
-			hi = mid
-		} else {
-			lo = mid
-		}
-	}
-	jumpAt := js.FloorDiv(hi, 60_000) * 60_000
-	if fireAt-jumpAt >= gap || startedAt < jumpAt-EarlySlackMs || startedAt >= fireAt {
-		return false
-	}
-	// Only the first fire after the jump can be a moved one; a cron that
-	// also fires at the jump (every 10 minutes, say) was not moved at all.
-	first, ok := fireAfter(p, jumpAt-1)
-	return ok && first == fireAt
+	return fires(fireAt+g.beforeMs) && !fires(fireAt+g.beforeMs+g.gapMs)
 }
 
 func zoneOf(p *Parsed) *time.Location {

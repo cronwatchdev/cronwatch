@@ -488,6 +488,10 @@ public final class Routes implements Endpoint {
     String b = basePath(req);
     String pathname = Requests.normalizePath(target[0]);
     String path = Requests.stripBase(pathname, b);
+    if (path == null) {
+      // Not under the base at all: nothing here answers it, signed in or not.
+      return page(Html.messagePage("Not found", pathname, b, false), 404);
+    }
     boolean wantsHtml = !path.startsWith("/api");
     try {
       return serve(req, pathname, path, target[1], b, wantsHtml);

@@ -71,7 +71,7 @@ defmodule Cronwatch.ScheduleConformanceTest do
 
   test "schedule.json" do
     f = fixture("schedule")
-    known!(f, ["parse", "fires", "nextFire", "expectation", "runCovers", "autumn"])
+    known!(f, ["parse", "fires", "nextFire", "expectation", "runCovers", "autumn", "firesBetween"])
 
     failures =
       Enum.reduce(list(f, "parse"), failures(), fn c, acc ->
@@ -115,7 +115,13 @@ defmodule Cronwatch.ScheduleConformanceTest do
         {:ok, p} = Schedule.parse(field(c, "schedule"), field(c, "timezone"))
 
         got =
-          case Schedule.expectation(p, field(c, "lastRunAt"), field(c, "registeredAt"), number(field(c, "graceMs"))) do
+          case Schedule.expectation(
+                 p,
+                 field(c, "lastRunAt"),
+                 field(c, "registeredAt"),
+                 number(field(c, "graceMs")),
+                 field(c, "lastFinishedAt")
+               ) do
             nil -> nil
             e -> Object.new([{"dueAt", e.due_at}, {"deadline", e.deadline}])
           end
@@ -145,9 +151,24 @@ defmodule Cronwatch.ScheduleConformanceTest do
         same(acc, "autumn #{field(c, "schedule")} in #{field(c, "timezone")}", out, field(c, "next"))
       end)
 
+    failures =
+      Enum.reduce(list(f, "firesBetween"), failures, fn c, acc ->
+        {:ok, p} = Schedule.parse(field(c, "schedule"), field(c, "timezone"))
+        got = Schedule.fires_between(p, field(c, "from"), field(c, "to"), field(c, "limit"))
+
+        same(
+          acc,
+          "firesBetween #{field(c, "schedule")} in #{field(c, "timezone")} from #{field(c, "from")}",
+          got,
+          field(c, "fires")
+        )
+      end)
+
     check!(failures, "schedule")
 
-    count = Enum.sum(for s <- ~w(parse fires nextFire expectation runCovers autumn), do: length(list(f, s)))
-    assert count == 745
+    count =
+      Enum.sum(for s <- ~w(parse fires nextFire expectation runCovers autumn firesBetween), do: length(list(f, s)))
+
+    assert count == 805
   end
 end

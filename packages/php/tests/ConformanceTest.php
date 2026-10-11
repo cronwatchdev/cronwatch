@@ -177,7 +177,16 @@ final class ConformanceTest extends TestCase
     {
         $this->eachCase(self::fixture('schedule.json')->expectation, function (\stdClass $c): ?string {
             $parsed = Schedule::parse($c->schedule, $c->timezone ?? null);
-            return self::differs($c->expected, Schedule::expectation($parsed, $c->lastRunAt, $c->registeredAt, $c->graceMs));
+            return self::differs($c->expected, Schedule::expectation($parsed, $c->lastRunAt, $c->registeredAt, $c->graceMs, $c->lastFinishedAt ?? null));
+        });
+    }
+
+    public function testScheduleFiresBetween(): void
+    {
+        $this->eachCase(self::fixture('schedule.json')->firesBetween, function (\stdClass $c): ?string {
+            $parsed = Schedule::parse($c->schedule, $c->timezone ?? null);
+            $fires = Schedule::firesBetween($parsed, $c->from, $c->to, $c->limit);
+            return self::differs($c->fires === null ? null : self::times($c->fires), $fires === null ? null : self::times($fires));
         });
     }
 
@@ -203,6 +212,7 @@ final class ConformanceTest extends TestCase
             $actual = match ($event->op) {
                 'start' => $sim->start($event->id, $event->at),
                 'finish' => $sim->finish($event->id, $event->at, $event),
+                'record' => $sim->record($event->id, $event->startedAt, $event->at, $event),
                 'check' => $sim->check($event->at),
                 'silence' => $sim->silence($event->until),
                 'unsilence' => $sim->silence(null),

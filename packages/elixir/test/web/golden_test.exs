@@ -41,7 +41,7 @@ defmodule Cronwatch.Web.GoldenTest do
     golden = JS.parse!(File.read!(@golden))
     assert Object.get(golden, "t0") == @t0, "golden.json's t0"
     captures = Object.get(golden, "captures")
-    assert length(captures) == 82, "golden.json's captures"
+    assert length(captures) == 86, "golden.json's captures"
 
     Enum.map(captures, fn c ->
       %{
@@ -223,46 +223,57 @@ defmodule Cronwatch.Web.GoldenTest do
     ids
   end
 
+  # One capture straight into the plug, mounted at /cronwatch by option.
+  defp direct(c, ids) do
+    opts = Cronwatch.Web.init(instance: @inst, token: "tok", base_path: "/cronwatch")
+
+    conn =
+      Enum.reduce(c.headers, conn(c.method, resolve(c.path), c.body), fn {k, v}, conn ->
+        Plug.Conn.put_req_header(conn, k, v)
+      end)
+
+    # Plug.Test keeps the host out of the headers, as HTTP/2 does.
+    conn = Cronwatch.Web.call(%{conn | host: "app.test"}, opts)
+    compare(c, conn.status, conn.resp_headers, conn.resp_body, ids, [])
+  end
+
+  # A path outside /cronwatch, which a router never forwards to the
+  # dashboard; the routes' own 404 for it is replayed straight into the plug.
+  defp outside?(c) do
+    [path | _] = String.split(c.path, "?", parts: 2)
+    path != "/cronwatch" and not String.starts_with?(path, "/cronwatch/")
+  end
+
   test "the SDK's captures, straight into the plug" do
     captures = captures()
     seed()
-    opts = Cronwatch.Web.init(instance: @inst, token: "tok", base_path: "/cronwatch")
-
-    Enum.reduce(captures, %{}, fn c, ids ->
-      conn =
-        Enum.reduce(c.headers, conn(c.method, resolve(c.path), c.body), fn {k, v}, conn ->
-          Plug.Conn.put_req_header(conn, k, v)
-        end)
-
-      # Plug.Test keeps the host out of the headers, as HTTP/2 does.
-      conn = Cronwatch.Web.call(%{conn | host: "app.test"}, opts)
-      compare(c, conn.status, conn.resp_headers, conn.resp_body, ids, [])
-    end)
+    Enum.reduce(captures, %{}, &direct/2)
   end
 
   test "the SDK's captures, through a Plug.Router forward under Bandit" do
     captures = captures()
     seed()
     port = HTTP.serve(Cronwatch.Test.WebRouter)
-
-    Enum.reduce(captures, %{}, fn c, ids ->
-      {status, headers, body} =
-        HTTP.request(port, c.method, resolve(c.path), [{"host", "app.test"} | c.headers], c.body)
-
-      compare(c, status, headers, body, ids, @server_headers)
-    end)
+    Enum.reduce(captures, %{}, &served(port, &1, &2))
   end
 
   test "the SDK's captures, through a Phoenix endpoint and router" do
     captures = captures()
     seed()
     port = Endpoint.serve()
+    Enum.reduce(captures, %{}, &served(port, &1, &2))
+  end
 
-    Enum.reduce(captures, %{}, fn c, ids ->
+  # One capture through a server, or straight into the plug when it is
+  # outside the mount.
+  defp served(port, c, ids) do
+    if outside?(c) do
+      direct(c, ids)
+    else
       {status, headers, body} =
         HTTP.request(port, c.method, resolve(c.path), [{"host", "app.test"} | c.headers], c.body)
 
       compare(c, status, headers, body, ids, @server_headers)
-    end)
+    end
   end
 end

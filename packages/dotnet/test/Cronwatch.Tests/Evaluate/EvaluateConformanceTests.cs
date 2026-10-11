@@ -71,9 +71,30 @@ public class EvaluateConformanceTests
             switch (op)
             {
                 case "start":
-                    _runs.Add(Cronwatch.Run.Running(Fixtures.String(ev, "id")!, _def.Name, at, "run"));
-                    _state = Evaluate.OnRunStart(_state);
-                    return new JsObject().Set("state", _state.ToValue());
+                    {
+                        var run = Cronwatch.Run.Running(Fixtures.String(ev, "id")!, _def.Name, at, "run");
+                        _runs.Add(run);
+                        _state = Evaluate.OnRunStart(_def, run, _state, at);
+                        return new JsObject().Set("state", _state.ToValue());
+                    }
+                case "record":
+                    {
+                        // A run a source reports only once it is over: written finished, then
+                        // judged at its start and its finish at once, as recordRun does.
+                        long startedAt = Fixtures.Integer(ev, "startedAt");
+                        var status = new RunStatus(Fixtures.String(ev, "status")!);
+                        var run = Cronwatch.Run.Running(Fixtures.String(ev, "id")!, _def.Name, startedAt, "source") with
+                        {
+                            Status = status,
+                            FinishedAt = at,
+                            DurationMs = Evaluate.RunDuration(startedAt, at),
+                            Error = Fixtures.String(ev, "error") ?? (status == RunStatus.Failed ? "Error: boom" : null),
+                        };
+                        _runs.Add(run);
+                        _state = Evaluate.OnRunStart(_def, run, _state, at);
+                        var alerts = FinishRun(run, at);
+                        return new JsObject().Set("alerts", alerts).Set("state", _state.ToValue());
+                    }
                 case "finish":
                     {
                         int i = Index(Fixtures.String(ev, "id")!);
@@ -162,7 +183,7 @@ public class EvaluateConformanceTests
         var f = Fixtures.Load("evaluate");
         DurationConformanceTests.Known(f, "scenarios");
         var scenarios = Fixtures.Objects(f, "scenarios");
-        Assert.Equal(57, scenarios.Count);
+        Assert.Equal(63, scenarios.Count);
         var skipped = new List<string>();
         played = 0;
         foreach (var sc in scenarios)
@@ -206,7 +227,7 @@ public class EvaluateConformanceTests
         var fails = new Fixtures.Failures();
         var skipped = Replay(fails, out int played);
         Assert.True(played > 0, "no scenarios replayed");
-        Assert.Equal(57, played);
+        Assert.Equal(63, played);
         Assert.Empty(skipped);
         fails.Check("evaluate");
     }

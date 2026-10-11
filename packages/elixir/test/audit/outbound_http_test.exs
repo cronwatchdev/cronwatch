@@ -58,7 +58,7 @@ defmodule Cronwatch.Audit.OutboundHTTPTest do
 
   defp mib_chunk, do: :binary.copy("x", @mib)
 
-  test "an answer of any status ending at the close is read to 1 MiB as it arrives" do
+  test "an answer ending at the close is read to 1 MiB as it arrives, an error to 64 KiB" do
     for status <- [200, 404, 500] do
       server =
         raw(fn put ->
@@ -67,14 +67,14 @@ defmodule Cronwatch.Audit.OutboundHTTPTest do
         end)
 
       assert {:ok, %{status: ^status, body: body}} = Post.fetch(nil, 5000, server.url <> "/x", [], "{}")
-      assert byte_size(body) == @mib
+      assert byte_size(body) == if(status == 200, do: @mib, else: Post.error_read_max())
       Process.sleep(100)
       # The client let go at the cap, not after reading the 400 MiB.
       assert :counters.get(server.sent, 1) < 64 * @mib
     end
   end
 
-  test "a chunked answer of any status is read to 1 MiB, however long" do
+  test "a chunked answer is read to 1 MiB, an error to 64 KiB, however long" do
     for status <- [200, 500] do
       server =
         raw(fn put ->
@@ -83,7 +83,7 @@ defmodule Cronwatch.Audit.OutboundHTTPTest do
         end)
 
       assert {:ok, %{status: ^status, body: body}} = Post.fetch(nil, 5000, server.url, [], "{}")
-      assert byte_size(body) == @mib
+      assert byte_size(body) == if(status == 200, do: @mib, else: Post.error_read_max())
       Process.sleep(100)
       assert :counters.get(server.sent, 1) < 64 * @mib
     end

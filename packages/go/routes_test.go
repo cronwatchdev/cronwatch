@@ -379,6 +379,27 @@ func TestRoutesMalformedCookiesAndPathsAreAnswered(t *testing.T) {
 	status(t, "not UTF-8", w.get("/cronwatch/jobs/%E9", auth), 400)
 }
 
+// Only the base and the paths under it are the routes': one that merely
+// starts with the base's text, or that its dot segments take out of it, is
+// not found, signed in or not, and before any auth.
+func TestRoutesAnswerOnlyUnderTheBase(t *testing.T) {
+	w := newWeb(t, nil)
+	status(t, "the base", w.get("/cronwatch", auth), 200)
+	for _, path := range []string{"/cronwatchapi/jobs", "/api/jobs", "/cronwatch/../api/jobs", "/cronwatch/%2e%2e/api/jobs", "/cronwatch-x/api/jobs"} {
+		for _, headers := range []hdr{auth, nil} {
+			rec := w.get(path, headers)
+			status(t, path, rec, 404)
+			contains(t, path, rec.Body.String(), "Not found")
+			contains(t, path, rec.Header().Get("content-type"), "text/html")
+		}
+	}
+	status(t, "a dot segment that stays under it", w.get("/cronwatch/./api/jobs", auth), 200)
+	status(t, "a dot dot segment that stays under it", w.get("/cronwatch/jobs/../api/jobs", auth), 200)
+	// Mounted at the root, the routes take every path.
+	root := newWeb(t, []cronwatch.RoutesOption{cronwatch.WithToken("tok"), cronwatch.WithBasePath("/")})
+	status(t, "at the root", root.get("/api/jobs", auth), 200)
+}
+
 func TestRoutesRunsIsClamped(t *testing.T) {
 	w := newWeb(t, nil)
 	for range 3 {

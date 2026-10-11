@@ -100,9 +100,9 @@ alerts: [
 triage: {Cronwatch.Triage.Anthropic, context: "A Phoenix app with a Postgres database."}
 ```
 
-Requests go through a small HTTP/1.1 client of the package's own, over OTP's `:gen_tcp` and `:ssl`, with one ten second deadline, redirects refused, at most 1 MiB of any answer read as it arrives, TLS always verified, and only a URL's origin in any error; no credential is printed by `inspect`. `transport:` on a channel or the instance takes a `Cronwatch.Transport` of your own (over Req or Finch, say). `Cronwatch.Triage.Anthropic` reads `ANTHROPIC_API_KEY` unless given `api_key:`.
+Requests go through a small HTTP/1.1 client of the package's own, over OTP's `:gen_tcp` and `:ssl`, with one ten second deadline, redirects refused, at most 1 MiB of a successful answer read as it arrives (64 KiB of an error), TLS always verified, and only a URL's origin in any error; no credential is printed by `inspect`. `transport:` on a channel or the instance takes a `Cronwatch.Transport` of your own (over Req or Finch, say). `Cronwatch.Triage.Anthropic` reads `ANTHROPIC_API_KEY` unless given `api_key:`.
 
-The webhook posts the alert with `"schema": 1` as its first field, the payload every CronWatch library sends ([its JSON Schema](https://cronwatch.dev/schemas/webhook/1.json)); read its fields, not `title` and `message`, whose wording is not promised. With a `secret:` it is signed, and `Cronwatch.Alerts.Webhook.signature(secret, raw_body)` gives a receiver the hex to compare with `Plug.Crypto.secure_compare/2`.
+The webhook posts the alert with `"schema": 1` as its first field, the payload every CronWatch library sends ([its JSON Schema](https://cronwatch.dev/schemas/webhook/1.json)); read its fields, not `title` and `message`, whose wording is not promised. With a `secret:` it is signed twice: `x-cronwatch-signature` over the raw body, and `x-cronwatch-timestamp-signature` over `<x-cronwatch-timestamp>.<raw body>`, which a receiver checks and then refuses a timestamp more than five minutes from its own clock, so a captured alert cannot be sent again later. `Cronwatch.Alerts.Webhook.signature(secret, text)` gives a receiver the hex to compare with `Plug.Crypto.secure_compare/2`.
 
 ### pg_cron
 

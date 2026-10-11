@@ -363,6 +363,8 @@ Cronwatch.Alerts.WebhookChannel.Name.get -> string!
 Cronwatch.Alerts.WebhookChannel.SendAsync(Cronwatch.Alert! alert, Cronwatch.ChannelContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
 Cronwatch.Alerts.WebhookChannel.WebhookChannel(Cronwatch.Alerts.WebhookOptions! options) -> void
 Cronwatch.Alerts.WebhookOptions
+Cronwatch.Alerts.WebhookOptions.Clock.get -> System.TimeProvider?
+Cronwatch.Alerts.WebhookOptions.Clock.init -> void
 Cronwatch.Alerts.WebhookOptions.Headers.init -> void
 Cronwatch.Alerts.WebhookOptions.Secret.init -> void
 Cronwatch.Alerts.WebhookOptions.Transport.get -> Cronwatch.Alerts.ITransport?
@@ -1061,6 +1063,7 @@ Cronwatch.Web.RoutesOptions.RoutesOptions() -> void
 Cronwatch.Web.RoutesOptions.Token.init -> void
 Cronwatch.Web.RoutesOptions.TrustProxy.get -> bool
 Cronwatch.Web.RoutesOptions.TrustProxy.init -> void
+Cronwatch.Web.RoutesOptions.WithDefaultToken(Cronwatch.Web.RoutesOptions? defaults) -> Cronwatch.Web.RoutesOptions!
 Cronwatch.Web.WebAdapters
 Cronwatch.Web.WebBodyReader
 Cronwatch.Web.WebBodyTooLargeException

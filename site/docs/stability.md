@@ -95,7 +95,7 @@ A breaking change waits for a major release. Majors are kept rare and coordinate
 | TypeScript and Node | Node 22 or newer | |
 | [Ruby](/docs/ruby/) | Ruby 3.2 or newer | Rails 7.2, 8.0, and 8.1; Sidekiq 7 or newer |
 | [Python](/docs/python/) | Python 3.11 or newer | Django 5.2, 6.0, and 6.1; Celery 5.5 or newer; APScheduler 3.10 or newer, below 4 |
-| [PHP](/docs/php/) | PHP 8.2 or newer | Laravel 12 and 13; Symfony 6.4, 7.4, and 8.1; WordPress 6.1 or newer; Drupal 10.3 and 11; Craft CMS 5.3 or newer |
+| [PHP](/docs/php/) | PHP 8.2 or newer | Laravel 12 and 13; Symfony 6.4, 7.4, and 8.1; WordPress 6.5 or newer; Drupal 10.3 and 11; Craft CMS 5.3 or newer |
 | [Go](/docs/go/) | Go 1.25 or newer | robfig/cron v3, gocron v2, River, and Asynq at the versions on [Go schedulers](/docs/go-schedulers/) |
 | [Rust](/docs/rust/) | Rust 1.85 or newer (1.94 for `cronwatch-sqlx`) | tokio-cron-scheduler 0.15 |
 | [Elixir](/docs/elixir/) | Elixir 1.18 on OTP 27 or newer | Oban 2.20 or newer; Quantum 3.5 |

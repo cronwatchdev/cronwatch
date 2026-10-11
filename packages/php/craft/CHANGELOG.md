@@ -1,5 +1,12 @@
 # Release Notes for CronWatch
 
+## Unreleased
+
+### Changed
+- The API refuses a token shorter than 24 characters (503), and the plugin settings say why.
+- The dashboard answers only in the control panel, not through the site's action URLs.
+- From the library: see the CronWatch changelog for this release's changes in every language.
+
 ## 0.13.1 - 2026-10-11
 
 ### Changed

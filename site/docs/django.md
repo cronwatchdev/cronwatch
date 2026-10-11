@@ -39,7 +39,7 @@ The keys of `CRONWATCH`:
 | `STORE`, `ALERTS`, `TRIAGE`, `SOURCES`, `CRON_SECRET`, `RETENTION`, `DEFAULTS`, `REDACT`, `DELIVER`, `ON_ERROR` | the client's options in upper case, meaning what they mean on [`Cronwatch()`](/docs/python/#api) |
 | `CLIENT` | instead of the client's options, a client your app made itself (the client, or a dotted path to it) |
 | `TOKEN` | the dashboard's token; see [the dashboard](/docs/python/#the-dashboard) |
-| `BASE_PATH` | where the dashboard is mounted; by default wherever its URLs are included |
+| `BASE_PATH` | where the dashboard is mounted; by default wherever its URLs are included. Set it only to that same prefix: a request outside it is answered 404 |
 | `ORIGIN` | the public origin, pinned whatever a request says |
 | `TRUST_PROXY` | take the origin from `X-Forwarded-Proto` and `X-Forwarded-Host` |
 

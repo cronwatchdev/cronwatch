@@ -17,8 +17,10 @@ import org.jspecify.annotations.Nullable;
  * failure: the client reports it to its error handler and carries on, and never lets it stop a job.
  * The three conditional writes are default methods that throw {@link
  * UnsupportedOperationException}; the client then falls back to a read and a write, as the SDK
- * does, which is safe only while one process at a time writes a given run or state. A store that
- * can make them in one step overrides them.
+ * does, which is safe only while one process at a time writes a given run or state (the client
+ * reports a store without {@code compareAndSetState} or {@code updateRunIf} once, through the error
+ * handler as {@code store}, when it first uses it). A store that can make them in one step
+ * overrides them. The client never calls {@link #lastRun}, whose default reads {@link #listRuns}.
  */
 public interface Store extends AutoCloseable {
   /**

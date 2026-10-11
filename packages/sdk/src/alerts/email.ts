@@ -14,7 +14,7 @@ export interface EmailOptions {
   to: string | string[];
   /** Put in front of the title in the subject, "[prod]" say. */
   subjectPrefix?: string;
-  /** Link back to the job in your dashboard: (alert) => `https://app.example.com/cronwatch/jobs/${alert.job}`. */
+  /** Link back to the job in your dashboard: (alert) => `https://app.example.com/cronwatch/jobs/${encodeURIComponent(alert.job)}`. */
   link?: (alert: Alert) => string;
 }
 

@@ -122,7 +122,7 @@ Besides Slack, Discord, and webhooks, the gem sends alerts by email (Resend, Pos
 # config/initializers/cronwatch.rb
 Cronwatch.configure do |c|
   c.store = Cronwatch::Stores::ActiveRecord.new
-  link = ->(alert) { "https://app.example.com/cronwatch/jobs/#{alert.job}" }
+  link = ->(alert) { "https://app.example.com/cronwatch/jobs/#{ERB::Util.url_encode(alert.job)}" }
   c.alerts = [
     Cronwatch::Alerts::Postmark.new(
       server_token: Rails.application.credentials.dig(:postmark, :server_token),

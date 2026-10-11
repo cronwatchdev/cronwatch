@@ -170,18 +170,23 @@ final class Shared
         if ($response->ok()) {
             return $response;
         }
-        $text = $response->body;
+        $text = self::errorText($response);
         throw new \RuntimeException("{$provider} " . self::origin($url) . " answered {$response->status}" . ($text !== '' ? ': ' . self::errorBody($text, $secrets) : ''));
     }
 
     /**
-     * The start of an error body: secrets are cut out of a prefix long enough
-     * to hold one that starts inside the first ERROR_BODY_MAX characters, and
-     * only then is it cut to that length, on a code point, so no part of a
-     * secret survives at the edge.
-     *
-     * @param list<string|null> $secrets
+     * The start of an error answer's body, at most Http::ERROR_READ_MAX
+     * bytes of it, as the SDK's errorText() (alerts/shared.ts) reads it: the default Http
+     * stops reading there, and this holds one that kept more to it too. A
+     * character cut at the end reads as U+FFFD, far past what errorBody()
+     * keeps.
      */
+    public static function errorText(HttpResponse $response): string
+    {
+        $body = $response->body;
+        return strlen($body) <= Http::ERROR_READ_MAX ? $body : Js::wellFormed(substr($body, 0, Http::ERROR_READ_MAX));
+    }
+
     /**
      * The parts of a webhook URL that are its credential, to cut from an
      * error body that echoes the request: its path and query together, then
@@ -200,6 +205,14 @@ final class Shared
         return array_values(array_filter($candidates, fn (string $part) => $part !== '' && $part !== '/'));
     }
 
+    /**
+     * The start of an error body: secrets are cut out of a prefix long enough
+     * to hold one that starts inside the first ERROR_BODY_MAX characters, and
+     * only then is it cut to that length, on a code point, so no part of a
+     * secret survives at the edge.
+     *
+     * @param list<string|null> $secrets
+     */
     public static function errorBody(#[\SensitiveParameter] string $text, #[\SensitiveParameter] array $secrets = []): string
     {
         $kept = array_values(array_filter($secrets, fn ($s) => is_string($s) && Js::length16($s) >= 4));

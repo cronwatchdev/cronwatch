@@ -342,10 +342,13 @@ defmodule Cronwatch.Web.Routes do
     base = base_path(opts, req)
     pathname = req.path |> Request.target_path() |> Request.normalize_path()
     path = Request.strip_base(pathname, base)
-    wants_html = not String.starts_with?(path, "/api")
+    wants_html = path == nil or not String.starts_with?(path, "/api")
 
     try do
-      serve(opts, req, pathname, path, base, wants_html)
+      # Not under the base at all: nothing here answers it, signed in or not.
+      if path == nil,
+        do: page("Not found", pathname, base, 404),
+        else: serve(opts, req, pathname, path, base, wants_html)
     rescue
       e -> failed(opts, e, base, wants_html)
     catch

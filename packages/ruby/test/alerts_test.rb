@@ -246,14 +246,16 @@ class AlertsTest < Minitest::Test
 
   # The deadline is the whole request's, as AbortSignal.timeout(10_000) is:
   # a body dripping in under each read timeout still stops at the deadline,
-  # and the status is kept with an empty body, as the SDK reads it.
+  # and the status is kept with what of the body had come, as the SDK's
+  # errorText keeps it.
   def test_the_default_http_adapter_has_a_whole_request_deadline
     server = dripping_server("HTTP/1.1 500 Oops\r\nContent-Length: 30\r\nConnection: close\r\n\r\n", 30, 0.2)
     response = nil
     took = elapsed { response = Cronwatch::HTTP::NetHTTP.new(timeout: 1).post("http://127.0.0.1:#{server.addr[1]}/", "{}", {}) }
     assert_operator took, :<, 2.5
     assert_equal 500, response.status
-    assert_equal "", response.body
+    assert_operator response.body.bytesize, :<, 30
+    assert_equal "x" * response.body.bytesize, response.body
   ensure
     server&.close
   end
@@ -278,7 +280,7 @@ class AlertsTest < Minitest::Test
 
   # A hostile or broken endpoint that never stops sending cannot fill the
   # worker's memory or hold it until the deadline: an answer outside 2xx is
-  # read to MAX_BODY (1 MiB) and no further, and a 2xx answer's body is not
+  # read to MAX_BODY (64 KiB) and no further, and a 2xx answer's body is not
   # read at all, since no channel needs it.
   def test_the_default_http_adapter_caps_the_body_it_reads_and_skips_a_2xx_body
     [[500, Cronwatch::HTTP::MAX_BODY], [200, 0]].each do |status, size|
@@ -291,7 +293,7 @@ class AlertsTest < Minitest::Test
     ensure
       server&.close
     end
-    assert_equal 1_048_576, Cronwatch::HTTP::MAX_BODY
+    assert_equal 64 * 1024, Cronwatch::HTTP::MAX_BODY
   end
 
   def test_the_default_http_adapter_raises_when_no_answer_comes_before_the_deadline

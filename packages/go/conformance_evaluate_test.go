@@ -93,11 +93,35 @@ func TestConformanceEvaluate(t *testing.T) {
 				case "start":
 					at := int64(field(ev, "at").(float64))
 					id := field(ev, "id").(string)
-					s.runs = append(s.runs, &Run{ID: id, Job: s.def.Name(), Status: StatusRunning, StartedAt: at, Metrics: Metrics{}, Trigger: "run"})
+					run := &Run{ID: id, Job: s.def.Name(), Status: StatusRunning, StartedAt: at, Metrics: Metrics{}, Trigger: "run"}
+					s.runs = append(s.runs, run)
 					s.seq++
 					s.order[id] = s.seq
-					s.state = onRunStart(s.state)
+					s.state = onRunStart(s.def, run.clone(), s.state, at)
 					sameJSON(t, what, js.NewObject("state", s.state.JSValue()), expect)
+				case "record":
+					// A run a source reports only once it is over (RecordRun):
+					// written finished, then onRunStart and onRunFinish at its finish.
+					at := int64(field(ev, "at").(float64))
+					startedAt := int64(field(ev, "startedAt").(float64))
+					id := field(ev, "id").(string)
+					run := &Run{ID: id, Job: s.def.Name(), Status: RunStatus(field(ev, "status").(string)), StartedAt: startedAt,
+						FinishedAt: ptr(at), DurationMs: ptr(max(0, at-startedAt)), Metrics: Metrics{}, Trigger: "source"}
+					if m, ok := ev.Get("metrics"); ok {
+						run.Metrics, _ = metricsFrom(m)
+					}
+					if ev.Has("output") {
+						run.Output = nullableStr(ev, "output")
+					}
+					if ev.Has("error") {
+						run.Error = nullableStr(ev, "error")
+					}
+					s.runs = append(s.runs, run)
+					s.seq++
+					s.order[id] = s.seq
+					s.state = onRunStart(s.def, run.clone(), s.state, at)
+					alerts := s.finishRun(t, run, at)
+					sameJSON(t, what, js.NewObject("alerts", alerts, "state", s.state.JSValue()), expect)
 				case "finish":
 					at := int64(field(ev, "at").(float64))
 					run := s.find(field(ev, "id").(string))

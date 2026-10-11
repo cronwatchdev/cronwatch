@@ -14,6 +14,7 @@ use Cronwatch\CheckResult;
 use Cronwatch\Craft\models\Settings;
 use Cronwatch\Cronwatch;
 use Cronwatch\Duration;
+use Cronwatch\Env;
 use Cronwatch\Job\JobHandle;
 use Cronwatch\Watch;
 use Craft;
@@ -49,6 +50,8 @@ final class Recorder
     public const TAG_COMMAND = 'craft-command';
     /** Jobs declared from the settings, which the check declares again without a schedule once they are taken out. */
     public const TAG_CONFIG = 'craft-config';
+    /** The least an API token may be (tokenProblem()). */
+    public const TOKEN_MIN = 24;
 
     private ?Cronwatch $client = null;
     /** @var array<string, int> queue job id => the attempt's run key */
@@ -95,6 +98,26 @@ final class Recorder
     public function report(\Throwable $error, string $where): void
     {
         Craft::error("{$where}: " . get_class($error) . ': ' . $error->getMessage(), 'cronwatch');
+    }
+
+    /** The JSON API's token: the apiToken setting, else CRONWATCH_TOKEN; empty when neither is set, and the API is not there. */
+    public function apiToken(): string
+    {
+        $token = $this->settings()->value('apiToken');
+        return $token !== '' ? $token : (string) Env::read('CRONWATCH_TOKEN');
+    }
+
+    /**
+     * Why the API refuses a token, or null when it takes it. A token shorter
+     * than TOKEN_MIN is refused, as the WordPress plugin refuses one typed
+     * in, and the API stays shut until it is longer.
+     */
+    public static function tokenProblem(string $token): ?string
+    {
+        if ($token === '' || strlen($token) >= self::TOKEN_MIN) {
+            return null;
+        }
+        return sprintf("CronWatch's JSON API is off: its token (apiToken in config/cronwatch.php, or CRONWATCH_TOKEN) has %d characters, and it needs at least %d. Make a longer one, such as the output of `openssl rand -hex 24`.", strlen($token), self::TOKEN_MIN);
     }
 
     /**

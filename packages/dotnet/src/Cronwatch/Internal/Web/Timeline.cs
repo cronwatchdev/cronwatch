@@ -147,8 +147,9 @@ internal static class Timeline
     /// <summary>
     /// When the job was due within <paramref name="from"/> to <paramref name="to"/>, ascending,
     /// and whether they are too many to draw one by one. A cron's fires come from its schedule. An
-    /// interval is due one period after each run started, and after the last run once a period for
-    /// as long as nothing runs; with no run yet, from its next expected time.
+    /// interval is due one period after each run started (after it finished, for a run that
+    /// outlasted the period: <see cref="Schedules.IntervalDue"/>), and after the last run once a
+    /// period for as long as nothing runs; with no run yet, from its next expected time.
     /// </summary>
     private static Due DueTimes(JobSummary job, ParsedSchedule? parsed, IReadOnlyList<Run> runs, long from, long to)
     {
@@ -167,18 +168,18 @@ internal static class Timeline
             {
                 return new Due([], true);
             }
-            var starts = runs.Select(r => r.StartedAt).ToList();
-            starts.Sort();
+            var dues = runs.OrderBy(r => r.StartedAt)
+                .Select(r => Schedules.IntervalDue(every, r.StartedAt, Evaluate.FinishedAtOf(r)))
+                .ToList();
             var set = new SortedSet<long>();
-            foreach (long start in starts)
+            foreach (long t in dues)
             {
-                long t = SaturatingAdd(start, every);
                 if (t >= from && t <= to)
                 {
                     set.Add(t);
                 }
             }
-            long? next = starts.Count == 0 ? job.NextExpectedAt : SaturatingAdd(starts[^1], every);
+            long? next = dues.Count == 0 ? job.NextExpectedAt : dues[^1];
             if (next is long n)
             {
                 long t = n;
@@ -238,7 +239,7 @@ internal static class Timeline
             long started = last.StartedAt;
             try
             {
-                return Schedules.GetExpectation(parsed, started, started, grace)?.DueAt;
+                return Schedules.GetExpectation(parsed, started, started, grace, Evaluate.FinishedAtOf(last))?.DueAt;
             }
             catch (Exception)
             {

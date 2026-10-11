@@ -182,7 +182,7 @@ func goRead(t *testing.T, store cronwatch.Store, f sharedFixture) string {
 		one, err := store.ListRuns(ctx, name, 1)
 		must(t, err)
 		limited = append(limited, name, list(t, one, runJSON))
-		l, err := store.LastRun(ctx, name)
+		l, err := store.(cronwatch.LastRunner).LastRun(ctx, name)
 		must(t, err)
 		last = append(last, name, nullable(t, l))
 		s, err := store.GetState(ctx, name)

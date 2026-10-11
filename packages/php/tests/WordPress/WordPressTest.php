@@ -328,6 +328,43 @@ final class WordPressTest extends TestCase
             PHP);
     }
 
+    public function testTheCheckEventComesBackAndTheSettingsSayWhenItIsDue(): void
+    {
+        $result = self::inWp(<<<'PHP'
+            use Cronwatch\WordPress\Admin;
+            $page = function (): string { ob_start(); Admin::render(); return (string) ob_get_clean(); };
+            wp_set_current_user(get_user_by('login', 'admin')->ID);
+            $out = ['due' => str_contains($page(), 'The next check is due at')];
+            wp_clear_scheduled_hook('cronwatch_check');
+            do_action('admin_init');
+            $event = wp_get_scheduled_event('cronwatch_check');
+            $out['adminInit'] = $event ? [$event->schedule, $event->timestamp > time()] : null;
+            // Twenty minutes late: WP-Cron is not running it.
+            wp_clear_scheduled_hook('cronwatch_check');
+            wp_schedule_event(time() - 1200, 'cronwatch_five_minutes', 'cronwatch_check');
+            $out['late'] = str_contains($page(), 'has not run: WP-Cron is not running on this site');
+            // Gone, and scheduling it again refused.
+            wp_clear_scheduled_hook('cronwatch_check');
+            add_filter('schedule_event', fn ($event) => $event && $event->hook === 'cronwatch_check' ? false : $event);
+            do_action('admin_init');
+            $out['refused'] = wp_next_scheduled('cronwatch_check');
+            $out['none'] = str_contains($page(), 'No check is scheduled');
+            echo json_encode($out);
+            PHP);
+        $this->assertTrue($result['due'], 'the settings say when the next check is due');
+        $this->assertSame(['cronwatch_five_minutes', true], $result['adminInit'], 'admin_init schedules a check that was taken away');
+        $this->assertTrue($result['late']);
+        $this->assertFalse($result['refused']);
+        $this->assertTrue($result['none'], 'the settings say when there is no check');
+
+        // A WP-Cron request schedules it again too (it is gone after the last step).
+        $this->assertNull($this->inWpState()['check_schedule']);
+        [$code, $out, $err] = self::wp(['--exec=define("DOING_CRON", true);', 'eval', 'echo json_encode(wp_next_scheduled("cronwatch_check") !== false);']);
+        $this->assertSame(0, $code, $err);
+        $this->assertSame('true', trim($out));
+        $this->assertSame('cronwatch_five_minutes', $this->inWpState()['check_schedule']);
+    }
+
     public function testARecurringEventsRunIsRecordedOnItsJobWithItsOutput(): void
     {
         self::schedule('cwt_ok', [['hourly', []], ['daily', ['x']]]);

@@ -100,7 +100,7 @@ test("tools call the API with the bearer token and summarise", async () => {
 
   const missing = await client.callTool({ name: "get_job", arguments: { name: "nope" } });
   assert.equal(missing.isError, true);
-  assert.match((missing.content as { text: string }[])[0]!.text, /404.*No such job/);
+  assert.match((missing.content as { text: string }[])[0]!.text, /404[\s\S]*No such job/);
 
   const guide = await client.callTool({ name: "get_setup_guide", arguments: {} });
   assert.match((guide.content as { text: string }[])[0]!.text, /cw\.job\("nightly-report"/);
@@ -155,7 +155,7 @@ test("drives the real SDK routes end to end", async () => {
 
   const missing = await client.callTool({ name: "get_job", arguments: { name: "nope" } });
   assert.equal(missing.isError, true);
-  assert.match(body(missing), /404.*No such job/);
+  assert.match(body(missing), /404[\s\S]*No such job/);
 
   await client.callTool({ name: "forget_job", arguments: { name: "nightly" } });
   assert.match(body(await client.callTool({ name: "list_jobs", arguments: {} })), /No jobs yet/);
@@ -167,7 +167,7 @@ test("drives the real SDK routes end to end", async () => {
   await other.connect(a);
   const refused = await other.callTool({ name: "list_jobs", arguments: {} });
   assert.equal(refused.isError, true);
-  assert.match(body(refused), /401.*Unauthorized/);
+  assert.match(body(refused), /401[\s\S]*Unauthorized/);
   await other.close();
   await denied.close();
 

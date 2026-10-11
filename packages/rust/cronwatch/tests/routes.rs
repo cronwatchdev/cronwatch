@@ -16,7 +16,8 @@ use common::{HOUR, Kit, MIN, T0, TestStore};
 use cronwatch::js::{self, Object, Value};
 use cronwatch::web::{Body, MAX_BODY, Request, Response, Routes, RoutesOptions};
 use cronwatch::{
-    BoxError, BoxFuture, Client, Definition, JobHealth, JobOptions, JobState, MemoryStore, Run, Store, StoredJob,
+    BoxError, BoxFuture, Client, Definition, JobHealth, JobOptions, JobState, MemoryStore, Run, RunStatus, Store,
+    StoredJob,
 };
 use http_body_util::BodyExt;
 use sha2::{Digest, Sha256};
@@ -123,6 +124,20 @@ async fn everything_needs_the_token() {
     status("right", &w.get("/cronwatch/api/jobs", &[AUTH]).await, 200);
     status("any case and spaces", &w.get("/cronwatch/api/jobs", &[("authorization", "bEaReR \t tok")]).await, 200);
     assert_eq!(w.routes.token(), Some("tok"));
+}
+
+#[tokio::test]
+async fn only_the_base_and_the_paths_under_it_are_answered() {
+    let w = Web::new();
+    for path in ["/cronwatchapi/jobs", "/api/jobs", "/cronwatch/../api/jobs", "/cronwatch/%2e%2e/api/jobs", "/"] {
+        let res = w.get(path, &[AUTH]).await;
+        status(path, &res, 404);
+        contains(path, &res.text(), "Not found");
+    }
+    status("no token, outside the base", &w.get("/cronwatch-x/api/jobs", &[]).await, 404);
+    for path in ["/cronwatch", "/cronwatch/", "/cronwatch/./api/jobs", "/cronwatch/jobs/../api/jobs"] {
+        status(path, &w.get(path, &[AUTH]).await, 200);
+    }
 }
 
 #[tokio::test]
@@ -495,6 +510,16 @@ macro_rules! delegate {
         }
         fn close(&self) -> BoxFuture<'_, Result<(), BoxError>> {
             self.0.close()
+        }
+        fn update_run_if<'a>(&'a self, run: &'a Run, from: &'a [RunStatus]) -> BoxFuture<'a, Result<bool, BoxError>> {
+            self.0.update_run_if(run, from)
+        }
+        fn compare_and_set_state<'a>(
+            &'a self,
+            state: &'a JobState,
+            expected: i64,
+        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+            self.0.compare_and_set_state(state, expected)
         }
     };
 }

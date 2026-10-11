@@ -1,6 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Threading;
+using System.Threading.Tasks;
 using Hangfire.Common;
 using Hangfire.Server;
 using Hangfire.States;
@@ -19,7 +22,10 @@ namespace Cronwatch.Hangfire;
 /// and <see cref="OnPerformed"/> there just after, synchronously, awaiting an async method between
 /// them. So the run is opened and made current in the first, which reaches the method (Hangfire
 /// runs it inside the worker's execution context), and closed in the second, which takes it off
-/// the worker's thread whatever happened, so a pooled worker keeps nothing.
+/// the worker's thread whatever happened, so a pooled worker keeps nothing. Each blocks the worker
+/// on the store for at most <see cref="CronwatchHangfire.StoreWait"/>: past it the work goes on in
+/// the background, so a store that does not answer costs an attempt one bounded wait, not its
+/// worker.
 /// </remarks>
 [DebuggerDisplay("{ToString(),nq}")]
 [SuppressMessage("Naming", "CA1725", Justification = "Hangfire renamed these parameters within 1.8 (filterContext in 1.8.0, context later), so no one name matches every supported release.")]
@@ -51,8 +57,13 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
                 return;
             }
             // Hangfire's worker has no synchronization context and the client awaits nothing on
-            // the caller's, so this blocks only for the store's write.
-            CronwatchJob? job = _integration.JobAsync(name).GetAwaiter().GetResult();
+            // the caller's, so this blocks only for the store's write, and at most StoreWait.
+            Task<CronwatchJob?> finding = _integration.JobAsync(name);
+            if (!Waited(finding, "declaring " + name))
+            {
+                return; // declared in the background; this attempt goes unrecorded
+            }
+            CronwatchJob? job = finding.Result;
             if (job == null)
             {
                 return;
@@ -63,7 +74,14 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
             int attempt = context.GetJobParameter<int>(CronwatchHangfire.AttemptParameter, true);
             context.SetJobParameter(CronwatchHangfire.AttemptParameter, attempt + 1);
             var options = new RunOptions { Trigger = CronwatchHangfire.Trigger, Id = _integration.RunId(context.BackgroundJob.Id, attempt), MayTakeBack = true };
-            ObservedRun run = job.OpenAsync(options, context.CancellationToken.ShutdownToken).GetAwaiter().GetResult();
+            Task<ObservedRun> opening = job.OpenAsync(options, context.CancellationToken.ShutdownToken);
+            if (!Waited(opening, "opening a run of " + name))
+            {
+                // Still opening: closed when it is open, without being current in the job.
+                context.Items[RunKey] = opening;
+                return;
+            }
+            ObservedRun run = opening.Result;
             context.Items[RunKey] = run;
             context.Items[CurrentKey] = run.MakeCurrent();
         }
@@ -80,7 +98,7 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
     public void OnPerformed(PerformedContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (!context.Items.TryGetValue(RunKey, out object? found) || found is not ObservedRun run)
+        if (!context.Items.TryGetValue(RunKey, out object? found) || found is not (ObservedRun or Task<ObservedRun>))
         {
             return;
         }
@@ -94,22 +112,77 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
             }
             Exception? raw = context.Exception;
             Exception? thrown = raw is JobPerformanceException { InnerException: { } inner } ? inner : raw;
-            if (context.Canceled || GivenBack(raw, context))
+            object? result = context.Result;
+            Func<ObservedRun, Task> close = context.Canceled || GivenBack(raw, context)
+                ? run => run.TakeBackAsync(thrown)
+                : thrown == null
+                    ? run => run.CloseWithAsync(result)
+                    : run => run.CloseAsync(thrown);
+            if (found is ObservedRun opened)
             {
-                run.TakeBackAsync(thrown).GetAwaiter().GetResult();
+                Waited(close(opened), "closing run " + opened.Id);
+                return;
             }
-            else if (thrown == null)
-            {
-                run.CloseWithAsync(context.Result).GetAwaiter().GetResult();
-            }
-            else
-            {
-                run.CloseAsync(thrown).GetAwaiter().GetResult();
-            }
+            // Opened too late to wait for: closed as it ended, once it is open.
+            var opening = (Task<ObservedRun>)found;
+            _integration.Track(opening.ContinueWith(
+                async t =>
+                {
+                    if (t.Status != TaskStatus.RanToCompletion)
+                    {
+                        return; // reported as the open failed
+                    }
+                    try
+                    {
+                        await close(await t.ConfigureAwait(false)).ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        _integration.Client.ReportError(e, "hangfire");
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default).Unwrap());
         }
         catch (Exception e)
         {
             _integration.Client.ReportError(e, "hangfire");
+        }
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="work"/> at most <see cref="CronwatchHangfire.StoreWait"/>, throwing
+    /// what it threw. Past the wait it goes on in the background, which is reported, and false is
+    /// answered; a failure it meets later is reported then.
+    /// </summary>
+    private bool Waited(Task work, string what)
+    {
+        TimeSpan wait = _integration.StoreWait;
+        try
+        {
+            work.WaitAsync(wait).GetAwaiter().GetResult();
+            return true;
+        }
+        catch (TimeoutException) when (!work.IsCompleted)
+        {
+            _integration.Client.ReportError(
+                new TimeoutException(
+                    "cronwatch: the store did not answer within " + ((long)wait.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)
+                    + "ms while " + what + ", so the worker went on and it finishes in the background"),
+                "hangfire");
+            _integration.Track(work.ContinueWith(
+                t =>
+                {
+                    if (t.Exception is { } failed)
+                    {
+                        _integration.Client.ReportError(failed.GetBaseException(), "hangfire");
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default));
+            return false;
         }
     }
 

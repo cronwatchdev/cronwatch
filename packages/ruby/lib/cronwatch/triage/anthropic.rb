@@ -111,8 +111,8 @@ module Cronwatch
         lines << "Job definition: #{JS.json(definition.respond_to?(:to_h) ? definition.to_h : definition)}"
         if run
           lines << ""
-          lines << "Triggering run: status #{run.status}, started #{stamp(run.started_at)}, duration #{duration(run)}, trigger #{run.trigger}"
-          lines << "Metrics: #{JS.json(run.metrics)}" if run.metrics && !run.metrics.empty?
+          lines << "Triggering run: status #{run.status}, started #{stamp(run.started_at)}, duration #{duration(run)}, trigger #{data(run.trigger.to_s)}"
+          lines << "Metrics: #{data(JS.json(run.metrics))}" if run.metrics && !run.metrics.empty?
           lines << "Error:\n#{data(JS.head16(run.error, 3000))}" if present?(run.error)
           lines << "Output (tail):\n#{data(JS.tail16(run.output, 3000))}" if present?(run.output)
         end
@@ -122,7 +122,7 @@ module Cronwatch
           lines << "Earlier runs, newest first:"
           earlier.each do |r|
             error = present?(r.error) ? ", error: #{data(JS.head16(r.error.split("\n", -1).first.to_s, 160))}" : ""
-            metrics = r.metrics && !r.metrics.empty? ? ", metrics #{JS.json(r.metrics)}" : ""
+            metrics = r.metrics && !r.metrics.empty? ? ", metrics #{data(JS.json(r.metrics))}" : ""
             lines << "- #{r.status}, #{stamp(r.started_at)}, #{duration(r)}#{error}#{metrics}"
           end
         end

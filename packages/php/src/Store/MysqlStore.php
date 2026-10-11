@@ -21,8 +21,10 @@ use Cronwatch\JobState;
  * autocommit mode, so its writes never join a transaction the app has open
  * (a run recorded inside one survives a rollback), and it connects again
  * once when the server has gone away. Given the app's PDO it shares it,
- * transactions and all. init() runs CREATE TABLE, which MySQL commits at
- * once, so call it when nothing is open (a deploy step, or the first check).
+ * transactions and all. init() runs CREATE TABLE only when a table is
+ * missing (it reads information_schema first); MySQL commits that at once,
+ * so the first init() against an empty database is best run when nothing
+ * is open (a deploy step, or the first check).
  */
 final class MysqlStore extends PdoStore
 {
@@ -222,10 +224,31 @@ final class MysqlStore extends PdoStore
         }
     }
 
+    /**
+     * Every PHP process calls init(), and CREATE TABLE, even IF NOT EXISTS
+     * for a table that is there, commits whatever transaction the app has
+     * open on a shared PDO. So the tables are looked for first, and made
+     * only when one is missing.
+     */
     public function init(): void
     {
+        if ($this->tablesExist()) {
+            return;
+        }
         foreach (Sql::mysqlSchema($this->prefix) as $statement) {
             $this->open()->exec($statement);
+        }
+    }
+
+    /** Whether the three tables are there (their indexes are declared in them), from information_schema. */
+    private function tablesExist(): bool
+    {
+        $names = array_map(fn (string $name) => $this->prefix . $name, ['jobs', 'runs', 'state']);
+        $statement = $this->run('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?, ?, ?)', $names);
+        try {
+            return (int) $statement->fetchColumn() === count($names);
+        } finally {
+            $statement->closeCursor();
         }
     }
 

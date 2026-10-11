@@ -14,8 +14,13 @@ use Cronwatch\StoredJob;
  * implements UpdatesRunIf and ComparesAndSetsState (all of this package's
  * do) keeps several processes sharing it from finishing one run twice or
  * overwriting each other's state; without them the client falls back to a
- * read then a write, which is safe only while one process at a time writes.
- * tests/StoreConformanceTest.php is the test every store passes.
+ * read then a write, which is safe only while one process at a time writes;
+ * the client reports that once, through onError, when it first uses the
+ * store. tests/StoreConformanceTest.php is the test every store passes.
+ *
+ * The client never asks for a job's newest run on its own (lastRun(), which
+ * the SDK's Store has as optional), so it is not part of this interface; the
+ * built-in stores keep it for callers of their own.
  */
 interface Store
 {
@@ -42,8 +47,6 @@ interface Store
 
     /** @return list<Run> newest first, runs started in the same millisecond newest written first */
     public function listRuns(string $job, int $limit): array;
-
-    public function lastRun(string $job): ?Run;
 
     /** @return list<Run> oldest first, then in the order they were written */
     public function runningRuns(): array;

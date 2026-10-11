@@ -67,10 +67,28 @@ final class Sim
 
     public function start(string $id, int|float $now): array
     {
-        $this->runs[] = new Run($id, (string) $this->definition->get('name'), RunStatus::RUNNING, $now);
+        $run = new Run($id, (string) $this->definition->get('name'), RunStatus::RUNNING, $now);
+        $this->runs[] = $run;
         $this->order[$id] = ++$this->seq;
-        $this->state = Evaluate::onRunStart($this->state);
+        $this->state = Evaluate::onRunStart($this->definition, clone $run, $this->state, $now);
         return ['state' => $this->state];
+    }
+
+    /**
+     * A run a source reports only once it is over (recordRun): written
+     * finished, then onRunStart and onRunFinish at `now`, as the client does,
+     * so missed closes only when its start covers the fire.
+     */
+    public function record(string $id, int|float $startedAt, int|float $now, \stdClass $fields): array
+    {
+        $run = new Run($id, (string) $this->definition->get('name'), $fields->status, $startedAt, $now, max(0, $now - $startedAt), trigger: 'source');
+        $run->metrics = Js::fields($fields->metrics ?? []);
+        $run->output = $fields->output ?? null;
+        $run->error = $fields->error ?? null;
+        $this->runs[] = $run;
+        $this->order[$id] = ++$this->seq;
+        $this->state = Evaluate::onRunStart($this->definition, clone $run, $this->state, $now);
+        return ['alerts' => $this->finishRun($run, $now), 'state' => $this->state];
     }
 
     /** @return list<Alert> */
@@ -83,10 +101,12 @@ final class Sim
 
     public function finish(string $id, int|float $now, \stdClass $fields): array
     {
+        // The first run with the id, as the generator's find().
         $run = null;
         foreach ($this->runs as $candidate) {
             if ($candidate->id === $id) {
                 $run = $candidate;
+                break;
             }
         }
         // As the client's conditional write (updateRunIf): a run already

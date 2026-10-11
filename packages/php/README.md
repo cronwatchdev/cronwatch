@@ -87,7 +87,7 @@ Deprecated, working through 1.x and gone in 2.0: `false` for those three (use `n
 ### Stores
 
 - `Cronwatch\Store\MemoryStore`, the default: forgets when the process ends.
-- `Cronwatch\Store\SqliteStore($path, prefix: 'cronwatch_')`: one file, WAL mode. The tables, statements, and JSON are the SDK's SQLite store's, byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
+- `Cronwatch\Store\SqliteStore($path, prefix: 'cronwatch_')`: one file, WAL mode, made private (0600), so every process that uses it (the web server, the crontab line, workers) must run as the same user. The tables, statements, and JSON are the SDK's SQLite store's, byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
 - `Cronwatch\Store\MysqlStore($url, prefix: 'cronwatch_')`: MySQL 8.0.13 or newer, or MariaDB 10.6 or newer, from a `mysql://` URL, a PDO DSN, the app's `PDO`, or `DATABASE_URL`. The same tables in MySQL's dialect (see DESIGN.md), with the SDK's JSON kept byte for byte. Given a URL or DSN, it writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback.
 - `Cronwatch\Store\PostgresStore($url, prefix: 'cronwatch_')`: Postgres from a `postgres://` URL, a PDO DSN, the app's `PDO`, or `DATABASE_URL`. The SDK's tables and statements, so a process in any other language can share the database. Given a URL or DSN, it writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback.
 
@@ -96,7 +96,7 @@ Deprecated, working through 1.x and gone in 2.0: `false` for those three (use `n
 ```php
 use Cronwatch\Alerts;
 
-$link = fn (\Cronwatch\Alert $a) => "https://app.example.com/cronwatch/jobs/{$a->job}";
+$link = fn (\Cronwatch\Alert $a) => 'https://app.example.com/cronwatch/jobs/' . rawurlencode($a->job);
 $cw = new Cronwatch(store: $store, alerts: [
     new Alerts\Slack(webhookUrl: getenv('SLACK_WEBHOOK_URL'), link: $link),
     new Alerts\Resend(apiKey: getenv('RESEND_API_KEY'), from: 'CronWatch <alerts@example.com>', to: ['ops@example.com']),

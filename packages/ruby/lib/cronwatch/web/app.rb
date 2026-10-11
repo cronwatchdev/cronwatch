@@ -209,6 +209,9 @@ module Cronwatch
       begin
         request = Request.new(env)
         path = strip_base(request.pathname, base)
+        # Not under the base at all: nothing here answers it, signed in or not.
+        return html(HTML.message_page("Not found", request.pathname, base), 404) if path.nil?
+
         wants_html = !path.start_with?("/api")
         serve(request, path, wants_html, base)
       rescue StandardError => e
@@ -481,8 +484,15 @@ module Cronwatch
       Digest::SHA256.hexdigest("cronwatch-cookie:#{token}")
     end
 
+    # The path below the base, or nil when the request is not under it. The
+    # pathname, its dot segments already resolved (Request#pathname), must be
+    # the base or start with the base and a "/": "/cronwatchapi/jobs" is not
+    # under "/cronwatch", and neither is "/cronwatch/../api/jobs" (read as
+    # "/api/jobs"). An empty base, for an app mounted at the root, takes every path.
     def strip_base(pathname, base)
-      path = pathname.start_with?(base) ? pathname[base.length..] : pathname
+      return nil unless base.empty? || pathname == base || pathname.start_with?("#{base}/")
+
+      path = pathname[base.length..]
       path = "/" if path.empty?
       path = path[0...-1] if path.length > 1 && path.end_with?("/")
       path
@@ -650,10 +660,40 @@ module Cronwatch
         @env["REQUEST_METHOD"].to_s.upcase
       end
 
-      # The path as the browser asked for it, still percent-encoded, mount point included.
+      # The path as the browser asked for it, still percent-encoded, mount
+      # point included, with its dot segments resolved as `new URL` resolves
+      # them (a server may pass them through).
       def pathname
         path = "#{@env["SCRIPT_NAME"]}#{@env["PATH_INFO"]}"
-        path.empty? ? "/" : path
+        path.empty? ? "/" : Request.resolve_dots(path)
+      end
+
+      # A segment the URL standard reads as "." or "..", "%2e" standing for a period.
+      SINGLE_DOT = /\A(?:\.|%2e)\z/i
+      DOUBLE_DOT = /\A(?:\.|%2e){2}\z/i
+
+      # `path` with its "." and ".." segments taken out as the URL standard
+      # does: ".." takes the segment before it with it, and either one last
+      # leaves a trailing slash.
+      def self.resolve_dots(path)
+        return path unless path.start_with?("/")
+
+        segments = path.split("/", -1).drop(1)
+        return path unless segments.any? { |segment| SINGLE_DOT.match?(segment) || DOUBLE_DOT.match?(segment) }
+
+        out = []
+        segments.each_with_index do |segment, i|
+          last = i == segments.length - 1
+          if DOUBLE_DOT.match?(segment)
+            out.pop
+            out << "" if last
+          elsif SINGLE_DOT.match?(segment)
+            out << "" if last
+          else
+            out << segment
+          end
+        end
+        "/#{out.join("/")}"
       end
 
       def header(name)

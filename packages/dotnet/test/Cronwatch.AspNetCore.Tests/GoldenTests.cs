@@ -46,7 +46,10 @@ public class GoldenTests
         foreach (Capture c in Golden.Captures())
         {
             string path = await Golden.ResolveAsync(seeded.Client, c.Path);
-            CronwatchResponse a = await routes.HandleAsync(Golden.Request(c, path, "/cronwatch/"));
+            // A server hands the routes only what lies under their mount.
+            CronwatchResponse a = Golden.OutsideBase(c.Path)
+                ? await Golden.OutsideBaseAsync(seeded, c, path)
+                : await routes.HandleAsync(Golden.Request(c, path, "/cronwatch/"));
             Golden.Compare(c, a.Status, a.Headers, a.Body.ToArray(), ids, new HashSet<string>());
         }
         Golden.NoErrors(seeded);
@@ -113,6 +116,14 @@ public class GoldenTests
             foreach (Capture c in Golden.Captures())
             {
                 string path = await Golden.ResolveAsync(seeded.Client, c.Path);
+                if (Golden.OutsideBase(c.Path))
+                {
+                    // The server routes nothing outside the base to the dashboard.
+                    CronwatchResponse direct = await Golden.OutsideBaseAsync(seeded, c, path);
+                    Golden.Compare(c, direct.Status, direct.Headers, direct.Body.ToArray(), ids, new HashSet<string>());
+                    matched++;
+                    continue;
+                }
                 var (status, headers, body) = await ThroughTestServerAsync(server, c, path);
                 Golden.Compare(c, status, headers, body, ids, new HashSet<string> { "content-length" });
                 matched++;

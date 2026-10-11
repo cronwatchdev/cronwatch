@@ -270,8 +270,10 @@ class ClientHardeningTest < Minitest::Test
     clock = Clock.new
     a = Capture.new
     b = Capture.new
-    one = Cronwatch.new(store: store_a, now: clock.to_proc, alerts: [a], cron_secret: nil)
-    two = Cronwatch.new(store: store_b, now: clock.to_proc, alerts: [b], cron_secret: nil)
+    # A store without compare_and_set_state is reported; that is tested on its own.
+    quiet = ->(e, where) { raise e unless where == "store" }
+    one = Cronwatch.new(store: store_a, now: clock.to_proc, alerts: [a], cron_secret: nil, on_error: quiet)
+    two = Cronwatch.new(store: store_b, now: clock.to_proc, alerts: [b], cron_secret: nil, on_error: quiet)
     one.run("shared", failures_before_alert: 2) { nil }
     [[one, "one"], [two, "two"]].map do |client, message|
       Thread.new do
@@ -298,6 +300,31 @@ class ClientHardeningTest < Minitest::Test
     # The documented caveat: the later write wins, so one failure is lost.
     assert_equal 1, state.consecutive_failures
     assert_empty types
+  end
+
+  # A store without conditional writes works, but only while one process at a
+  # time uses it, so the client says so once, through on_error, never raising.
+  def test_a_store_without_conditional_writes_is_reported_once_when_first_used
+    bare = Class.new(SlowReads) do
+      def respond_to_missing?(name, include_private = false)
+        return false if %i[compare_and_set_state update_run_if].include?(name)
+
+        super
+      end
+    end
+    [[SlowReads.new(Cronwatch::Stores::Memory.new, without_cas: true), "compare_and_set_state"],
+     [bare.new(Cronwatch::Stores::Memory.new), "compare_and_set_state or update_run_if"]].each do |store, missing|
+      errors = []
+      cw = Cronwatch.new(store: store, cron_secret: nil, on_error: ->(e, where) { errors << [where, e.message] })
+      2.times { cw.run("x") { nil } }
+      cw.check
+      assert_equal [["store", "the store has no #{missing}, so two processes sharing it can overwrite each other's state " \
+                              "or both evaluate the same run; it is safe only while one process at a time uses it"]], errors
+    end
+    errors = []
+    cw = Cronwatch.new(cron_secret: nil, on_error: ->(e, where) { errors << [where, e.message] })
+    cw.run("x") { nil }
+    assert_empty errors, "the memory store has both"
   end
 
   def test_a_silence_made_by_one_process_survives_another_processes_run

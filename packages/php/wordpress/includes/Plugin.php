@@ -19,10 +19,11 @@ use Cronwatch\Job\RunHandle;
 /**
  * The plugin: one client per request on the site's database, the WP-Cron
  * watcher, its own check event (on every site of a network when it is
- * network activated, and on sites made later), the dashboard and settings
- * in wp-admin, the JSON API when the owner turns it on, and the WP-CLI
- * command. Nothing here runs on an ordinary page view but the two cron
- * filters, which only note an event while WP-Cron is running one.
+ * network activated, and on sites made later, and scheduled again when
+ * something takes it away), the dashboard and settings in wp-admin, the
+ * JSON API when the owner turns it on, and the WP-CLI command. Nothing
+ * here runs on an ordinary page view but the two cron filters, which only
+ * note an event while WP-Cron is running one.
  */
 final class Plugin
 {
@@ -57,6 +58,11 @@ final class Plugin
         self::watcher()->register();
         add_filter('cron_schedules', [self::class, 'schedules']);
         add_action(self::CHECK_HOOK, [self::class, 'runCheck']);
+        // The check event back when something took it away: on wp-admin's pages, and in a WP-Cron request.
+        add_action('admin_init', [self::class, 'ensureCheck']);
+        if (wp_doing_cron()) {
+            add_action('init', [self::class, 'ensureCheck']);
+        }
         add_action('wp_initialize_site', [self::class, 'newSite'], 20);
         add_filter('wpmu_drop_tables', [self::class, 'siteTables'], 10, 2);
         add_action('rest_api_init', [Api::class, 'register']);
@@ -103,8 +109,21 @@ final class Plugin
         global $wpdb;
         (new WpdbStore($wpdb))->install();
         add_option(self::SETTINGS, self::defaults(), '', false);
+        add_filter('cron_schedules', [self::class, 'schedules']);
+        self::ensureCheck();
+    }
+
+    /**
+     * Schedules this site's check event when it is not in the cron array:
+     * activation, and then admin_init and init in a WP-Cron request, so an
+     * event something took away (a plugin that clears unknown events, the
+     * cron option reset, a database copied without it) comes back on the
+     * next admin page or cron run. The cron array is an autoloaded option,
+     * so a look costs no query.
+     */
+    public static function ensureCheck(): void
+    {
         if (!wp_next_scheduled(self::CHECK_HOOK)) {
-            add_filter('cron_schedules', [self::class, 'schedules']);
             wp_schedule_event(time() + 60, self::CHECK_SCHEDULE, self::CHECK_HOOK);
         }
     }

@@ -462,7 +462,11 @@ public sealed class Routes
         var (rawPath, rawQuery) = Requests.Target(request.Target);
         string pathname = Requests.NormalizePath(rawPath);
         string b = BasePathOf(request, pathname);
-        string path = Requests.StripBase(pathname, b);
+        if (Requests.StripBase(pathname, b) is not string path)
+        {
+            // Not under the base at all: nothing here answers it, signed in or not.
+            return Message("Not found", pathname, b, 404);
+        }
         bool wantsHtml = !path.StartsWith("/api", StringComparison.Ordinal);
         try
         {

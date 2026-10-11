@@ -131,8 +131,11 @@ final class StoreConformanceTest extends TestCase
         $store->insertRun(self::makeRun('rc', '_c', 'running', 2000));
         $this->assertSame(['r3', 'r2', 'r1'], self::names($store->listRuns('a', 10)));
         $this->assertSame(['r3', 'r2'], self::names($store->listRuns('a', 2)));
-        $this->assertSame('r3', $store->lastRun('a')->id);
-        $this->assertNull($store->lastRun('none'));
+        // lastRun() is not part of the contract (the client never calls it), but a store that has it answers it right.
+        if (method_exists($store, 'lastRun')) {
+            $this->assertSame('r3', $store->lastRun('a')->id);
+            $this->assertNull($store->lastRun('none'));
+        }
         $this->assertSame(['rb', 'rc', 'r3'], self::names($store->runningRuns()), 'oldest first, then insertion order');
         $r1 = $store->getRun('r1');
         $this->assertSame(['n' => 1], $r1->metrics);
