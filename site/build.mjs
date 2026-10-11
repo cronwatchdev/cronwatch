@@ -887,7 +887,12 @@ function build() {
     const mdPath = `/docs/${page.name}.md`;
     const md = `${page.body.trim().replace(/\]\(\//g, () => `](${SITE}/`)}\n\nSource: ${SITE}${page.route}\n`;
     const copyMd = `<button class="copy copy-md" type="button" data-md="${mdPath}" hidden>Copy as Markdown</button>`;
-    const body = `<div class="docs"><aside class="docs-side" aria-label="Documentation">${SEARCH_OPEN}<div class="docs-scroll"><p>Documentation</p>${docList(page.route)}</div></aside><details class="docs-menu"><summary>Documentation</summary>${SEARCH_OPEN}${docList(page.route)}</details><article class="doc"><div class="doc-head"><p class="label">${escape(page.meta.title)}</p>${copyMd}</div>${html}${pager}</article></div>`;
+    // The page's sections down the right, as on runlight.sh: its h2s, read
+    // back from the rendered page so each link takes the heading's own id.
+    // A page with fewer than two sections has none.
+    const sections = [...html.matchAll(/<h2 id="([^"]+)"><a class="anchor" href="#[^"]+">([\s\S]*?)<\/a><\/h2>/g)];
+    const toc = sections.length > 1 ? `<nav class="toc" aria-label="On this page"><p>On this page</p><ul>${sections.map(([, id, text]) => `<li><a href="#${id}">${text}</a></li>`).join("")}</ul></nav>` : "";
+    const body = `<div class="docs${toc ? " with-toc" : ""}"><aside class="docs-side" aria-label="Documentation">${SEARCH_OPEN}<div class="docs-scroll"><p>Documentation</p>${docList(page.route)}</div></aside><details class="docs-menu"><summary>Documentation</summary>${SEARCH_OPEN}${docList(page.route)}</details><article class="doc"><div class="doc-head"><p class="label">${escape(page.meta.title)}</p>${copyMd}</div>${html}${pager}</article>${toc}</div>`;
     const dir = path.join(DIST, page.route);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(DIST, mdPath), md);

@@ -609,6 +609,19 @@ footer .theme .sun { display: none; }
 .docs-side .group p, .docs-menu .group p { font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px 30px; }
 .docs-side .group ol, .docs-menu .group ol { padding: 0 0 12px; }
 .docs-menu { display: none; }
+/* On a wide window, the page's sections in a third column, sticking as the
+   sidebar does; below 1180px the column goes and the page keeps its width. */
+.docs.with-toc { grid-template-columns: 200px minmax(0, 1fr) 170px; gap: 40px; }
+.toc { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.toc p { font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.toc ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.toc a { display: block; text-decoration: none; color: var(--muted); font-size: 15px; line-height: 1.35; }
+.toc a:hover { color: var(--ink); }
+.toc code { font: 400 12.5px/1 var(--mono); }
+@media (max-width: 1180px) {
+  .docs.with-toc { grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
+  .toc { display: none; }
+}
 
 /* Search: the entry looks like a flat, empty field; the dialog is a sheet
    with a field on top and the results beneath. */
@@ -692,7 +705,7 @@ dialog.search::backdrop { background: rgba(9, 9, 11, .42); }
   .pair .term pre { font-size: 12px; }
   .pair .arrow { margin: 10px 0 14px; justify-items: start; }
   .pair .arrow svg { width: 56px; transform: rotate(74deg); }
-  .docs { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; }
+  .docs, .docs.with-toc { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; }
   .docs-side { display: none; }
   .docs-menu { display: block; margin-bottom: 22px; }
   .docs-menu summary { list-style: none; cursor: pointer; font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 8px 0; border-bottom: 1px solid var(--rule); }
