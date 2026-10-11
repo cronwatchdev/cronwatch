@@ -6,8 +6,8 @@ tokio-cron-scheduler 0.15, Rust 1.85 or newer.
 
 ```toml
 [dependencies]
-cronwatch = "0.13"
-cronwatch-tokio-cron-scheduler = "0.13"
+cronwatch = "0.14"
+cronwatch-tokio-cron-scheduler = "0.14"
 tokio-cron-scheduler = "0.15"
 ```
 

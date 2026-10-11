@@ -4,7 +4,7 @@ Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.13.1
+Stable tag: 0.14.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -137,7 +137,7 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 
 == Changelog ==
 
-= Unreleased =
+= 0.14.0 =
 
 * Needs WordPress 6.5 or newer (was 6.1). The library uses `array_is_list`, which WordPress provides from 6.5, and PHP 8.2 support in WordPress is complete from 6.5.
 * The check event is put back whenever it goes missing (a migration, a restore, an emptied cron option, or an event deleted by hand), so missed and stuck alerts no longer stop without a word. CronWatch, Settings shows when the next check is due, and warns when it is late or missing.
