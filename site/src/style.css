@@ -137,8 +137,8 @@ pre b.bad { color: var(--bad); } pre b.warn { color: var(--warn); } pre b.ok { c
 /* Without script the boxes sit in a grid sized to the commands; a help line
    wraps to its box's width rather than widening the column. */
 html:not(.js) .installs .alt { width: 0; min-width: 100%; }
-@media (min-width: 800px) { .installs .set { display: grid; grid-template-columns: repeat(2, max-content); } .installs .install { display: flex; justify-content: space-between; } }
-@media (min-width: 1160px) { .installs .set { grid-template-columns: repeat(3, max-content); } }
+@media (min-width: 800px) { .installs .set { display: grid; grid-template-columns: repeat(2, minmax(0, max-content)); } .installs .install { display: flex; justify-content: space-between; } }
+@media (min-width: 1160px) { .installs .set { grid-template-columns: repeat(3, minmax(0, max-content)); } }
 /* With site.js the boxes become tabs, one per language, each with its logo:
    grey until hovered or chosen, then in its own colour (the owner's one
    exception to colour for states only, like the logo mark's gradient).
