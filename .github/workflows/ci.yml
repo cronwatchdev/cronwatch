@@ -22,7 +22,11 @@
 # committed report (TypeScript, Python, Elixir, .NET) or the last release
 # (Go, Rust). The workflows, the deploy scripts, and the nginx vhost are
 # linted, and every service image is pinned by digest.
-# A green run on main is what lets deploy.yml ship the site.
+# A green run on main is what lets deploy.yml ship the site. A push or pull
+# request that touches only site/ and deploy/ skips the packages' jobs: the
+# commits, the lint, and the site job (the dash check, the site's build, and
+# its links) run, and the rest show as skipped, so a docs fix deploys in a
+# minute or two. Anything else, a release included, runs every job.
 name: CI
 
 on:
@@ -57,6 +61,62 @@ jobs:
             node scripts/check-dashes.mjs --commits "$BEFORE..$AFTER"
           fi
 
+  # Whether the push or pull request touches anything outside site/ and
+  # deploy/. A new branch or a force push, whose range cannot be read,
+  # counts as touching everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$BASE...$HEAD"
+          elif [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          files="$(git diff --name-only "$range")"
+          printf '%s\n' "$files"
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(site|deploy)/'; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # A change to the site alone: the dash check, the site's build, and its
+  # links, as the test job checks them on a full run. The site needs only
+  # marked, so no package's install scripts run.
+  site:
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npm run check:dashes
+      - run: npm run build:site
+      - run: node scripts/check-links.mjs site/dist
+
   # The workflows (actionlint, which also runs shellcheck on every run:
   # step), the deploy and helper scripts (shellcheck), and the nginx vhost
   # (nginx -t on the server's nginx).
@@ -78,6 +138,8 @@ jobs:
         run: bash scripts/check-nginx.sh
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -143,6 +205,8 @@ jobs:
   # test/rails/gemfiles; setup-ruby's bundler-cache reads BUNDLE_GEMFILE
   # from the job's environment.
   ruby:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: ruby (Ruby ${{ matrix.ruby }}, Rails ${{ matrix.rails }})
     runs-on: ubuntu-latest
     strategy:
@@ -244,6 +308,8 @@ jobs:
   # LTS, 6.0, and 6.1; 6.x needs Python 3.12 or newer) runs over the dev
   # group's Django with `uv run --with`.
   python:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: python (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     runs-on: ubuntu-latest
     strategy:
@@ -362,6 +428,8 @@ jobs:
   # Node, Ruby, and Python jobs start it. The Laravel and Symfony tests run on
   # the newest of each that the PHP allows (php-frameworks pins each series).
   php:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: php (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
     strategy:
@@ -501,6 +569,8 @@ jobs:
   # Laravel, FrameworkBundle's test kernel for Symfony). Laravel 11 and
   # Symfony 7.3 and 8.0 are out of support and not tested.
   php-frameworks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: php (PHP ${{ matrix.php }}, ${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
@@ -572,6 +642,8 @@ jobs:
   # JSON API). Drupal 10.6 on PHP 8.2, the module's floor; 11 on 8.3, its
   # floor, and on 8.5; one entry per database driver the store reads.
   php-drupal:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: php (PHP ${{ matrix.php }}, Drupal ${{ matrix.drupal }}, ${{ matrix.db }})
     runs-on: ubuntu-latest
     strategy:
@@ -622,6 +694,8 @@ jobs:
   # plugin's floor, and the newest 5.x, on PHP 8.2 and 8.5, on each database
   # Craft runs on.
   php-craft:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: php (PHP ${{ matrix.php }}, Craft ${{ matrix.craft }}, ${{ matrix.db }})
     runs-on: ubuntu-latest
     strategy:
@@ -680,6 +754,8 @@ jobs:
   # SQLite file with the SDK, and (on the newest Go) runs the pg_cron
   # source against a Postgres with the extension.
   go:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: go (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
     strategy:
@@ -818,6 +894,8 @@ jobs:
           CRONWATCH_TEST_GO: "1"
 
   rust:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: rust (Rust ${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
@@ -936,6 +1014,8 @@ jobs:
   # the croner parity check and the SQLite file shared with Node, which need
   # the built SDK; everything else runs.
   rust-platforms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -968,6 +1048,8 @@ jobs:
   # them, and each publishable crate builds from its own tarball, as
   # crates.io will build it (cargo package).
   rust-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: rust (features, docs, package)
     runs-on: ubuntu-latest
     steps:
@@ -995,6 +1077,8 @@ jobs:
   # builds them), and the workspace checked on that. Then the fuzz targets
   # in packages/rust/fuzz build; they run on a schedule (fuzz.yml).
   rust-minimal:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: rust (minimal versions, fuzz build)
     runs-on: ubuntu-latest
     steps:
@@ -1027,6 +1111,8 @@ jobs:
   # of their API in their own jobs, and .NET holds its surface in
   # PublicAPI.Unshipped.txt, checked by every build.
   api:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: public API (Go, Rust)
     runs-on: ubuntu-latest
     steps:
@@ -1065,6 +1151,8 @@ jobs:
   # compiles without the optional dependencies, as an app with none of them
   # builds the package.
   elixir:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: elixir (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
     strategy:
@@ -1207,6 +1295,8 @@ jobs:
   # oldest Plug and the store on the oldest Ecto SQL, with the Postgres
   # service for the store's and Oban's server tests.
   elixir-oldest:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: elixir-oldest (Plug 1.16.0, Ecto SQL 3.12.0, Oban 2.20.0, Quantum 3.5.0)
     runs-on: ubuntu-latest
     env:
@@ -1255,6 +1345,8 @@ jobs:
   # database, paths, line endings, and SQLite's NIF on each system.
   # setup-beam has no macOS builds, so macOS takes Homebrew's Elixir.
   elixir-platforms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: elixir (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -1310,6 +1402,8 @@ jobs:
           mix test
 
   java:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: java (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
     strategy:
@@ -1451,6 +1545,8 @@ jobs:
   # shared with Node skip, as they say: the JDK's zones, paths, and line
   # endings.
   java-platforms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: java (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -1487,6 +1583,8 @@ jobs:
   # an app's own build decides which one it runs. The Quartz module's recovery
   # test runs on the JDBC job store over Postgres.
   java-frameworks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: java-frameworks (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
@@ -1532,6 +1630,8 @@ jobs:
           -Dsurefire.failIfNoSpecifiedTests=false
 
   dotnet:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: dotnet (.NET ${{ matrix.dotnet }})
     runs-on: ubuntu-latest
     strategy:
@@ -1650,6 +1750,8 @@ jobs:
           dotnet publish examples/aot -c Release -o artifacts/aot
           artifacts/aot/aot once
   dotnet-frameworks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: dotnet-frameworks (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
@@ -1696,6 +1798,8 @@ jobs:
   # shared with Node skip as they say: TimeZoneInfo on each system's zone
   # database (Windows' through ICU), paths, and line endings.
   dotnet-platforms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: dotnet (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
