@@ -77,10 +77,23 @@ public static partial class Golden
     public const long T0 = 1_767_605_400_000L;
 
     /// <summary>How many captures golden.json holds.</summary>
-    public const int CaptureCount = 82;
+    public const int CaptureCount = 86;
 
     /// <summary>The captures whose request target is not a valid percent-encoding.</summary>
     public static readonly IReadOnlySet<string> MalformedTargets = new HashSet<string>(StringComparer.Ordinal) { "/cronwatch/jobs/%zz", "/cronwatch/api/jobs/%zz" };
+
+    /// <summary>
+    /// Whether a capture's path lies outside the dashboard's base, <c>/cronwatch</c>: a path that
+    /// only starts with the base's text (<c>/cronwatchapi/jobs</c>), or one elsewhere. A server
+    /// routes none of these to the dashboard, so a replay through one answers them straight from
+    /// the routes (<see cref="OutsideBaseAsync"/>).
+    /// </summary>
+    public static bool OutsideBase(string path) =>
+        path != "/cronwatch" && !path.StartsWith("/cronwatch/", StringComparison.Ordinal) && !path.StartsWith("/cronwatch?", StringComparison.Ordinal);
+
+    /// <summary>A capture outside the base answered straight by routes at <c>/cronwatch</c>.</summary>
+    public static Task<CronwatchResponse> OutsideBaseAsync(Seeded seeded, Capture c, string path) =>
+        seeded.Client.Routes(new RoutesOptions { Token = "tok", BasePath = "/cronwatch" }).HandleAsync(Request(c, path));
 
     /// <summary>Headers a server adds of its own, left out of the comparison through one.</summary>
     public static readonly IReadOnlySet<string> ServerHeaders = new HashSet<string>(StringComparer.Ordinal) { "content-length", "date", "server", "transfer-encoding", "keep-alive", "connection" };
@@ -417,7 +430,8 @@ public static partial class Golden
 
     /// <summary>
     /// Replays every capture through a server on <paramref name="port"/> with the dashboard at
-    /// <c>/cronwatch</c>, over a raw socket, ignoring what the server adds of its own. A capture
+    /// <c>/cronwatch</c>, over a raw socket, ignoring what the server adds of its own (a capture
+    /// outside the base straight into the routes, see <see cref="OutsideBase"/>). A capture
     /// whose path is in <paramref name="refused"/> must be refused by the server itself with a 400.
     /// Answers how many captures matched.
     /// </summary>
@@ -428,6 +442,13 @@ public static partial class Golden
         foreach (Capture c in Captures())
         {
             string path = await ResolveAsync(seeded.Client, c.Path);
+            if (OutsideBase(c.Path))
+            {
+                CronwatchResponse direct = await OutsideBaseAsync(seeded, c, path);
+                Compare(c, direct.Status, direct.Headers, direct.Body.ToArray(), ids, new HashSet<string>());
+                matched++;
+                continue;
+            }
             RawHttp.Answer a = await RawHttp.SendAsync(port, c.Method, path, c.Headers, c.BodyBytes);
             if (refused.Contains(c.Path))
             {

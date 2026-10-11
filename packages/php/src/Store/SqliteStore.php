@@ -15,8 +15,11 @@ use Cronwatch\JobState;
  *     new SqliteStore('/var/lib/app/cronwatch.db')
  *     new SqliteStore(pdo: $pdo)          // an open connection of your own
  *
- * The directory is created when missing and the file made private (0600).
- * ":memory:" works too. Without a path the file is data/cronwatch.db in the
+ * The directory is created when missing and the file made private (0600),
+ * so every process that uses the store (the web server, the crontab line,
+ * a queue worker) must run as the same user: a cron job run as one user and
+ * a dashboard served as www-data cannot share the file. ":memory:" works
+ * too. Without a path the file is data/cronwatch.db in the
  * app's root, beside its vendor directory (see defaultPath()). `prefix`
  * names the tables: lowercase letters, digits, and underscores, default
  * "cronwatch_".
@@ -90,6 +93,7 @@ final class SqliteStore extends PdoStore
                     }
                 }
             }
+            self::checkAccess($file);
         }
         // No busy handler until WAL is on: switching journal mode can answer
         // SQLITE_BUSY at once while another process is doing the same on a new
@@ -101,6 +105,28 @@ final class SqliteStore extends PdoStore
         $opened->exec('PRAGMA synchronous = NORMAL');
         $this->forgetStatements();
         return $this->db = $opened;
+    }
+
+    /**
+     * Refuses, with a message that says why, a file (or its -wal and -shm
+     * files, or the directory they are made in) this process cannot read
+     * and write: SQLite would otherwise open it read-only and fail at the
+     * first write with "attempt to write a readonly database". The usual
+     * cause is a file another user made, private to them.
+     */
+    private static function checkAccess(string $file): void
+    {
+        $dir = dirname($file);
+        foreach ([$file, "{$file}-wal", "{$file}-shm"] as $f) {
+            $denied = file_exists($f) ? !is_readable($f) || !is_writable($f) : !is_writable($dir);
+            if ($denied) {
+                $user = function_exists('posix_geteuid') && function_exists('posix_getpwuid') ? (posix_getpwuid(posix_geteuid())['name'] ?? null) : null;
+                throw new \RuntimeException(
+                    'SqliteStore cannot read and write ' . (file_exists($f) ? $f : "a file in {$dir}") . ($user !== null ? " as {$user}" : '')
+                    . ': the store\'s file is private (0600) to the user that made it, so every process that uses it (the web server, the crontab line, workers) must run as that same user',
+                );
+            }
+        }
     }
 
     /** Whether SQLite answered SQLITE_BUSY or SQLITE_LOCKED (codes 5 and 6, and their extended codes). */

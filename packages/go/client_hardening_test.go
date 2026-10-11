@@ -11,6 +11,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -682,5 +683,69 @@ func TestAPanicClosingMissedAtTheStartIsReported(t *testing.T) {
 	check(t, job.Run(bg, func(context.Context, *cronwatch.JobContext) error { return nil }))
 	if got := strings.Join(k.errors.List(), "\n"); got != "starting nightly: panicked: the store fell over" {
 		t.Fatalf("reported: %q", got)
+	}
+}
+
+// plainStore is a store with neither conditional write.
+type plainStore struct{ cronwatch.Store }
+
+// A store without CompareAndSetState or UpdateRunIf still works, but only
+// while one process at a time uses it: the client says so once, in the
+// SDK's words, and never throws it.
+func TestAStoreWithoutTheConditionalWritesIsReportedOnce(t *testing.T) {
+	const rest = ", so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it"
+	for _, c := range []struct {
+		name  string
+		store func(*cronwatch.MemoryStore) cronwatch.Store
+		want  []string
+	}{
+		{"neither", func(m *cronwatch.MemoryStore) cronwatch.Store { return plainStore{m} }, []string{"store: the store has no compareAndSetState or updateRunIf" + rest}},
+		{"no CompareAndSetState", func(m *cronwatch.MemoryStore) cronwatch.Store { return noCAS{m, m} }, []string{"store: the store has no compareAndSetState" + rest}},
+		{"no UpdateRunIf", func(m *cronwatch.MemoryStore) cronwatch.Store { return noRunIf{m, m} }, []string{"store: the store has no updateRunIf" + rest}},
+		{"both", func(m *cronwatch.MemoryStore) cronwatch.Store { return m }, []string{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k := newKit(t, cronwatch.WithStore(c.store(cronwatch.NewMemoryStore())))
+			for range 2 {
+				check(t, k.cw.Run(context.Background(), "j", func(context.Context, *cronwatch.JobContext) error { return nil }))
+				_, err := k.cw.Check(context.Background())
+				check(t, err)
+			}
+			sameList(t, "reported", k.errors.List(), c.want)
+		})
+	}
+}
+
+// An error handler that panics cannot stop a run: with the store down, the
+// job still runs and its own outcome is returned, and a run handle still
+// finishes.
+func TestAPanickingErrorHandlerCannotStopARun(t *testing.T) {
+	store := newTestStore()
+	store.breaks("Init")
+	var reported atomic.Int32
+	cw := must[*cronwatch.Client](t)(cronwatch.New(cronwatch.WithStore(store), cronwatch.WithoutCronSecret(),
+		cronwatch.WithErrorHandler(func(error, string) {
+			reported.Add(1)
+			panic("logger down")
+		})))
+	job := must[*cronwatch.Job](t)(cw.Job("j"))
+	ran := false
+	value, err := cronwatch.RunValue(context.Background(), job, func(context.Context, *cronwatch.JobContext) (int, error) {
+		ran = true
+		return 42, nil
+	})
+	if !ran || err != nil || value != 42 {
+		t.Fatalf("ran %v, got %v, %v", ran, value, err)
+	}
+	boom := errors.New("boom")
+	if err := job.Run(context.Background(), func(context.Context, *cronwatch.JobContext) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("the job's own error: %v", err)
+	}
+	handle, err := job.Start(context.Background())
+	check(t, err)
+	// Nothing is recorded with the store down, and nothing panics either.
+	_ = handle.Finish(context.Background())
+	if reported.Load() == 0 {
+		t.Error("nothing was reported")
 	}
 }

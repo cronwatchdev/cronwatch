@@ -21,6 +21,7 @@ import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.Job;
@@ -367,6 +368,41 @@ class CronwatchQuartzTest {
       assertTrue(cw.runs("cronwatch.cronwatch-check", 5).isEmpty());
       assertTrue(errors.isEmpty(), errors.toString());
       q.close();
+    } finally {
+      scheduler.shutdown(true);
+    }
+  }
+
+  /**
+   * A node with no live watch fails the check job, so Quartz records that the check did not run,
+   * rather than a check that did nothing as a success.
+   */
+  @Test
+  void theCheckJobFailsOnANodeWithNoWatch() throws Exception {
+    Scheduler scheduler = Quartzes.ram();
+    java.util.concurrent.CompletableFuture<@Nullable JobExecutionException> outcome =
+        new java.util.concurrent.CompletableFuture<>();
+    try {
+      scheduler
+          .getListenerManager()
+          .addJobListener(
+              new org.quartz.listeners.JobListenerSupport() {
+                @Override
+                public String getName() {
+                  return "outcome";
+                }
+
+                @Override
+                public void jobWasExecuted(
+                    JobExecutionContext context, @Nullable JobExecutionException e) {
+                  outcome.complete(e);
+                }
+              });
+      CronwatchQuartz.scheduleCheck(scheduler);
+      scheduler.start();
+      JobExecutionException e = outcome.get(10, java.util.concurrent.TimeUnit.SECONDS);
+      assertNotNull(e, "the check job failed");
+      assertEquals(CronwatchCheckJob.NO_WATCH, e.getMessage());
     } finally {
       scheduler.shutdown(true);
     }

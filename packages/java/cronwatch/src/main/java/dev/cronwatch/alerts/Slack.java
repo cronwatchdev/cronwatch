@@ -57,7 +57,7 @@ public final class Slack implements Channel {
             + " *"
             + escape(alert.title())
             + "*"
-            + (url.isEmpty() ? "" : " (<" + url + "|open>)");
+            + (url.isEmpty() ? "" : " (<" + linkTarget(url) + "|open>)");
     String body = Js.head(codeBlockSafe(escape(alert.message())), 2900);
     List<Object> blocks = new ArrayList<>();
     blocks.add(section(title));
@@ -98,6 +98,14 @@ public final class Slack implements Channel {
   /** Slack's three control characters. Escaping < and > also stops <!channel> and links. */
   static String escape(String text) {
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+  }
+
+  /**
+   * A link's URL as Slack's {@code <url|text>} can hold it: {@code <}, {@code >}, and {@code |}
+   * percent-encoded, which ends neither the link nor its text.
+   */
+  static String linkTarget(String url) {
+    return url.replace("<", "%3C").replace(">", "%3E").replace("|", "%7C");
   }
 
   /** Breaks up ``` so text inside a code block cannot close it. */

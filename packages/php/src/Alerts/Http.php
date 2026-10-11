@@ -26,12 +26,21 @@ interface Http
     public const MAX_BODY = 1_048_576;
 
     /**
+     * The most of an error answer's body (one outside 2xx) an Http keeps
+     * (64 KiB), as the SDK's errorText() reads: far more than any secret
+     * plus the 200 characters a channel quotes, so a provider (or something
+     * posing as one) cannot make a send hold a body of any size.
+     */
+    public const ERROR_READ_MAX = 65_536;
+
+    /**
      * POSTs `body` with `headers` (lowercase names, values sent trimmed).
      * Returns the answer, whatever its status; throws RequestTimeout when no
      * answer came within `timeoutMs`, and anything else for a request that
      * could not be made (no such host, refused, TLS). An answer whose body
      * is still arriving at the deadline is returned with an empty body, as
-     * the SDK's channels treat a body they could not read.
+     * the SDK's channels treat a body they could not read. At most MAX_BODY
+     * bytes of a body are kept, and ERROR_READ_MAX of one outside 2xx.
      *
      * @param array<string, string> $headers
      */

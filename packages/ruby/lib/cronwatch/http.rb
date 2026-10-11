@@ -11,11 +11,12 @@ module Cronwatch
   # @api private
   module HTTP
     TIMEOUT = 10
-    # The most of an answer's body read (1 MiB): a channel reads 200
-    # characters of a refusal, and a hostile or broken endpoint could
-    # otherwise stream gigabytes into the worker within the deadline.
-    # Reading stops there. A 2xx answer's body is not read at all.
-    MAX_BODY = 1_048_576
+    # The most of an answer's body read (64 KiB, the SDK's ERROR_READ_MAX),
+    # far more than any secret plus the 200 characters of a refusal a channel
+    # keeps: a hostile or broken endpoint could otherwise stream gigabytes
+    # into the worker within the deadline. Reading stops there. A 2xx
+    # answer's body is not read at all.
+    MAX_BODY = 64 * 1024
 
     Response = Struct.new(:status, :body, keyword_init: true) do
       def ok? = status >= 200 && status < 300
@@ -38,8 +39,8 @@ module Cronwatch
       # Header values are sent with the whitespace around them trimmed, as
       # fetch trims them, so a credential read with a trailing newline still
       # sends. Past the deadline before an answer, raises HTTP::TimeoutError;
-      # past it while the body is still arriving, returns the answer with an
-      # empty body, as the SDK's channels treat a body they could not read.
+      # past it while the body is still arriving, returns the answer with
+      # what of the body had come, as the SDK's errorText keeps it.
       # A 2xx answer comes back with an empty body, unread, since no channel
       # needs it; any other with at most MAX_BODY bytes of it.
       def post(url, body, headers)
@@ -83,7 +84,7 @@ module Cronwatch
       private
 
       # The body, read in chunks until it ends or MAX_BODY bytes have come,
-      # whichever is first; "" when the deadline passes first.
+      # whichever is first; what had come when the deadline passes first.
       def read_body(conn, response, deadline)
         body = "".b
         conn.read_timeout = HTTP.remaining(deadline)
@@ -97,7 +98,7 @@ module Cronwatch
         end
         body
       rescue Net::ReadTimeout, TimeoutError
-        ""
+        body
       end
     end
 

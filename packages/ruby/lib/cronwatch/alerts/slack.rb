@@ -5,7 +5,9 @@ module Cronwatch
     # Sends alerts to a Slack channel through an incoming webhook.
     #
     #   Cronwatch::Alerts::Slack.new(webhook_url: ENV.fetch("SLACK_WEBHOOK_URL"),
-    #                                link: ->(alert) { "https://app.example.com/cronwatch/jobs/#{alert.job}" })
+    #                                link: ->(alert) { "https://app.example.com/cronwatch/jobs/#{ERB::Util.url_encode(alert.job)}" })
+    #
+    # Any `<`, `>`, or `|` in the link is percent-encoded, so it cannot end Slack's link early.
     class Slack
       EMOJI = {
         missed: ":hourglass_flowing_sand:", failed: ":x:", stuck: ":no_entry:", slow: ":turtle:",
@@ -26,7 +28,7 @@ module Cronwatch
 
       def call(alert)
         url = @link&.call(alert)
-        title = "#{EMOJI[alert.type]} *#{Slack.escape(alert.title)}*#{url && !url.empty? ? " (<#{url}|open>)" : ""}"
+        title = "#{EMOJI[alert.type]} *#{Slack.escape(alert.title)}*#{url && !url.empty? ? " (<#{Slack.link_target(url)}|open>)" : ""}"
         body = JS.head16(Slack.code_block_safe(Slack.escape(alert.message)), 2900)
         blocks = [
           { "type" => "section", "text" => { "type" => "mrkdwn", "text" => title } },
@@ -48,6 +50,12 @@ module Cronwatch
       # Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>.
       def self.escape(text)
         text.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;")
+      end
+
+      # A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|`
+      # percent-encoded, which ends neither the link nor its text.
+      def self.link_target(url)
+        url.gsub("<", "%3C").gsub(">", "%3E").gsub("|", "%7C")
       end
 
       # Breaks up ``` so text inside a code block cannot close it.

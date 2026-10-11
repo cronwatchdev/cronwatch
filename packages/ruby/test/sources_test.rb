@@ -48,6 +48,26 @@ class SourcesTest < Minitest::Test
     assert_equal [:failed], capture.types
   end
 
+  # A run seen only once it is over closes missed only when its start covers
+  # the fire missed opened for: 10:58 is too early for 11:00, 10:59 is within
+  # the minute of slack.
+  def test_a_run_reported_at_its_finish_closes_missed_only_when_its_start_covers_the_fire
+    client, clock, capture = make
+    client.job("db-job", schedule: "0 * * * *", timezone: "UTC", grace: "10m")
+    ten = Time.utc(2026, 1, 5, 10).to_i * 1000
+    clock.now = ten + 1000
+    client.record_run(outside("r0", :ok, ten, finished_at: ten + 1000))
+    clock.now = ten + (75 * MIN)
+    assert_equal [:missed], client.check.alerts.map(&:type)
+    clock.now = ten + (88 * MIN)
+    assert_equal [], client.record_run(outside("r1", :ok, ten + (58 * MIN), finished_at: clock.now))
+    assert_includes client.job_summary("db-job").open.map(&:to_sym), :missed, "a start before the fire leaves it open"
+    clock.now = ten + (89 * MIN)
+    assert_equal [:recovered], client.record_run(outside("r2", :ok, ten + (59 * MIN), finished_at: clock.now)).map(&:type)
+    assert_empty client.job_summary("db-job").open
+    assert_equal %i[missed recovered], capture.types
+  end
+
   def test_evaluate_false_stores_without_judging
     client, _clock, capture = make
     client.job("db-job")

@@ -226,6 +226,25 @@ def test_the_wsgi_adapter_answers_a_server_and_hands_the_function_a_request() ->
     assert head.body == b""
 
 
+def test_the_wsgi_adapter_answers_a_bad_content_length_400_without_running_the_job() -> None:
+    errors = Errors()
+    cw, _, _ = make(cron_secret="s3cret", on_error=errors)
+    ran: list[str] = []
+    for cron in (cw.job("w").handler(lambda ctx, request: ran.append("sync")), cw.job("a").handler(_async_append(ran))):
+        res = send(cron.wsgi, "POST", "/api/cron/w", headers={"authorization": "Bearer s3cret", "content-length": "ten"})
+        assert (res.status, res.json()) == (400, {"ok": False, "error": "Bad request"})
+    assert ran == []
+    assert errors.items == []
+    assert cw.runs("w") == [] and cw.runs("a") == []
+
+
+def _async_append(ran: list[str]) -> Any:
+    async def fn(ctx: Any, request: Any) -> None:
+        ran.append("async")
+
+    return fn
+
+
 def asgi_call(app: Any, path: str, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
     sent: list[dict[str, Any]] = []
 

@@ -204,7 +204,7 @@ end
  alerts: [
    {Cronwatch.Alerts.Slack,
     webhook_url: System.fetch_env!("SLACK_WEBHOOK_URL"),
-    link: fn alert -> "https://app.example.com/cronwatch/jobs/#{alert.job}" end},
+    link: fn alert -> "https://app.example.com/cronwatch/jobs/#{URI.encode_www_form_component(alert.job)}" end},
    {Cronwatch.Alerts.Discord, webhook_url: System.fetch_env!("DISCORD_WEBHOOK_URL")},
    {Cronwatch.Alerts.Webhook,
     url: "https://hooks.example.com/cronwatch",
@@ -250,14 +250,18 @@ email = [from: "CronWatch <alerts@example.com>", to: ["ops@example.com"]]
 
 The options are the SDK's in snake_case: `subject_prefix` and `link` among the email options; `message_stream` (Postmark); `region` (`"eu"` for SendGrid, Mailgun, and New Relic, the AWS region for SES); `session_token` and `configuration_set_name` (SES); `api_key_sid`, `api_key_secret`, `messaging_service_sid`, and `segments` (Twilio, 1 to 10, default 3); `environment` (Sentry, Honeybadger, and Rollbar, `"production"` by default); `release` (Sentry); `headers` (the webhook, extra request headers as `{name, value}` pairs, in the order sent); `endpoint` (Honeybadger, Bugsnag); `host` (Datadog); `release_stage` (Bugsnag); `event_type` (New Relic); and `recovered` and `link` wherever the SDK has them, with the SDK's defaults (`recovered: false` leaves a Sentry or Rollbar channel's recoveries out). No channel's options print a credential with `inspect`, so a crash report or an `IO.inspect` of your config does not leak one.
 
-Each sends exactly the request the SDK's does: the same URL, headers, and body, byte for byte (the package's tests replay the SDK's recorded requests), with the same idempotency key, event id, or UUID for one alert, so a provider that deduplicates drops a resend whichever language sent it. SES is signed with SigV4, with no AWS SDK. Each request has one ten second deadline for connecting, sending, and reading the answer, reads at most 1 MiB of it, follows no redirect (so credentials never reach another address), always verifies TLS against the system's roots, and reads no proxy from the environment. A refused request names only the URL's origin, never its path, with the channel's keys cut out. `transport:` on a channel, triage, or the instance takes a `Cronwatch.Transport` of your own, for your Finch pool, a proxy, or Req's retries; the behaviour's docs have one over Req in a dozen lines. [Alerts](/docs/alerts/#email-sms-and-error-trackers) describes what each one sends.
+Each sends exactly the request the SDK's does: the same URL, headers, and body, byte for byte (the package's tests replay the SDK's recorded requests), with the same idempotency key, event id, or UUID for one alert, so a provider that deduplicates drops a resend whichever language sent it. SES is signed with SigV4, with no AWS SDK. Each request has one ten second deadline for connecting, sending, and reading the answer, reads at most 1 MiB of it (64 KiB of an error), follows no redirect (so credentials never reach another address), always verifies TLS against the system's roots, and reads no proxy from the environment. A refused request names only the URL's origin, never its path, with the channel's keys cut out. `transport:` on a channel, triage, or the instance takes a `Cronwatch.Transport` of your own, for your Finch pool, a proxy, or Req's retries; the behaviour's docs have one over Req in a dozen lines. [Alerts](/docs/alerts/#email-sms-and-error-trackers) describes what each one sends.
 
-A webhook posts the [alert payload](/docs/alerts/#the-alert-payload) with `"schema": 1` as its first field, the same bytes every port sends; its JSON Schema is [cronwatch.dev/schemas/webhook/1.json](/schemas/webhook/1.json). A receiver reads the fields, not `title` and `message`, whose wording is not promised. The webhook signs its body with `X-CronWatch-Signature: sha256=<hex>`. `Cronwatch.Alerts.Webhook.signature(secret, body)` is that hex, for a receiver in Elixir, over the raw body as it arrived:
+A webhook posts the [alert payload](/docs/alerts/#the-alert-payload) with `"schema": 1` as its first field, the same bytes every port sends; its JSON Schema is [cronwatch.dev/schemas/webhook/1.json](/schemas/webhook/1.json). A receiver reads the fields, not `title` and `message`, whose wording is not promised. With a `secret:` the webhook signs each request: `X-CronWatch-Signature: sha256=<hex>` signs the raw body alone, as it always has, and `X-CronWatch-Timestamp: <unix seconds>` with `X-CronWatch-Timestamp-Signature: sha256=<hex>` signs `<timestamp>.<raw body>`, so a receiver that checks the second and refuses a timestamp more than five minutes from its own clock cannot be sent a captured alert again later. Headers given in `headers:` match the defaults without regard to case, and never replace the signature headers. `Cronwatch.Alerts.Webhook.signature(secret, text)` is the hex, for a receiver in Elixir, over the raw body as it arrived:
 
 ```elixir
-expected = "sha256=" <> Cronwatch.Alerts.Webhook.signature(secret, raw_body)
-received = conn |> Plug.Conn.get_req_header("x-cronwatch-signature") |> List.first("")
-ok? = Plug.Crypto.secure_compare(received, expected)
+header = &(conn |> Plug.Conn.get_req_header(&1) |> List.first(""))
+timestamp = header.("x-cronwatch-timestamp")
+expected = "sha256=" <> Cronwatch.Alerts.Webhook.signature(secret, timestamp <> "." <> raw_body)
+
+now = System.os_time(:second)
+fresh? = match?({t, ""} when abs(t - now) <= 300, Integer.parse(timestamp))
+ok? = fresh? and Plug.Crypto.secure_compare(header.("x-cronwatch-timestamp-signature"), expected)
 ```
 
 `Plug.Crypto.secure_compare/2` answers false for two strings of different lengths, so a request with no signature is refused rather than crashing the plug.

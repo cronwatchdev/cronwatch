@@ -20,7 +20,7 @@ defmodule Cronwatch.Transport do
   The deadline and the answer's cap are not the transport's to enforce:
   the channel's request runs `c:post/2` and reads the body in a process
   of its own, which it kills past the deadline, and reads at most 1 MiB of
-  the body. A body can be a binary, or a function of no arguments called
+  a successful answer's body and 64 KiB of any other. A body can be a binary, or a function of no arguments called
   in that same process for each chunk in turn (`{:ok, chunk}`, `:done`, or
   `{:error, reason}`), so a transport that streams is held to the cap as
   the body arrives. Its errors are rewritten so they name only the URL's

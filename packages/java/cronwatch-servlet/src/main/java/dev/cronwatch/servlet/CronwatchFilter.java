@@ -1,5 +1,6 @@
 package dev.cronwatch.servlet;
 
+import dev.cronwatch.web.Adapters;
 import dev.cronwatch.web.Endpoint;
 import dev.cronwatch.web.Routes;
 import jakarta.servlet.Filter;
@@ -15,6 +16,8 @@ import java.util.Objects;
 /**
  * The dashboard as a Jakarta Servlet {@link Filter}: it answers the requests under its path (by
  * default {@code /cronwatch}, within the web app's context) and passes every other one down the
+ * chain. Whether a request is under its path is decided on the path with its dot segments resolved,
+ * as the routes decide it, so {@code /cronwatchx} and {@code /cronwatch/../api/jobs} go down the
  * chain. A filter rather than a servlet, so it can sit ahead of the app's own servlets and security
  * (Spring Security's filter chain included, when it is ordered ahead of it).
  *
@@ -68,9 +71,8 @@ public final class CronwatchFilter implements Filter {
       return;
     }
     String context = req.getContextPath() == null ? "" : req.getContextPath();
-    String uri = req.getRequestURI();
-    String within = uri.startsWith(context) ? uri.substring(context.length()) : uri;
-    if (!path.isEmpty() && !within.equals(path) && !within.startsWith(path + "/")) {
+    // The path as the routes read it, dot segments resolved: /cronwatch/../api/jobs is not ours.
+    if (!path.isEmpty() && !Adapters.under(req.getRequestURI(), context + path)) {
       chain.doFilter(request, response);
       return;
     }

@@ -109,9 +109,10 @@ defmodule Cronwatch.Web.Timeline do
 
   # When the job was due within from to to, ascending, and whether they are
   # too many to draw one by one. A cron's fires come from its schedule. An
-  # interval is due one period after each run started, and after the last
-  # run once a period for as long as nothing runs; with no run yet, from its
-  # next expected time.
+  # interval is due one period after each run started (after it finished,
+  # for a run that outlasted the period: Schedule.interval_due/3), and after
+  # the last run once a period for as long as nothing runs; with no run yet,
+  # from its next expected time.
   defp due_times(_job, nil, _runs, _from, _to), do: {[], false}
 
   defp due_times(job, %Schedule{kind: "interval", every_ms: every}, runs, from, to) do
@@ -123,14 +124,13 @@ defmodule Cronwatch.Web.Timeline do
         {[], true}
 
       true ->
-        starts = runs |> Enum.map(& &1.started_at) |> Enum.sort()
-        set = starts |> Enum.map(&(&1 + every)) |> Enum.filter(&(&1 >= from and &1 <= to)) |> MapSet.new()
+        dues =
+          runs
+          |> Enum.sort_by(& &1.started_at)
+          |> Enum.map(&Schedule.interval_due(every, &1.started_at, Evaluate.finished_at_of(&1)))
 
-        next =
-          case List.last(starts) do
-            nil -> job.next_expected_at
-            s -> s + every
-          end
+        set = dues |> Enum.filter(&(&1 >= from and &1 <= to)) |> MapSet.new()
+        next = List.last(dues) || job.next_expected_at
 
         set =
           if next do
@@ -169,8 +169,8 @@ defmodule Cronwatch.Web.Timeline do
       grace = grace(job)
 
       case job.last_run do
-        %{started_at: last} ->
-          case Schedule.expectation(parsed, last, last, grace) do
+        %{started_at: last} = run ->
+          case Schedule.expectation(parsed, last, last, grace, Evaluate.finished_at_of(run)) do
             %{due_at: due} -> due
             nil -> nil
           end

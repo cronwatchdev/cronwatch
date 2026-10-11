@@ -422,25 +422,55 @@ module Cronwatch
       negative ? "-#{text}" : text
     end
 
-    # Called when a run starts. Missed and stuck are about the absence of a run,
-    # so a run starting closes them without an alert; the recovered message
-    # waits for a successful finish.
-    def on_run_start(state)
+    # When a run finished, or nil while it runs (a run marked timeout has finished).
+    def finished_at_of(run)
+      run.status != :running && run.finished_at.is_a?(Numeric) ? run.finished_at : nil
+    end
+
+    # Whether `run` brings the schedule up to date at `now`, so missed may
+    # close for it: judged with it as the job's last run, as on_check judges,
+    # the run the schedule wants next is not yet past its deadline. A run that
+    # started before the fire missed opened for does not cover that fire,
+    # however late it finishes, and neither does a run a source reports only
+    # once it is over whose start was before it. Every run starting now
+    # covers it. A job with no schedule, or one that no longer parses, has
+    # nothing due, so any run does.
+    def catches_up?(definition, run, now)
+      schedule = definition.schedule
+      return true if schedule.nil? || schedule == ""
+
+      begin
+        exp = Schedule.expectation(Schedule.parse(schedule, definition.timezone), run.started_at, run.started_at,
+                                   grace_ms(definition), finished_at_of(run))
+        exp.nil? || now <= exp.deadline
+      rescue StandardError
+        true
+      end
+    end
+
+    # Called when a run starts, or when a run a source reports is recorded.
+    # Missed and stuck are about the absence of a run, so a run starting
+    # closes them without an alert; the recovered message waits for a
+    # successful finish. Missed closes only when the run catches the schedule
+    # up (catches_up?), which a run starting now always does.
+    def on_run_start(definition, run, state, now)
       next_state = clone_state(state)
-      close_condition(next_state, :missed)
+      close_condition(next_state, :missed) if catches_up?(definition, run, now)
       close_condition(next_state, :stuck)
       next_state
     end
 
     # Called when a run finishes with status ok, failed, or timeout. `history` is
-    # the job's earlier runs, newest first, not including this one.
+    # the job's earlier runs, newest first, not including this one. Missed
+    # closes only when the run catches the schedule up (catches_up?): a run
+    # that started before the fire missed opened for leaves it open.
     def on_run_finish(definition, run, state, history, now)
       next_state = clone_state(state)
       alerts = []
 
       if run.status == :ok
         next_state.consecutive_failures = 0
-        close_condition(next_state, :missed)
+        close_condition(next_state, :missed) if catches_up?(definition, run, now)
         close_condition(next_state, :stuck)
         close_condition(next_state, :failed)
 
@@ -481,7 +511,7 @@ module Cronwatch
       # failed or timeout
       # Held at the top, as the SDK holds it: a count at the limit stays there.
       next_state.consecutive_failures = [next_state.consecutive_failures + 1, MAX_DURATION_MS].min
-      close_condition(next_state, :missed)
+      close_condition(next_state, :missed) if catches_up?(definition, run, now)
       threshold = [1, definition.failures_before_alert || 1].max
       condition = run.status == :timeout ? :stuck : :failed
       if next_state.consecutive_failures >= threshold && open_condition(next_state, condition, now)
@@ -518,15 +548,14 @@ module Cronwatch
       parsed = Schedule.parse(schedule, definition.timezone)
       grace = grace_ms(definition)
       last_run_at = last_run&.started_at
-      exp = Schedule.expectation(parsed, last_run_at, stored.created_at, grace)
-      next_expected_at =
-        if parsed.interval? then Schedule.next_fire(parsed, stored.created_at, last_run_at)
-        else Schedule.next_fire(parsed, now, nil)
-        end
+      exp = Schedule.expectation(parsed, last_run_at, stored.created_at, grace, last_run && finished_at_of(last_run))
+      next_expected_at = parsed.interval? ? exp.due_at : Schedule.next_fire(parsed, now, nil)
       return CheckEvaluation.new(state: next_state, alerts: alerts, next_expected_at: next_expected_at, due_at: nil) unless exp
 
-      # An interval's next run is due a period after the last one started. If that
-      # run is still going, the job is busy, not late; stuck covers one that never ends.
+      # An interval's next run is due a period after the last one started, or
+      # after it finished when it outlasted the period (Schedule.interval_due).
+      # If that run is still going, the job is busy, not late; stuck covers one
+      # that never ends.
       if parsed.interval? && last_run&.status == :running
         return CheckEvaluation.new(state: next_state, alerts: alerts, next_expected_at: next_expected_at, due_at: exp.due_at)
       end

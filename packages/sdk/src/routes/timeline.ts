@@ -13,9 +13,9 @@
  * Every time is UTC: without script the page cannot know the viewer's zone.
  */
 import { FIRST_DATE_MS, LAST_DATE_MS, formatDuration } from "../duration.js";
-import { graceMs, isStuck, timeoutMs } from "../evaluate.js";
+import { finishedAtOf, graceMs, isStuck, timeoutMs } from "../evaluate.js";
 import { andList } from "../format.js";
-import { expectation, firesBetween, parseSchedule, type ParsedSchedule } from "../schedule.js";
+import { expectation, firesBetween, intervalDue, parseSchedule, type ParsedSchedule } from "../schedule.js";
 import type { JobSummary, Run } from "../types.js";
 import { escapeHtml as h, escapeName } from "./escape.js";
 
@@ -109,7 +109,8 @@ export interface DueTimes {
 
 /**
  * When the job was due within `from` to `to`. A cron's fires come from
- * nextFire. An interval is due one period after each run started, and after
+ * nextFire. An interval is due one period after each run started (after it
+ * finished, for a run that outlasted the period: intervalDue), and after
  * the last run once a period for as long as nothing runs (the times a
  * missed interval job keeps being asked for); with no run yet, from its
  * next expected time.
@@ -119,13 +120,13 @@ export function dueTimes(job: JobSummary, parsed: ParsedSchedule | null, runs: R
   if (parsed.kind === "interval") {
     const every = parsed.everyMs!;
     if ((to - from) / every > MAX_TICKS) return { times: [], dense: true };
-    const starts = runs.map((r) => r.startedAt).sort((a, b) => a - b);
+    const ordered = [...runs].sort((a, b) => a.startedAt - b.startedAt);
+    const dues = ordered.map((r) => intervalDue(every, r.startedAt, finishedAtOf(r)));
     const times = new Set<number>();
-    for (const start of starts) {
-      const t = start + every;
+    for (const t of dues) {
       if (t >= from && t <= to) times.add(t);
     }
-    let t = starts.length ? starts[starts.length - 1]! + every : job.nextExpectedAt;
+    let t = dues.length ? dues[dues.length - 1]! : job.nextExpectedAt;
     if (t !== null) {
       if (t < from) t += Math.ceil((from - t) / every) * every;
       for (; t <= to; t += every) times.add(t);
@@ -145,8 +146,8 @@ export function dueTimes(job: JobSummary, parsed: ParsedSchedule | null, runs: R
 export function missedAt(job: JobSummary, parsed: ParsedSchedule | null, times: number[], now: number): number | null {
   if (!parsed || !job.open.includes("missed")) return null;
   const grace = safely(() => graceMs(job.definition), 0);
-  const last = job.lastRun?.startedAt ?? null;
-  if (last !== null) return safely(() => expectation(parsed, last, last, grace)?.dueAt ?? null, null);
+  const lastRun = job.lastRun;
+  if (lastRun) return safely(() => expectation(parsed, lastRun.startedAt, lastRun.startedAt, grace, finishedAtOf(lastRun))?.dueAt ?? null, null);
   const past = times.filter((t) => t + grace < now);
   return past.length ? past[past.length - 1]! : null;
 }

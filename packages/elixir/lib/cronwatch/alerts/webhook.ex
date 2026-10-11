@@ -22,12 +22,22 @@ defmodule Cronwatch.Alerts.Webhook do
       A redirect is an error: point the URL at where the receiver really is.
     * `:headers`: extra request headers, a list of `{name, value}` pairs in
       the order they are sent (a map is sent in its keys' order). Values
-      are trimmed of the spaces and newlines a paste leaves.
-    * `:secret`: when set, each request carries `x-cronwatch-signature:
-      sha256=<hex>`, the HMAC-SHA256 of the raw body with this secret, so
-      the receiver can verify it (see `signature/2`). An empty string (an
-      unset variable read as `""`, say) signs nothing, and each send reports
-      that to the instance's error handler.
+      are trimmed of the spaces and newlines a paste leaves. A name is
+      matched without regard to case, so a `Content-Type` given here
+      replaces the default one rather than going beside it; the signature
+      headers are always the channel's own.
+    * `:secret`: when set, each request is signed with this secret
+      (HMAC-SHA256, as lowercase hex), so the receiver can verify it (see
+      `signature/2`). `x-cronwatch-signature: sha256=<hex>` signs the raw
+      body alone, as it always has. `x-cronwatch-timestamp: <unix seconds>`
+      is when it was sent, and `x-cronwatch-timestamp-signature:
+      sha256=<hex>` signs `<timestamp>.<raw body>`, so a receiver that
+      checks this one (in constant time) and refuses a timestamp more than
+      five minutes from its own clock cannot be sent a captured alert again
+      later. An empty string (an unset variable read as `""`, say) signs
+      nothing, and each send reports that to the instance's error handler.
+    * `:now`: the clock the timestamp is read from, a function of no
+      arguments answering epoch milliseconds; the system clock by default.
     * `:transport`: a `Cronwatch.Transport` for the request, else the
       instance's, else `Cronwatch.Transport.HTTP`.
   """
@@ -36,6 +46,7 @@ defmodule Cronwatch.Alerts.Webhook do
 
   alias Cronwatch.Alert
   alias Cronwatch.Alerts.Post
+  alias Cronwatch.Alerts.Provider
   alias Cronwatch.Alerts.Shared
   alias Cronwatch.ChannelContext
   alias Cronwatch.JS
@@ -43,24 +54,26 @@ defmodule Cronwatch.Alerts.Webhook do
   @empty_secret "webhook: secret is an empty string, so this request is sent unsigned; " <>
                   "set the secret, or leave it out to send unsigned on purpose"
 
-  @derive {Inspect, except: [:url, :headers, :secret, :transport]}
-  defstruct [:url, headers: [], secret: nil, transport: nil]
+  @derive {Inspect, except: [:url, :headers, :secret, :transport, :now]}
+  defstruct [:url, headers: [], secret: nil, transport: nil, now: nil]
 
   @type t :: %__MODULE__{
           url: String.t(),
           headers: [{String.t(), String.t()}],
           secret: String.t() | nil,
-          transport: term()
+          transport: term(),
+          now: (-> integer()) | nil
         }
 
   @impl true
   def init(opts) do
-    with {:ok, o} <- Shared.options(opts, __MODULE__, [:url, :headers, :secret, :transport]),
+    with {:ok, o} <- Shared.options(opts, __MODULE__, [:url, :headers, :secret, :transport, :now]),
          :ok <- Shared.required(o, :url, __MODULE__),
          {:ok, headers} <- headers(Map.get(o, :headers)),
          {:ok, secret} <- secret(Map.get(o, :secret)),
+         {:ok, now} <- Provider.clock(__MODULE__, Map.to_list(o)),
          :ok <- Cronwatch.Transport.check(o[:transport], inspect(__MODULE__)) do
-      {:ok, %__MODULE__{url: o.url, headers: headers, secret: secret, transport: o[:transport]}}
+      {:ok, %__MODULE__{url: o.url, headers: headers, secret: secret, transport: o[:transport], now: now}}
     end
   end
 
@@ -103,7 +116,8 @@ defmodule Cronwatch.Alerts.Webhook do
   The webhook's signature of a body: the HMAC-SHA256 of the body with the
   secret, as lowercase hex. The request carries it as
   `x-cronwatch-signature: sha256=<signature>`; a receiver compares it in
-  constant time.
+  constant time. The timestamped one is the signature of
+  `<timestamp>.<body>`, with the `x-cronwatch-timestamp` value as sent.
   """
   @spec signature(String.t(), String.t()) :: String.t()
   def signature(secret, body), do: Shared.hex(Shared.hmac_sha256(secret, body))
@@ -115,16 +129,13 @@ defmodule Cronwatch.Alerts.Webhook do
 
     # A pasted Authorization value often carries a stray space or newline,
     # which fetch would refuse.
-    headers = Enum.reduce(o.headers, headers, fn {n, v}, acc -> assign(acc, n, JS.trim(v)) end)
+    headers = Enum.reduce(o.headers, headers, fn {n, v}, acc -> set_header(acc, n, JS.trim(v)) end)
 
     # An empty secret (an unset variable read as "", say) signs nothing, and
     # says so on every send rather than fail it.
     if o.secret == "" and ctx != nil, do: ChannelContext.report(ctx, Cronwatch.Error.other(@empty_secret))
 
-    headers =
-      if o.secret in [nil, ""],
-        do: headers,
-        else: assign(headers, "x-cronwatch-signature", "sha256=" <> signature(o.secret, body))
+    headers = if o.secret in [nil, ""], do: headers, else: sign(headers, o, body)
 
     transport = o.transport || (ctx && ctx.transport)
 
@@ -138,11 +149,19 @@ defmodule Cronwatch.Alerts.Webhook do
     end
   end
 
-  # Sets a header as a JavaScript object's key is set: an exact name already
-  # there takes the new value in its place, a new one goes last.
-  defp assign(headers, name, value) do
-    if List.keymember?(headers, name, 0),
-      do: List.keyreplace(headers, name, 0, {name, value}),
-      else: headers ++ [{name, value}]
+  defp sign(headers, o, body) do
+    timestamp = Integer.to_string(Integer.floor_div(Provider.now(o.now), 1000))
+
+    headers
+    |> set_header("x-cronwatch-signature", "sha256=" <> signature(o.secret, body))
+    |> set_header("x-cronwatch-timestamp", timestamp)
+    |> set_header("x-cronwatch-timestamp-signature", "sha256=" <> signature(o.secret, timestamp <> "." <> body))
+  end
+
+  # Sets a header, first taking out any of the same name in another case:
+  # the name goes last, in the caller's spelling.
+  defp set_header(headers, name, value) do
+    lower = String.downcase(name)
+    Enum.reject(headers, fn {n, _} -> String.downcase(n) == lower end) ++ [{name, value}]
   end
 end

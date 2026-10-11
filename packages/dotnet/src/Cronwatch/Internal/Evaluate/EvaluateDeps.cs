@@ -47,9 +47,10 @@ internal static class EvaluateDeps
     public static bool IsInterval(ParsedSchedule parsed) => parsed.IsInterval;
 
     /// <summary><c>expectation</c>.</summary>
-    public static (long DueAt, double Deadline)? Expectation(ParsedSchedule parsed, long? lastRunAt, long createdAt, double graceMs)
+    public static (long DueAt, double Deadline)? Expectation(
+        ParsedSchedule parsed, long? lastRunAt, long createdAt, double graceMs, long? lastFinishedAt = null)
     {
-        var e = Schedules.GetExpectation(parsed, lastRunAt, createdAt, graceMs);
+        var e = Schedules.GetExpectation(parsed, lastRunAt, createdAt, graceMs, lastFinishedAt);
         return e is { } x ? (x.DueAt, x.Deadline) : null;
     }
 

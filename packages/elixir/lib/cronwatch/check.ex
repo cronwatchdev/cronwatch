@@ -433,7 +433,10 @@ defmodule Cronwatch.Check do
 
           :inserted ->
             if evaluate? do
-              Core.update_state!(c, run.job, fn before -> {Evaluate.start_run(before, run.id), nil} end)
+              Core.update_state!(c, run.job, fn before ->
+                {Evaluate.start_run(definition, run, before, Core.now(c)), nil}
+              end)
+
               if run.status == "running", do: [], else: Core.finish_run(c, definition, run, Core.now(c))
             else
               []

@@ -22,20 +22,33 @@ public sealed class WebhookOptions
     /// <summary>
     /// Extra request headers, an <c>authorization</c> header say, as name and value pairs sent in
     /// the order given; a name given again keeps its place and takes the new value. Values are
-    /// trimmed of the spaces and newlines a paste leaves. <c>host</c>, <c>content-length</c>,
+    /// trimmed of the spaces and newlines a paste leaves. A name is matched without regard to
+    /// case, so a <c>Content-Type</c> given here replaces the default one rather than going beside
+    /// it; the signature headers are always the channel's own. <c>host</c>, <c>content-length</c>,
     /// <c>connection</c>, <c>expect</c>, <c>upgrade</c>, and <c>transfer-encoding</c> are set by
     /// the default transport itself, which drops them.
     /// </summary>
     public IEnumerable<KeyValuePair<string, string>>? Headers { internal get; init; }
 
     /// <summary>
-    /// When set, each request carries <c>x-cronwatch-signature: sha256=&lt;hex&gt;</c>, the
-    /// HMAC-SHA256 of the raw body with this secret, so the receiver can verify it
-    /// (<see cref="WebhookChannel.Signature"/>). An empty string (an unset variable read as
-    /// <c>""</c>, say) signs nothing, and each send reports that through the channel's
-    /// <see cref="ChannelContext.ReportError(string)"/>.
+    /// When set, each request is signed with this secret (HMAC-SHA256, as lowercase hex), so the
+    /// receiver can verify it (<see cref="WebhookChannel.Signature"/>):
+    /// <list type="bullet">
+    /// <item><c>x-cronwatch-signature: sha256=&lt;hex&gt;</c> signs the raw body alone, as it
+    /// always has.</item>
+    /// <item><c>x-cronwatch-timestamp: &lt;unix seconds&gt;</c> is when it was sent, and
+    /// <c>x-cronwatch-timestamp-signature: sha256=&lt;hex&gt;</c> signs
+    /// <c>&lt;timestamp&gt;.&lt;raw body&gt;</c>, so a receiver that checks this one with a
+    /// constant-time compare and refuses a timestamp more than five minutes from its own clock
+    /// cannot be sent a captured alert again later.</item>
+    /// </list>
+    /// An empty string (an unset variable read as <c>""</c>, say) signs nothing, and each send
+    /// reports that through the channel's <see cref="ChannelContext.ReportError(string)"/>.
     /// </summary>
     public string? Secret { internal get; init; }
+
+    /// <summary>The clock the <c>x-cronwatch-timestamp</c> header's time comes from. Default <see cref="TimeProvider.System"/>.</summary>
+    public TimeProvider? Clock { get; init; }
 
     /// <summary>Sends this channel's requests; by default the client's transport.</summary>
     public ITransport? Transport { get; init; }
@@ -65,6 +78,7 @@ public sealed class WebhookChannel : IChannel
     private readonly string _secret;
     private readonly bool _emptySecret;
     private readonly ITransport? _transport;
+    private readonly TimeProvider _clock;
 
     /// <summary>The channel.</summary>
     /// <exception cref="CronwatchException">Without a URL.</exception>
@@ -80,11 +94,15 @@ public sealed class WebhookChannel : IChannel
         _secret = options.Secret ?? "";
         _emptySecret = options.Secret is { Length: 0 };
         _transport = options.Transport;
+        _clock = options.Clock ?? TimeProvider.System;
     }
 
     /// <summary>
     /// The webhook's signature of a body: the HMAC-SHA256 of the body with the secret, as
-    /// lowercase hex. The request carries it as <c>x-cronwatch-signature: sha256=&lt;signature&gt;</c>.
+    /// lowercase hex. The request carries it as <c>x-cronwatch-signature: sha256=&lt;signature&gt;</c>,
+    /// so a receiver checks one with the raw body it got (before any JSON parsing) and a
+    /// constant-time compare. The timestamped one is the signature of
+    /// <c>&lt;timestamp&gt;.&lt;body&gt;</c>, with the <c>x-cronwatch-timestamp</c> value as sent.
     /// </summary>
     public static string Signature(string secret, string body)
     {
@@ -112,16 +130,24 @@ public sealed class WebhookChannel : IChannel
             context.ReportError("webhook: secret is an empty string, so this request is sent unsigned; set the secret, or leave it out to send unsigned on purpose");
         }
         // A JavaScript object's keys: an exact name given again keeps its place.
-        var headers = new JsObject().Set("content-type", "application/json").Set("user-agent", "cronwatch");
+        var given = new JsObject();
         foreach (var h in _headers)
         {
             // A pasted Authorization value often carries a stray space or newline, which fetch
             // would refuse.
-            headers.Set(h.Key, Js.Trim(h.Value ?? ""));
+            given.Set(h.Key, Js.Trim(h.Value ?? ""));
+        }
+        var headers = new JsObject().Set("content-type", "application/json").Set("user-agent", "cronwatch");
+        foreach (var h in given)
+        {
+            SetHeader(headers, h.Key, (string)h.Value!);
         }
         if (_secret.Length > 0)
         {
-            headers.Set("x-cronwatch-signature", "sha256=" + Signature(_secret, body));
+            string timestamp = Js.FloorDiv(_clock.GetUtcNow().ToUnixTimeMilliseconds(), 1000).ToString(CultureInfo.InvariantCulture);
+            SetHeader(headers, "x-cronwatch-signature", "sha256=" + Signature(_secret, body));
+            SetHeader(headers, "x-cronwatch-timestamp", timestamp);
+            SetHeader(headers, "x-cronwatch-timestamp-signature", "sha256=" + Signature(_secret, timestamp + "." + body));
         }
         var list = new List<KeyValuePair<string, string>>();
         foreach (var e in headers)
@@ -135,6 +161,19 @@ public sealed class WebhookChannel : IChannel
             // Only the origin: a webhook URL's path or query often is the credential.
             throw Post.Fail("Webhook " + Post.Origin(_url) + " answered " + answer.Status.ToString(CultureInfo.InvariantCulture));
         }
+    }
+
+    /// <summary>Sets a header, first taking out any of the same name in another case.</summary>
+    private static void SetHeader(JsObject headers, string name, string value)
+    {
+        foreach (string key in headers.Select(e => e.Key).ToList())
+        {
+            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
+            {
+                headers.Remove(key);
+            }
+        }
+        headers.Set(name, value);
     }
 
     /// <summary>Names the channel.</summary>

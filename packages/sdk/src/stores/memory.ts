@@ -7,7 +7,7 @@ import type { JobState, Run, Store, StoredJob, StoredJobDefinition } from "../ty
  * good for tests and for trying the library out. State is gone on restart,
  * so a missed run cannot be noticed across one.
  */
-export function memory(): Store {
+export function memory(): Store & Required<Pick<Store, "lastRun">> {
   const jobs = new Map<string, StoredJob>();
   const runs = new Map<string, Run>();
   const order = new Map<string, number>();

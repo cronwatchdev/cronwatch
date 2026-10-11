@@ -135,7 +135,16 @@ class ConformanceTest < Minitest::Test
   def test_schedule_expectation
     each_case(SCHEDULE["expectation"]) do |c|
       parsed = Cronwatch::Schedule.parse(c["schedule"], c["timezone"])
-      differs(c["expected"], Cronwatch::Schedule.expectation(parsed, c["lastRunAt"], c["registeredAt"], c["graceMs"]))
+      differs(c["expected"], Cronwatch::Schedule.expectation(parsed, c["lastRunAt"], c["registeredAt"], c["graceMs"], c["lastFinishedAt"]))
+    end
+  end
+
+  # The dashboard timeline's fires: the same ones next_fire gives in turn, nil past the limit.
+  def test_schedule_fires_between
+    each_case(SCHEDULE["firesBetween"]) do |c|
+      parsed = Cronwatch::Schedule.parse(c["schedule"], c["timezone"])
+      iso = ->(fires) { fires&.map { |f| Cronwatch::JS.iso(f) } }
+      differs(iso.call(c["fires"]), iso.call(Cronwatch::Schedule.fires_between(parsed, c["from"], c["to"], c["limit"])))
     end
   end
 
@@ -170,11 +179,24 @@ class ConformanceTest < Minitest::Test
     end
 
     def start(id, now)
-      @runs << Cronwatch::Run.new(id: id, job: @def.name, status: :running, started_at: now, finished_at: nil, duration_ms: nil,
-                                  error: nil, output: nil, metrics: {}, trigger: "run")
+      run = Cronwatch::Run.new(id: id, job: @def.name, status: :running, started_at: now, finished_at: nil, duration_ms: nil,
+                               error: nil, output: nil, metrics: {}, trigger: "run")
+      @runs << run
       @order[id] = (@seq += 1)
-      @state = Cronwatch::Evaluate.on_run_start(@state)
+      @state = Cronwatch::Evaluate.on_run_start(@def, copy(run), @state, now)
       { "state" => @state }
+    end
+
+    # A run a source reports only once it is over (record_run): written
+    # finished, then on_run_start and on_run_finish at `now`, as the client does.
+    def record(id, started_at, now, fields)
+      run = Cronwatch::Run.new(id: id, job: @def.name, status: fields.fetch("status").to_sym, started_at: started_at, finished_at: now,
+                               duration_ms: [0, now - started_at].max, error: fields.fetch("error", nil), output: fields.fetch("output", nil),
+                               metrics: fields.fetch("metrics", {}), trigger: "source")
+      @runs << run
+      @order[id] = (@seq += 1)
+      @state = Cronwatch::Evaluate.on_run_start(@def, copy(run), @state, now)
+      { "alerts" => finish_run(run, now), "state" => @state }
     end
 
     def finish(id, now, fields)
@@ -255,6 +277,7 @@ class ConformanceTest < Minitest::Test
           case event["op"]
           when "start" then sim.start(event["id"], event["at"])
           when "finish" then sim.finish(event["id"], event["at"], event)
+          when "record" then sim.record(event["id"], event["startedAt"], event["at"], event)
           when "check" then sim.check(event["at"])
           when "silence" then { "state" => sim.silence(event["until"]) }
           when "unsilence" then { "state" => sim.silence(nil) }
@@ -655,7 +678,10 @@ class ConformanceTest < Minitest::Test
     case c["channel"]
     when "slack" then Cronwatch::Alerts::Slack.new(webhook_url: options["webhookUrl"], link: link, http: http)
     when "discord" then Cronwatch::Alerts::Discord.new(webhook_url: options["webhookUrl"], link: link, http: http)
-    when "webhook" then Cronwatch::Alerts::Webhook.new(url: options["url"], headers: options["headers"] || {}, secret: options["secret"], http: http)
+    when "webhook"
+      now = options["now"]
+      Cronwatch::Alerts::Webhook.new(url: options["url"], headers: options["headers"] || {}, secret: options["secret"],
+                                     now: now && -> { now }, http: http)
     else
       keywords = options.each_with_object({}) do |(key, value), out|
         case key
@@ -717,16 +743,30 @@ class ConformanceTest < Minitest::Test
     end
   end
 
-  # The webhook's body byte for byte, "schema": 1 first, and its signature.
+  # The webhook's body byte for byte, "schema": 1 first, and its two
+  # signatures, the clock fixed at the timestamp the SDK sent.
   def test_webhook_payloads
     each_case(CHANNELS["webhookPayloads"]) do |c|
       http = FakeHTTP.new
-      Cronwatch::Alerts::Webhook.new(url: "https://hooks.example.com/in", secret: c["secret"], http: http)
+      now = c["timestamp"].to_i * 1000
+      Cronwatch::Alerts::Webhook.new(url: "https://hooks.example.com/in", secret: c["secret"], now: -> { now }, http: http)
                                 .call(Cronwatch::Alert.from_h(CHANNEL_ALERTS.fetch(c["alert"])))
-      request = http.last
-      differs([c["body"], c["signature"]], [request["body"], request["headers"]["x-cronwatch-signature"]])
+      headers = http.last["headers"]
+      differs([c["body"], c["signature"], c["timestamp"], c["timestampSignature"]],
+              [http.last["body"], headers["x-cronwatch-signature"], headers["x-cronwatch-timestamp"], headers["x-cronwatch-timestamp-signature"]])
     end
-    assert_equal CHANNELS["alerts"].length, CHANNELS["webhookPayloads"].length
+    signed = CHANNELS["sends"].count { |c| c["channel"] == "webhook" && c["options"]["secret"] }
+    assert_equal signed, CHANNELS["webhookPayloads"].length
+  end
+
+  # Slack's "open" link with the characters that would end it percent-encoded.
+  def test_slack_links
+    each_case(CHANNELS["slackLinks"]) do |c|
+      http = FakeHTTP.new
+      Cronwatch::Alerts::Slack.new(webhook_url: "https://hooks.slack.example/T/B/secret", link: ->(_) { c["link"] }, http: http)
+                              .call(Cronwatch::Alert.from_h(CHANNELS["alerts"][0]["alert"]))
+      differs(c["text"], JSON.parse(http.last["body"])["blocks"][0]["text"]["text"])
+    end
   end
 
   def test_webhook_signature
@@ -734,6 +774,7 @@ class ConformanceTest < Minitest::Test
                  Cronwatch::Alerts::Webhook.signature("key", "The quick brown fox jumps over the lazy dog")
     CHANNELS["webhookPayloads"].each do |c|
       assert_equal c["signature"], "sha256=#{Cronwatch::Alerts::Webhook.signature(c["secret"], c["body"])}"
+      assert_equal c["timestampSignature"], "sha256=#{Cronwatch::Alerts::Webhook.signature(c["secret"], "#{c["timestamp"]}.#{c["body"]}")}"
     end
   end
 

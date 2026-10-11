@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Hangfire;
 using Hangfire.Common;
@@ -269,6 +270,62 @@ public class HangfireTests
         Assert.Equal("hangfire:billing:" + id + ":0", Assert.Single(await cw.RunsAsync("import")).Id);
         Assert.Empty(errors);
         Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task The_check_job_on_a_server_that_does_not_watch_hangfire_fails()
+    {
+        await using (var h = new Harness(start: false))
+        {
+            // Watching: the check runs.
+            await CronwatchCheckJob.RunAsync();
+        }
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => CronwatchCheckJob.RunAsync());
+        Assert.StartsWith("cronwatch: the check ran on a Hangfire server that does not watch Hangfire", e.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_store_that_does_not_answer_holds_a_worker_for_one_bounded_wait_and_the_run_is_recorded_once_it_does()
+    {
+        TestJobs.Seen.Clear();
+        var store = new Gated();
+        await using var h = new Harness(store: store, workers: 1, start: false);
+        h.Integration.StoreWait = TimeSpan.FromMilliseconds(200);
+        store.Hold();
+        h.StartServer();
+        h.Client.Enqueue(() => TestJobs.Import());
+        h.Client.Enqueue(() => TestJobs.Look("after"));
+        // The one worker went on past the store to the next job.
+        await Eventually("the next job", () => Task.FromResult(TestJobs.Seen.ContainsKey("after")));
+        Assert.Contains(h.Errors, m => m.StartsWith("hangfire: cronwatch: the store did not answer within 200ms while opening a run of import", StringComparison.Ordinal));
+        store.Release();
+        await Eventually("the run recorded", async () => (await h.RunsAsync("import")).Any(r => r.Status == RunStatus.Ok));
+        await h.Integration.RecordedAsync();
+        Assert.Single(h.Errors);
+    }
+
+    [Fact]
+    public async Task Watching_again_does_not_wait_for_the_earlier_integrations_reading()
+    {
+        await using var h = new Harness(start: false);
+        await using var cw = new CronwatchClient(new CronwatchOptions { Store = h.Store, Alerts = [], ProcessExitHook = false });
+        // A read of the recurring jobs that blocks (a storage that hangs) holds the earlier
+        // integration's loop; starting again takes its filter off without waiting for it.
+        var blocked = new ManualResetEventSlim();
+        var storage = new HangingStorage(blocked);
+        using var earlier = CronwatchHangfire.Start(cw, new CronwatchHangfireOptions { App = "slow", Storage = storage });
+        try
+        {
+            Assert.True(storage.Entered.Wait(TimeSpan.FromSeconds(10)));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            using var again = CronwatchHangfire.Start(cw, new CronwatchHangfireOptions { App = "billing", Storage = h.Storage });
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), "the constructor waited " + watch.Elapsed);
+            Assert.DoesNotContain(GlobalJobFilters.Filters, f => ReferenceEquals(f.Instance, earlier.Filter));
+        }
+        finally
+        {
+            blocked.Set();
+        }
     }
 
     [Fact]

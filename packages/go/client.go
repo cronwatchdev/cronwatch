@@ -8,12 +8,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -381,18 +383,44 @@ func (c *Client) declaredAll() []*jobDef {
 // on the next call rather than failing forever.
 func (c *Client) ensureReady(ctx context.Context) error {
 	c.readyMu.Lock()
-	defer c.readyMu.Unlock()
 	if c.ready {
+		c.readyMu.Unlock()
 		return nil
 	}
 	if err := c.store.Init(ctx); err != nil {
+		c.readyMu.Unlock()
 		return err
 	}
 	c.ready = true
 	if c.defaultStore && environment() == "production" {
 		fmt.Fprintln(Stderr, "[cronwatch] using the in-memory store: runs and state are lost on restart. Pass a store with WithStore, such as sqlstore.New over the app's database.")
 	}
+	c.readyMu.Unlock()
+	// Once per client, outside the lock, since the error handler may call
+	// back in: it still works, but only as long as one process at a time
+	// uses the store.
+	if err := missingCapabilities(c.store); err != nil {
+		c.report(err, "store")
+	}
 	return nil
+}
+
+// missingCapabilities is the SDK's report of a store without
+// compareAndSetState (StateComparer) or updateRunIf (RunUpdater), in its
+// words, or nil for a store with both.
+func missingCapabilities(store Store) error {
+	var missing []string
+	if _, ok := store.(StateComparer); !ok {
+		missing = append(missing, "compareAndSetState")
+	}
+	if _, ok := store.(RunUpdater); !ok {
+		missing = append(missing, "updateRunIf")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return errors.New("the store has no " + strings.Join(missing, " or ") +
+		", so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it")
 }
 
 // sync writes the declaration of def's name as it stands to the store, once

@@ -82,11 +82,16 @@ func TestDiscardWhenTakesTheRunBack(t *testing.T) {
 	eq(t, "a panic is a failed run", runs(t, k.cw, "q")[0].Status, cronwatch.StatusFailed)
 }
 
-// withoutDeleter is a store that cannot take a run back.
-type withoutDeleter struct{ cronwatch.Store }
+// withoutDeleter is a store that cannot take a run back, and has the rest.
+type withoutDeleter struct {
+	cronwatch.Store
+	cronwatch.StateComparer
+	cronwatch.RunUpdater
+}
 
 func TestDiscardWhenWithoutARunDeleterRecordsTheRun(t *testing.T) {
-	k := newKit(t, cronwatch.WithStore(withoutDeleter{cronwatch.NewMemoryStore()}))
+	memory := cronwatch.NewMemoryStore()
+	k := newKit(t, cronwatch.WithStore(withoutDeleter{memory, memory, memory}))
 	job := must[*cronwatch.Job](t)(k.cw.Job("q"))
 	err := job.Run(context.Background(), func(context.Context, *cronwatch.JobContext) error { return errSnoozed }, cronwatch.DiscardWhen(snoozed))
 	if !errors.Is(err, errSnoozed) {

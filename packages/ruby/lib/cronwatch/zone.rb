@@ -61,6 +61,9 @@ module Cronwatch
       guess = target + (target - civil_seconds(wall(target, timezone)))
       seen = wall(guess, timezone)
       if seen == wall
+        # Only an hour back is tried, as croner's fromTZ does, so a fall-back
+        # of another length (Lord Howe's 30 minutes) keeps croner's answer.
+        # Keep it so: Schedule's fall-back fires must match the SDK's.
         earlier = guess - 3600
         return wall(earlier, timezone) == wall ? earlier : guess
       end

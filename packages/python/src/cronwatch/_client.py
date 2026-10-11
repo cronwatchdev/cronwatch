@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
-from . import _env, _js, _zone
+from . import _env, _fork, _js, _zone
 from ._env import is_production
 from ._response import response_status
 from .alerts import ChannelContext, Console, _channel_name, _send_to
@@ -464,8 +464,8 @@ class _Execution:
         # done just before the job runs. The result is the same.
         if self.recorded:
             try:
-                run_id = self.run.id
-                client._update_state(name, lambda before: (hold_run(on_run_start(before), run_id), None))
+                begun = self.run.copy()
+                client._update_state(name, lambda before: (hold_run(on_run_start(self.definition, begun, before, client.now()), begun.id), None))
             except Exception as error:
                 client._report(error, f"starting {name}")
 
@@ -644,6 +644,7 @@ class Cronwatch:
         self._retry_budget_ms: float = RETRY_BUDGET_MS
         self._warned_deferred_start = False
         self._reset_process_state()
+        _fork.track(self)
 
     # ------------------------------------------------------------ public API
 
@@ -760,7 +761,7 @@ class Cronwatch:
             raise
         if not evaluate:
             return []
-        self._update_state(run.job, lambda before: (hold_run(on_run_start(before), run.id), None))
+        self._update_state(run.job, lambda before: (hold_run(on_run_start(definition, run, before, self.now()), run.id), None))
         if run.status == RunStatus.RUNNING:
             return []
         return self._finish_run(definition, run, self.now())
@@ -942,8 +943,9 @@ class Cronwatch:
 
     def _reset_process_state(self) -> None:
         """Locks, the check in flight, the interval thread, and the channel and
-        triage threads belong to one process. A forked child starts with fresh ones."""
-        self._pid = os.getpid()
+        triage threads belong to one process. A forked child starts with fresh
+        ones. The pid goes last, so a thread that sees it sees the rest (see
+        cronwatch._fork)."""
         self._locks = {}
         # Each job's lock for writing its declaration. See _sync().
         self._syncing = {}
@@ -958,11 +960,19 @@ class Cronwatch:
         self._starting = {}
         # Channel (by index) and triage threads that timed out and are still going.
         self._abandoned = {}
+        self._pid = os.getpid()
+
+    def _after_fork(self) -> None:
+        """Called in a forked child (cronwatch._fork), while it has one thread."""
+        self._registry = threading.RLock()
+        self._reset_process_state()
 
     def _after_fork_check(self) -> None:
+        """For a fork the hook did not see: the reset, once, under _fork.lock."""
         if self._pid != os.getpid():
-            self._registry = threading.RLock()
-            self._reset_process_state()
+            with _fork.lock:
+                if self._pid != os.getpid():
+                    self._after_fork()
 
     def _report(self, error: BaseException, where: str) -> None:
         """Hands an error to on_error. An on_error that raises is not allowed to take the job down with it."""
@@ -1052,6 +1062,16 @@ class Cronwatch:
             init = getattr(self.store, "init", None)
             if callable(init):
                 init()
+            missing = [method for method in ("compare_and_set_state", "update_run_if") if not callable(getattr(self.store, method, None))]
+            if missing:
+                # Once per client: it still works, but only as long as one process at a time uses the store.
+                self._report(
+                    RuntimeError(
+                        f"the store has no {' or '.join(missing)}, so two processes sharing it can overwrite each other's state"
+                        " or both evaluate the same run; it is safe only while one process at a time uses it"
+                    ),
+                    "store",
+                )
             if self._using_default_store and is_production():
                 _log.warning(
                     "using the in-memory store: runs and state are lost on restart. Pass a store such as cronwatch.stores.SqliteStore."
@@ -1403,7 +1423,7 @@ class Cronwatch:
             self._report(error, f"recording {name}")
         if recorded:
             try:
-                self._update_state(name, lambda before: (hold_run(on_run_start(before), run.id), None))
+                self._update_state(name, lambda before: (hold_run(on_run_start(definition, run, before, self.now()), run.id), None))
             except Exception as error:
                 self._report(error, f"starting {name}")
         handle = RunHandle(self, definition, run.id, run, recorded, None)

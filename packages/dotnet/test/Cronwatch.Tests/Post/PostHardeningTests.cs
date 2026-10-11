@@ -60,11 +60,11 @@ public class PostHardeningTests
         var e = await Assert.ThrowsAsync<CronwatchException>(() => FetchAsync(transport, hang.Url + "/T/B/path-secret", Short));
         Assert.Equal(P.TimedOut, e.Message);
 
-        // An answer whose body is still arriving at the deadline is the answer with no body.
+        // An error answer whose body is still arriving at the deadline keeps what arrived.
         var answer = await FetchAsync(transport, drip.Url, Short);
         Assert.Equal(500, answer.Status);
-        Assert.Equal("", answer.Body);
-        Assert.Equal("Rollbar https://api.rollbar.com answered 500", P.Refused("Rollbar", "https://api.rollbar.com/api/1/item/", answer, []).Message);
+        Assert.Equal("x", answer.Body);
+        Assert.Equal("Rollbar https://api.rollbar.com answered 500: x", P.Refused("Rollbar", "https://api.rollbar.com/api/1/item/", answer, []).Message);
     }
 
     [Fact]
@@ -98,11 +98,19 @@ public class PostHardeningTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
     }
 
-    public static TheoryData<string> Framings => new() { "content-length", "chunked", "close" };
+    public static TheoryData<string, int> Framings => new()
+    {
+        { "content-length", 200 }, { "chunked", 200 }, { "close", 200 },
+        { "content-length", 500 }, { "chunked", 500 }, { "close", 500 },
+    };
 
+    /// <summary>
+    /// An answer is read to one mebibyte, and an error answer to 64 KiB (the SDK's
+    /// <c>ERROR_READ_MAX</c>), as it arrives, whatever its framing.
+    /// </summary>
     [Theory]
     [MemberData(nameof(Framings))]
-    public async Task An_answer_is_read_to_one_mebibyte_as_it_arrives_whatever_its_framing(string framing)
+    public async Task An_answer_is_read_to_its_cap_as_it_arrives_whatever_its_framing(string framing, int status)
     {
         const int total = P.MaxBody + (8 << 20);
         bool wroteAll = false;
@@ -110,9 +118,9 @@ public class PostHardeningTests
         {
             string head = framing switch
             {
-                "content-length" => "HTTP/1.1 500 X\r\ncontent-length: " + total.ToString(CultureInfo.InvariantCulture) + "\r\n\r\n",
-                "chunked" => "HTTP/1.1 500 X\r\ntransfer-encoding: chunked\r\n\r\n",
-                _ => "HTTP/1.1 500 X\r\nconnection: close\r\n\r\n",
+                "content-length" => "HTTP/1.1 " + status.ToString(CultureInfo.InvariantCulture) + " X\r\ncontent-length: " + total.ToString(CultureInfo.InvariantCulture) + "\r\n\r\n",
+                "chunked" => "HTTP/1.1 " + status.ToString(CultureInfo.InvariantCulture) + " X\r\ntransfer-encoding: chunked\r\n\r\n",
+                _ => "HTTP/1.1 " + status.ToString(CultureInfo.InvariantCulture) + " X\r\nconnection: close\r\n\r\n",
             };
             await s.WriteAsync(Encoding.ASCII.GetBytes(head), ct);
             var block = new byte[64 * 1024];
@@ -139,8 +147,8 @@ public class PostHardeningTests
         });
         using var transport = new HttpClientTransport();
         var answer = await FetchAsync(transport, server.Url);
-        Assert.Equal(500, answer.Status);
-        Assert.Equal(P.MaxBody, answer.Body.Length);
+        Assert.Equal(status, answer.Status);
+        Assert.Equal(status == 200 ? P.MaxBody : P.ErrorReadMax, answer.Body.Length);
         // The answer was disposed at the cap, which closed the connection rather than draining it:
         // the server could not write the rest.
         await server.SettledAsync();

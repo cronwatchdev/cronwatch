@@ -206,7 +206,6 @@ interface Store
   updateRun(run: Run): Promise<void>
   getRun(id: string): Promise<Run | null>
   listRuns(job: string, limit: number): Promise<Array<Run>>
-  lastRun(job: string): Promise<Run | null>
   runningRuns(): Promise<Array<Run>>
   getState(job: string): Promise<JobState | null>
   setState(state: JobState): Promise<void>
@@ -241,7 +240,7 @@ function createRoutes(cw: Cronwatch, options?: RoutesOptions): Routes (deprecate
 function cronwatch(options?: CronwatchOptions): Cronwatch
 function custom(name: string, send: (alert: Alert) => void | Promise<void>): AlertChannel
 function formatDuration(ms: number): string
-function memory(): Store
+function memory(): Store & Required<Pick<Store, 'lastRun'>>
 function nextFire(parsed: ParsedSchedule, from: number, lastRunAt: number | null): number | null
 function parseDuration(value: Duration, label?: string): number
 function parseSchedule(schedule: string, timezone?: string | undefined): ParsedSchedule
@@ -251,14 +250,14 @@ interface SqliteOptions
   path?: string
   database?: Database.Database
   prefix?: string
-function sqlite(options?: SqliteOptions): Store
+function sqlite(options?: SqliteOptions): Store & Required<Pick<Store, 'lastRun'>>
 
 # @cronwatch/sdk/postgres
 interface PostgresOptions
   connectionString?: string
   pool?: pg.Pool
   prefix?: string
-function postgres(options?: PostgresOptions): Store
+function postgres(options?: PostgresOptions): Store & Required<Pick<Store, 'lastRun'>>
 
 # @cronwatch/sdk/d1
 interface D1DatabaseLike
@@ -272,7 +271,7 @@ interface D1PreparedStatementLike
   first(): Promise<unknown>
   all(): Promise<{ results?: Array<unknown> | undefined; }>
   run(): Promise<{ meta?: { changes?: number | undefined; } | undefined; }>
-function d1(database: D1DatabaseLike, options?: D1Options): Store
+function d1(database: D1DatabaseLike, options?: D1Options): Store & Required<Pick<Store, 'lastRun'>>
 
 # @cronwatch/sdk/slack
 interface SlackOptions
@@ -295,6 +294,7 @@ interface WebhookOptions
   url: string
   headers?: Record<string, string>
   secret?: string
+  now?: () => number
 const hmacSha256Hex: (secret: string, body: string) => Promise<string> (deprecated)
 function signature(secret: string, body: string): Promise<string>
 function webhook(options: WebhookOptions): AlertChannel

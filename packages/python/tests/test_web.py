@@ -1270,14 +1270,76 @@ def test_the_secret_compare_matches_only_the_secret_itself_whatever_is_sent() ->
         assert _constant_time_equal(sent, secret) is equal, (sent, secret)
 
 
-def test_a_negative_content_length_reads_no_body() -> None:
+@pytest.mark.parametrize("length", ["-1", "abc", "1.5", "+3", "0x10", "1 2", "\u0663"])
+def test_a_content_length_that_is_not_a_length_is_a_bad_request_and_reads_no_body(length: str) -> None:
     import io
+
+    from cronwatch.web import BadContentLength
 
     class Endless(io.RawIOBase):
         def read(self, size: int | None = -1) -> bytes:
-            if size is None or size < 0:
-                raise AssertionError("read the whole stream")
-            return b"x" * size
+            raise AssertionError("read the body")
 
-    request = Request.from_wsgi({"REQUEST_METHOD": "POST", "PATH_INFO": "/", "CONTENT_LENGTH": "-1", "wsgi.input": Endless()})
-    assert request.read() == b""
+    with pytest.raises(BadContentLength):
+        Request.from_wsgi({"REQUEST_METHOD": "POST", "PATH_INFO": "/", "CONTENT_LENGTH": length, "wsgi.input": Endless()})
+    errors = Errors()
+    _, _, web = app(on_error=errors)
+    res = send(web, "POST", "/cronwatch/api/check", {**BEARER, "content-length": length})
+    assert (res.status, res.text) == (400, '{"ok":false,"error":"Bad request"}')
+    assert errors.items == [], "a bad request is the caller's, not a failure to report"
+
+
+def test_a_content_length_with_spaces_around_it_is_read() -> None:
+    import io
+
+    request = Request.from_wsgi({"REQUEST_METHOD": "POST", "PATH_INFO": "/", "CONTENT_LENGTH": " 2 ", "wsgi.input": io.BytesIO(b"hi there")})
+    assert request.read() == b"hi"
+
+
+def test_only_the_base_and_the_paths_under_it_are_the_routes() -> None:
+    """A path that merely starts with the base's text, or that its dot
+    segments take out of it, is not found, signed in or not, before any auth."""
+    _, _, web = app()
+    assert send(web, "GET", "/cronwatch", BEARER).status == 200
+    assert send(web, "GET", "/cronwatch/", BEARER).status == 200
+    for path in ["/cronwatchapi/jobs", "/api/jobs", "/cronwatch-x/api/jobs", "/cronwatch/../api/jobs", "/cronwatch/%2e%2E/api/jobs", "/"]:
+        for headers in (BEARER, {}):
+            res = send(web, "GET", path, headers, raw=False)
+            assert res.status == 404, path
+            assert res.headers["content-type"] == "text/html; charset=utf-8", path
+    assert "/api/jobs" in send(web, "GET", "/cronwatch/../api/jobs", BEARER, raw=False).text, "the message names the path as resolved"
+    for path in ["/cronwatch/./api/jobs", "/cronwatch/jobs/../api/jobs"]:
+        res = send(web, "GET", path, BEARER, raw=False)
+        assert (res.status, res.text[:10]) == (200, '{"ok":true'), path
+    root = make()[0].routes(token="tok", base_path="/")
+    assert send(root, "GET", "/api/jobs", BEARER).status == 200, "an empty base takes every path"
+
+
+def test_dot_segments_resolve_as_the_url_parser_resolves_them() -> None:
+    from cronwatch.web import _resolve_dots
+
+    cases = {
+        "/": "/", "/a/b": "/a/b", "/a/./b": "/a/b", "/a/../b": "/b", "/..": "/", "/../..": "/", "/a/..": "/", "/a/.": "/a/",
+        "/a/%2E/b": "/a/b", "/a/.%2e/b": "/b", "/a//../b": "/a/b", "/a/b/": "/a/b/", "/a/...": "/a/...", "/a/%2e%2e%2f": "/a/%2e%2e%2f",
+    }  # fmt: skip
+    for given, want in cases.items():
+        assert _resolve_dots(given) == want, given
+
+
+def test_the_timeline_puts_an_interval_due_a_period_after_a_run_that_outlasted_it_finished() -> None:
+    from cronwatch._schedule import parse_schedule
+    from cronwatch.web._timeline import due_times, missed_at
+
+    cw, clock, _ = make()
+    job = cw.job("every-hour", schedule="every 1h", grace="10m", timeout="3h")
+    handle = job.start()
+    clock.advance(90 * MIN)
+    handle.finish("done")
+    clock.advance(3 * HOUR)
+    cw.check()
+    summary = cw.job_summary("every-hour")
+    assert summary is not None and [str(c) for c in summary.open] == ["missed"]
+    parsed = parse_schedule("every 1h")
+    times = due_times(summary, parsed, cw.runs("every-hour"), T0, T0 + 5 * HOUR).times
+    assert times == [T0 + 150 * MIN, T0 + 210 * MIN, T0 + 270 * MIN], "a period after the 90-minute run ended, not after it began"
+    assert missed_at(summary, parsed, times, clock.now()) == T0 + 150 * MIN

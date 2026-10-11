@@ -769,6 +769,11 @@ final class CraftTest extends TestCase
 
         [$status] = self::http('GET', '/admin/cronwatch/view?cw=%2F');
         $this->assertNotSame(200, $status, 'an anonymous visitor is sent to the login page');
+        // The dashboard's actions answer only in the Control Panel, not as a site action.
+        foreach (['/actions/cronwatch/dashboard/view?cw=%2F', '/actions/cronwatch/dashboard/index'] as $path) {
+            [$status] = self::http('GET', $path, 'admin');
+            $this->assertSame(400, $status, $path);
+        }
 
         [$status, , $form] = self::http('GET', '/admin/settings/plugins/cronwatch', 'admin');
         $this->assertSame(200, $status);
@@ -890,10 +895,25 @@ final class CraftTest extends TestCase
         $config = self::$root . '/config/cronwatch.php';
         $before = (string) file_get_contents($config);
         $token = 'cwt-' . bin2hex(random_bytes(12));
-        file_put_contents($config, str_replace("return [\n", "return [\n    'apiToken' => '{$token}',\n", $before));
-        // A server of its own, so no opcode cache holds the file as it was.
-        self::stopServer();
         try {
+            // A token shorter than 24 characters keeps the API shut, saying why, whatever the caller sends.
+            file_put_contents($config, str_replace("return [\n", "return [\n    'apiToken' => 'short-token',\n", $before));
+            self::stopServer();
+            [$status, $headers, $body] = self::http('GET', '/cronwatch/api/jobs', null, ['Authorization' => 'Bearer short-token']);
+            $this->assertSame(503, $status, $body);
+            $this->assertStringStartsWith('text/plain', $headers['content-type']);
+            $this->assertStringContainsString('needs at least 24', $body);
+            $this->assertStringNotContainsString('short-token', $body);
+            [$status] = self::http('POST', '/cronwatch/api/check', null, ['Authorization' => 'Bearer short-token']);
+            $this->assertSame(503, $status);
+            self::signIn('admin');
+            [$status, , $form] = self::http('GET', '/admin/settings/plugins/cronwatch', 'admin');
+            $this->assertSame(200, $status);
+            $this->assertStringContainsString('The JSON API is off', $form, 'the settings say why');
+
+            file_put_contents($config, str_replace("return [\n", "return [\n    'apiToken' => '{$token}',\n", $before));
+            // A server of its own, so no opcode cache holds the file as it was.
+            self::stopServer();
             [$status, $headers, $body] = self::http('GET', '/cronwatch/api/jobs', null, ['Authorization' => "Bearer {$token}"]);
             $this->assertSame(200, $status, $body);
             $this->assertStringStartsWith('application/json', $headers['content-type']);

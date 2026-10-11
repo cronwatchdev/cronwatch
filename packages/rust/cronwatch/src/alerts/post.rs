@@ -38,6 +38,11 @@ pub(crate) const ANSWER_MAX: usize = 1 << 20;
 #[deprecated(note = "internal, outside the 1.x promise; no longer public from 0.11")]
 pub const MAX_BODY: usize = ANSWER_MAX;
 
+/// The most of a refusal's body read (64 KiB), far more than any secret
+/// plus `ERROR_BODY_MAX` needs, so a provider (or something posing as one)
+/// cannot make a send hold a body of any size (the SDK's `ERROR_READ_MAX`).
+pub(crate) const ERROR_READ_MAX: usize = 64 * 1024;
+
 /// How much of an answer's body goes into an error.
 pub(crate) const ERROR_BODY_MAX: usize = 200;
 
@@ -257,7 +262,9 @@ pub(crate) fn fail(message: impl Into<String>) -> BoxError {
 
 /// An answer: its status and as much of its body as was read, as
 /// `response.text()` reads it (UTF-8, U+FFFD for bytes that are not, no byte
-/// order mark). A body the deadline cut short is `""`.
+/// order mark). A refusal's body is read to 64 KiB at most, and one the
+/// deadline cut short is what had arrived; a 2xx body the deadline cut
+/// short is `""`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Answer {
     pub(crate) status: u16,
@@ -383,21 +390,27 @@ pub(crate) async fn fetch(
         Ok(Ok(response)) => response,
     };
     let status = response.status;
+    let ok = (200..300).contains(&status);
+    // A refusal's body is read only as far as an error can quote, the SDK's
+    // `errorText`.
+    let max = if ok { ANSWER_MAX } else { ERROR_READ_MAX };
     let mut body = response.body;
     let mut data = Vec::new();
     loop {
         match tokio::time::timeout_at(deadline, body.chunk()).await {
             Ok(Ok(Some(chunk))) => {
-                let room = ANSWER_MAX - data.len();
+                let room = max - data.len();
                 data.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                if data.len() >= ANSWER_MAX {
+                if data.len() >= max {
                     break;
                 }
             }
             Ok(Ok(None)) => break,
-            // A body the deadline cut short, or one that could not be read, is
-            // treated as the SDK treats a body it could not read.
-            _ => return Ok(Answer { status, body: String::new() }),
+            // A refusal's body the deadline cut short, or that could not be
+            // read to its end, is what was read, as the SDK's `errorText`
+            // keeps it; nothing reads a 2xx answer's.
+            _ if ok => return Ok(Answer { status, body: String::new() }),
+            _ => break,
         }
     }
     Ok(Answer { status, body: text(&data) })

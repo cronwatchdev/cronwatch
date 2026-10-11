@@ -32,6 +32,7 @@ final class DashboardController extends Controller
 {
     public function actionIndex(): Response
     {
+        $this->requireCpRequest();
         $this->requirePermission('accessPlugin-cronwatch');
         $job = (string) $this->request->getQueryParam('job', '');
         return $this->renderTemplate('cronwatch/_index.twig', [
@@ -41,6 +42,7 @@ final class DashboardController extends Controller
 
     public function actionView(): Response
     {
+        $this->requireCpRequest();
         $this->requirePermission('accessPlugin-cronwatch');
         $method = strtoupper($this->request->getMethod());
         $path = (string) $this->request->getQueryParam('cw', '/');

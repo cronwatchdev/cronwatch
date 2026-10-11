@@ -220,6 +220,44 @@ final class PostgresStoreTest extends TestCase
         }
     }
 
+    public function testInitOverTablesThatAreThereTakesNoLockInsideTheAppsTransaction(): void
+    {
+        $backend = $this->backend();
+        try {
+            $backend->open()->init();
+            $p = $backend->prefix;
+            // Another session part way through writing a run holds ROW
+            // EXCLUSIVE on the runs, which CREATE INDEX IF NOT EXISTS (SHARE)
+            // waits on, even for an index that is there.
+            $writer = self::admin($backend);
+            $app = self::admin($backend);
+            try {
+                $writer->beginTransaction();
+                $writer->exec("INSERT INTO {$p}runs (id, job, status, started_at) VALUES ('w', 'j', 'running', 1)");
+                $app->exec("SET lock_timeout = '500ms'");
+                $app->beginTransaction();
+                (new PostgresStore(pdo: $app, prefix: $p))->init();
+                $held = $app->query("SELECT COUNT(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE l.pid = pg_backend_pid() AND c.relname LIKE '{$p}%'")->fetchColumn();
+                $this->assertSame(0, (int) $held, 'nothing the app\'s transaction would hold until it commits');
+            } finally {
+                // Before the tables are dropped, which would wait on the writer.
+                if ($app->inTransaction()) {
+                    $app->rollBack();
+                }
+                if ($writer->inTransaction()) {
+                    $writer->rollBack();
+                }
+            }
+
+            // A table or an index missing is made, as before.
+            $app->exec("DROP INDEX {$p}runs_running");
+            (new PostgresStore(pdo: $app, prefix: $p))->init();
+            $this->assertSame(1, (int) $app->query("SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{$p}runs_running'")->fetchColumn());
+        } finally {
+            $backend->done();
+        }
+    }
+
     public function testManyProcessesCanInitAtOnce(): void
     {
         if (!function_exists('proc_open')) {

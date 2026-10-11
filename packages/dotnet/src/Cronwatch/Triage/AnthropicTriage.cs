@@ -214,10 +214,10 @@ public sealed class AnthropicTriage : ITriage
         if (run != null)
         {
             lines.Add("");
-            lines.Add("Triggering run: status " + run.Status.Value + ", started " + Js.IsoOrWords(run.StartedAt) + ", duration " + Duration(run) + ", trigger " + run.Trigger);
+            lines.Add("Triggering run: status " + run.Status.Value + ", started " + Js.IsoOrWords(run.StartedAt) + ", duration " + Duration(run) + ", trigger " + Data(run.Trigger));
             if (run.Metrics.Count > 0)
             {
-                lines.Add("Metrics: " + run.Metrics.ToJson());
+                lines.Add("Metrics: " + Data(run.Metrics.ToJson()));
             }
             if (!string.IsNullOrEmpty(run.Error))
             {
@@ -251,7 +251,7 @@ public sealed class AnthropicTriage : ITriage
                 }
                 if (r.Metrics.Count > 0)
                 {
-                    line.Append(", metrics ").Append(r.Metrics.ToJson());
+                    line.Append(", metrics ").Append(Data(r.Metrics.ToJson()));
                 }
                 lines.Add(line.ToString());
             }

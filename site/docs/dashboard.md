@@ -114,7 +114,7 @@ Under it is the day. Each job gets a lane across the last 24 hours and the next 
 
 | Mark | Means |
 |---|---|
-| a faint tick | a time the job was due, worked out from its schedule with the same code the checks use: for a cron, each time it fires; for an interval, one period after each run started, and once a period after the last one for as long as nothing runs. Ticks still ahead are dashed |
+| a faint tick | a time the job was due, worked out from its schedule with the same code the checks use: for a cron, each time it fires; for an interval, one period after each run started (or after it finished, when it ran longer than a period), and once a period after the last one for as long as nothing runs. Ticks still ahead are dashed |
 | a dotted line | the cadence of a job due more often than every five minutes, in place of a tick per fire |
 | green | a run that ended ok |
 | red | a failed run |

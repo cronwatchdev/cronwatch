@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cronwatch.dev/schemas/webhook/1.json",
   "title": "CronWatch webhook payload, schema 1",
-  "description": "The JSON body the webhook alert channel POSTs, in every CronWatch library. Within schema 1 it only grows: a release may add fields (so objects allow properties not listed here), but never removes or retypes one. With a secret, the request carries X-CronWatch-Signature: sha256=<hex>, the HMAC-SHA256 of the raw body with the secret, as lowercase hex. Times are epoch milliseconds and durations milliseconds. The title and message are for people and their wording may change in any release: read the fields instead.",
+  "description": "The JSON body the webhook alert channel POSTs, in every CronWatch library. Within schema 1 it only grows: a release may add fields (so objects allow properties not listed here), but never removes or retypes one. With a secret, the request carries X-CronWatch-Signature: sha256=<hex>, the HMAC-SHA256 of the raw body with the secret, as lowercase hex, plus X-CronWatch-Timestamp (Unix seconds) and X-CronWatch-Timestamp-Signature: sha256=<hex>, the HMAC-SHA256 of the timestamp, a full stop, and the raw body, so a receiver can refuse a replayed request. Times are epoch milliseconds and durations milliseconds. The title and message are for people and their wording may change in any release: read the fields instead.",
   "type": "object",
   "required": ["schema", "type", "job", "definition", "run", "title", "message", "details", "at"],
   "properties": {

@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -30,12 +31,18 @@ public static class CronwatchAspNetCoreExtensions
     /// method. The endpoints skip antiforgery (the dashboard has its own cross-site check) and are
     /// left out of OpenAPI documents. While the dashboard has a token they allow anonymous
     /// requests, so an app whose fallback policy requires a signed-in user still reaches the
-    /// dashboard's own sign-in; an open dashboard (<see cref="DashboardToken.None"/>) takes the
-    /// app's authorization policy. Inside a route group the base path is the group's.
+    /// dashboard's own sign-in; an open dashboard (<see cref="DashboardToken.None"/>) requires
+    /// authorization (<c>RequireAuthorization()</c>, the app's default policy, a signed-in user
+    /// unless the app changed it), so it is never open to anyone by accident. An app that truly
+    /// wants it open chains <c>.AllowAnonymous()</c> on the answer. Inside a route group the base
+    /// path is the group's.
     /// </summary>
     /// <param name="endpoints">The app.</param>
     /// <param name="pattern">Where the dashboard is. Default <c>/cronwatch</c>.</param>
-    /// <param name="options">The routes' options. Default: the container's <see cref="RoutesOptions"/>, else the defaults.</param>
+    /// <param name="options">
+    /// The routes' options. Default: the container's <see cref="RoutesOptions"/>, else the
+    /// defaults. Options given here that name no token take the container's (<c>Cronwatch:Token</c>).
+    /// </param>
     public static IEndpointConventionBuilder MapCronwatch(this IEndpointRouteBuilder endpoints, string pattern = Routes.DefaultBasePath, RoutesOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -54,7 +61,13 @@ public static class CronwatchAspNetCoreExtensions
         group.Map("{**" + Rest + "}", serve);
         group.DisableAntiforgery();
         group.ExcludeFromDescription();
-        if (!routes.IsOpen)
+        if (routes.IsOpen)
+        {
+            // Open to the app's own sign-in, never to anyone: an app with no fallback policy would
+            // otherwise serve it to the internet.
+            group.RequireAuthorization();
+        }
+        else
         {
             group.AllowAnonymous();
         }
@@ -68,7 +81,9 @@ public static class CronwatchAspNetCoreExtensions
     /// has no endpoint routing. A branch is no endpoint, so the app's authorization reaches an open
     /// dashboard (<see cref="DashboardToken.None"/>) only when it runs ahead of the branch: call
     /// <c>UseAuthentication</c> and <c>UseAuthorization</c>, with a fallback policy, before this, or
-    /// use <see cref="MapCronwatch(IEndpointRouteBuilder, string, RoutesOptions?)"/>.
+    /// use <see cref="MapCronwatch(IEndpointRouteBuilder, string, RoutesOptions?)"/>. An open
+    /// dashboard served this way logs a warning saying so, once, when it is added. Options given
+    /// here that name no token take the container's (<c>Cronwatch:Token</c>).
     /// </summary>
     public static IApplicationBuilder UseCronwatch(this IApplicationBuilder app, string path = Routes.DefaultBasePath, RoutesOptions? options = null)
     {
@@ -82,8 +97,19 @@ public static class CronwatchAspNetCoreExtensions
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(routes);
+        if (routes.IsOpen)
+        {
+            ILogger logger = (app.ApplicationServices.GetService<ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+                .CreateLogger("Cronwatch.AspNetCore");
+            OpenMiddleware(logger, path, null);
+        }
         return app.Map(path, branch => branch.Run(context => ServeAsync(context, routes.HandleAsync, context.Request.PathBase.Value ?? "")));
     }
+
+    private static readonly Action<ILogger, string, Exception?> OpenMiddleware = LoggerMessage.Define<string>(
+        LogLevel.Warning,
+        new EventId(1, "OpenDashboardMiddleware"),
+        "UseCronwatch serves the dashboard at {Path} with no token (DashboardToken.None), so only the app's own authentication and authorization guard it, and only when UseAuthentication and UseAuthorization, with a fallback policy, run before it; use MapCronwatch, which requires authorization for an open dashboard, or give the dashboard a token");
 
     /// <summary>
     /// Maps a job's handler at <paramref name="pattern"/> for every method: each request with the
@@ -185,8 +211,13 @@ public static class CronwatchAspNetCoreExtensions
     // request's context goes with it.
     private static readonly ConditionalWeakTable<CronwatchRequest, HttpContext> Contexts = [];
 
-    private static Routes MakeRoutes(IServiceProvider services, RoutesOptions? options) =>
-        services.GetRequiredService<CronwatchClient>().Routes(options ?? services.GetService<RoutesOptions>() ?? new RoutesOptions());
+    private static Routes MakeRoutes(IServiceProvider services, RoutesOptions? options)
+    {
+        // The container's options hold the configured token (Cronwatch:Token), which options of
+        // the app's own that name none keep.
+        RoutesOptions? configured = services.GetService<RoutesOptions>();
+        return services.GetRequiredService<CronwatchClient>().Routes(options?.WithDefaultToken(configured) ?? configured ?? new RoutesOptions());
+    }
 
     /// <summary>
     /// Where the dashboard is mounted for this request: the path base and the part of the path

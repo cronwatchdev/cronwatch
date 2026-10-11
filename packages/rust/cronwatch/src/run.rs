@@ -326,7 +326,7 @@ impl Drop for DropGuard {
                 (None, None) => (false, None),
             };
             let closing = match closing {
-                None if recorded && !closed_on_start => Some(client.close_on_start(&def.name, &run.id)),
+                None if recorded && !closed_on_start => Some(client.close_on_start(&def, &run)),
                 closing => closing,
             };
             let failure = "Cancelled: the run's future was dropped before it finished".to_string();
@@ -567,7 +567,7 @@ impl Client {
                             if !recorded || client.discard_run(&run).await {
                                 return None;
                             }
-                            let closing = Some(client.close_on_start(&def.name, &run.id));
+                            let closing = Some(client.close_on_start(&def, &run));
                             Some(client.finish_executed(&def, run, &rec, None, Some(text), recorded, closing).await)
                         });
                         let run = match task.await {
@@ -592,7 +592,7 @@ impl Client {
             }
         };
         let closing = match closing {
-            None if recorded && !close_on_start => Some(self.close_on_start(&def.name, &run.id)),
+            None if recorded && !close_on_start => Some(self.close_on_start(&def, &run)),
             closing => closing,
         };
         let client = self.clone();
@@ -669,13 +669,16 @@ impl Client {
 
     /// Closes missed and stuck for a run that has started, beside the job,
     /// and holds the run in `pending_runs` until its finish is evaluated.
-    fn close_on_start(&self, name: &str, run_id: &str) -> JoinHandle<()> {
+    /// `run` is the run as it started, still running.
+    fn close_on_start(&self, def: &Arc<JobDef>, run: &Run) -> JoinHandle<()> {
         let client = self.clone();
-        let name = name.to_string();
-        let run_id = run_id.to_string();
+        let def = def.clone();
+        let begun = run.clone();
         self.inner.handle.spawn(async move {
-            let started =
-                client.update_state(&name, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run_id), ())));
+            let name = &def.name;
+            let started = client.update_state(name, async { Ok(()) }, |s, _| {
+                Ok((hold_run(&on_run_start(&def.stored, &begun, &s, client.now()), &begun.id), ()))
+            });
             if let Err(err) = started.await {
                 client.report(err, &format!("starting {name}"));
             }
@@ -695,7 +698,7 @@ impl Client {
             self.report(err, &format!("recording {name}"));
             return (false, None);
         }
-        (true, close.then(|| self.close_on_start(name, &run.id)))
+        (true, close.then(|| self.close_on_start(def, run)))
     }
 
     /// The end of a run: its fields set from how it went, judged, written
@@ -949,7 +952,10 @@ impl Client {
         if !evaluate {
             return Ok(Vec::new());
         }
-        self.update_state(&run.job, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run.id), ()))).await?;
+        self.update_state(&run.job, async { Ok(()) }, |s, _| {
+            Ok((hold_run(&on_run_start(&def.stored, &run, &s, self.now()), &run.id), ()))
+        })
+        .await?;
         if run.status == RunStatus::Running {
             return Ok(Vec::new());
         }

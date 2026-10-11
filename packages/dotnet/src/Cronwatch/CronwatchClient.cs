@@ -414,7 +414,7 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
         }
         if (recorded)
         {
-            await CloseOnStartAsync(name, run.Id).ConfigureAwait(false);
+            await CloseOnStartAsync(def, run).ConfigureAwait(false);
         }
         return new RunHandle(this, def, run.Id, run, recorded, null);
     }
@@ -652,7 +652,13 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
         }
     }
 
-    /// <summary>As <see cref="DisposeAsync"/>, on the calling thread, for a container that disposes synchronously.</summary>
+    /// <summary>
+    /// As <see cref="DisposeAsync"/>, on the calling thread, for a container that disposes
+    /// synchronously. It blocks that thread, on a thread-pool thread of its own, until the runs
+    /// being recorded, the alerts being sent, and the store are done, so prefer
+    /// <see cref="DisposeAsync"/> (<c>await using</c>, or a container that disposes asynchronously,
+    /// as the Generic Host's does) wherever the caller can await.
+    /// </summary>
     public void Dispose() => Task.Run(async () => await DisposeAsync().ConfigureAwait(false)).GetAwaiter().GetResult();
 
     /// <summary>Names the store's type and how many channels there are, never a secret.</summary>

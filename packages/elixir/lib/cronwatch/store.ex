@@ -66,7 +66,10 @@ defmodule Cronwatch.Store do
   @doc """
   Writes the run as `c:update_run/2` does, only when its stored status is one
   of `from`, in one step, and says whether it wrote. This is what lets exactly
-  one of several processes finishing the same run evaluate it.
+  one of several processes finishing the same run evaluate it. A store
+  without it is safe only when one process at a time finishes a given run;
+  the instance reports that once, to its error handler as `store`, when it
+  first uses the store.
   """
   @callback update_run_if(handle(), Run.t(), from :: [String.t()]) :: {:ok, boolean()} | {:error, reason()}
 
@@ -84,7 +87,10 @@ defmodule Cronwatch.Store do
   @doc "A job's newest runs first, at most `limit` of them."
   @callback list_runs(handle(), job :: String.t(), limit :: non_neg_integer()) :: {:ok, [Run.t()]} | {:error, reason()}
 
-  @doc "A job's newest run, or nil."
+  @doc """
+  A job's newest run, or nil. The client never calls it; the built-in
+  stores keep it for callers of their own.
+  """
   @callback last_run(handle(), job :: String.t()) :: {:ok, Run.t() | nil} | {:error, reason()}
 
   @doc "Every run still running, oldest first."
@@ -99,6 +105,9 @@ defmodule Cronwatch.Store do
   @doc """
   Writes `state` only when the stored state's version (absent, or no row at
   all, counts as 0) equals `expected_version`, and says whether it wrote.
+  A store without it falls back to `c:set_state/2`, which is safe only when
+  one process at a time writes a job's state; the instance reports that
+  once, to its error handler as `store`, when it first uses the store.
   """
   @callback compare_and_set_state(handle(), JobState.t(), expected_version :: integer()) ::
               {:ok, boolean()} | {:error, reason()}
@@ -114,6 +123,7 @@ defmodule Cronwatch.Store do
                       init: 1,
                       update_run_if: 3,
                       delete_run_if: 4,
+                      last_run: 2,
                       compare_and_set_state: 3,
                       close: 1
 

@@ -15121,6 +15121,56 @@
           "op": "check",
           "at": 1767606720000,
           "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767606960000,
+            "dueAt": 1767606960000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 5m",
+                "grace": "2m",
+                "timeout": "30m"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "busy",
+                "job": "long",
+                "status": "ok",
+                "startedAt": 1767605700000,
+                "finishedAt": 1767606660000,
+                "durationMs": 960000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767606960000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1000,
+                "p95Ms": 960000
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767607140000,
+          "expect": {
             "alerts": [
               {
                 "type": "missed",
@@ -15137,8 +15187,8 @@
                   "trigger": "run"
                 },
                 "details": {
-                  "dueAt": 1767606000000,
-                  "deadline": 1767606120000,
+                  "dueAt": 1767606960000,
+                  "deadline": 1767607080000,
                   "graceMs": 120000,
                   "lastRunAt": 1767605700000
                 },
@@ -15150,14 +15200,14 @@
                   "timeout": "30m"
                 },
                 "title": "long missed its scheduled run",
-                "message": "Due 2026-01-05 09:40:00 UTC (12m ago), and no run had started by 2026-01-05 09:42:00 UTC (10m ago) (grace 2m).\nSchedule: every 5m.\nLast run: ok 2026-01-05 09:35:00 UTC (17m ago).",
-                "at": 1767606720000
+                "message": "Due 2026-01-05 09:56:00 UTC (3m ago), and no run had started by 2026-01-05 09:58:00 UTC (1m ago) (grace 2m).\nSchedule: every 5m.\nLast run: ok 2026-01-05 09:35:00 UTC (24m ago).",
+                "at": 1767607140000
               }
             ],
             "state": {
               "job": "long",
               "open": {
-                "missed": 1767606720000
+                "missed": 1767607140000
               },
               "consecutiveFailures": 0,
               "silencedUntil": null,
@@ -15165,8 +15215,8 @@
               "pendingRecovery": [],
               "undelivered": []
             },
-            "nextExpectedAt": 1767606000000,
-            "dueAt": 1767606000000,
+            "nextExpectedAt": 1767606960000,
+            "dueAt": 1767606960000,
             "summary": {
               "name": "long",
               "definition": {
@@ -15191,61 +15241,7 @@
                 "metrics": {},
                 "trigger": "run"
               },
-              "nextExpectedAt": 1767606000000,
-              "consecutiveFailures": 0,
-              "silencedUntil": null,
-              "stats": {
-                "runs": 2,
-                "okRate": 1,
-                "p50Ms": 1000,
-                "p95Ms": 960000
-              }
-            }
-          }
-        },
-        {
-          "op": "check",
-          "at": 1767607140000,
-          "expect": {
-            "alerts": [],
-            "state": {
-              "job": "long",
-              "open": {
-                "missed": 1767606720000
-              },
-              "consecutiveFailures": 0,
-              "silencedUntil": null,
-              "lastAlertAt": null,
-              "pendingRecovery": [],
-              "undelivered": []
-            },
-            "nextExpectedAt": 1767606000000,
-            "dueAt": 1767606000000,
-            "summary": {
-              "name": "long",
-              "definition": {
-                "name": "long",
-                "schedule": "every 5m",
-                "grace": "2m",
-                "timeout": "30m"
-              },
-              "health": "late",
-              "open": [
-                "missed"
-              ],
-              "lastRun": {
-                "id": "busy",
-                "job": "long",
-                "status": "ok",
-                "startedAt": 1767605700000,
-                "finishedAt": 1767606660000,
-                "durationMs": 960000,
-                "error": null,
-                "output": null,
-                "metrics": {},
-                "trigger": "run"
-              },
-              "nextExpectedAt": 1767606000000,
+              "nextExpectedAt": 1767606960000,
               "consecutiveFailures": 0,
               "silencedUntil": null,
               "stats": {
@@ -15402,44 +15398,12 @@
                 "title": "long is stuck",
                 "message": "Started 2026-01-05 09:35:00 UTC (11m ago) and never reported finishing. Marked as timed out after 11m.\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.",
                 "at": 1767606360000
-              },
-              {
-                "type": "missed",
-                "run": {
-                  "id": "hung",
-                  "job": "long",
-                  "status": "timeout",
-                  "startedAt": 1767605700000,
-                  "finishedAt": 1767606360000,
-                  "durationMs": 660000,
-                  "error": "Still running after 10m; marked as timed out",
-                  "output": null,
-                  "metrics": {},
-                  "trigger": "run"
-                },
-                "details": {
-                  "dueAt": 1767606000000,
-                  "deadline": 1767606060000,
-                  "graceMs": 60000,
-                  "lastRunAt": 1767605700000
-                },
-                "job": "long",
-                "definition": {
-                  "name": "long",
-                  "schedule": "every 5m",
-                  "grace": "1m",
-                  "timeout": "10m"
-                },
-                "title": "long missed its scheduled run",
-                "message": "Due 2026-01-05 09:40:00 UTC (6m ago), and no run had started by 2026-01-05 09:41:00 UTC (5m ago) (grace 1m).\nSchedule: every 5m.\nLast run: timeout 2026-01-05 09:35:00 UTC (11m ago).",
-                "at": 1767606360000
               }
             ],
             "state": {
               "job": "long",
               "open": {
-                "stuck": 1767606360000,
-                "missed": 1767606360000
+                "stuck": 1767606360000
               },
               "consecutiveFailures": 1,
               "silencedUntil": null,
@@ -15447,8 +15411,8 @@
               "pendingRecovery": [],
               "undelivered": []
             },
-            "nextExpectedAt": 1767606000000,
-            "dueAt": 1767606000000,
+            "nextExpectedAt": 1767606660000,
+            "dueAt": 1767606660000,
             "summary": {
               "name": "long",
               "definition": {
@@ -15459,8 +15423,7 @@
               },
               "health": "stuck",
               "open": [
-                "stuck",
-                "missed"
+                "stuck"
               ],
               "lastRun": {
                 "id": "hung",
@@ -15474,7 +15437,7 @@
                 "metrics": {},
                 "trigger": "run"
               },
-              "nextExpectedAt": 1767606000000,
+              "nextExpectedAt": 1767606660000,
               "consecutiveFailures": 1,
               "silencedUntil": null,
               "stats": {
@@ -15494,8 +15457,7 @@
             "state": {
               "job": "long",
               "open": {
-                "stuck": 1767606360000,
-                "missed": 1767606360000
+                "stuck": 1767606360000
               },
               "consecutiveFailures": 1,
               "silencedUntil": null,
@@ -15503,8 +15465,8 @@
               "pendingRecovery": [],
               "undelivered": []
             },
-            "nextExpectedAt": 1767606000000,
-            "dueAt": 1767606000000,
+            "nextExpectedAt": 1767606660000,
+            "dueAt": 1767606660000,
             "summary": {
               "name": "long",
               "definition": {
@@ -15515,8 +15477,7 @@
               },
               "health": "stuck",
               "open": [
-                "stuck",
-                "missed"
+                "stuck"
               ],
               "lastRun": {
                 "id": "hung",
@@ -15530,7 +15491,7 @@
                 "metrics": {},
                 "trigger": "run"
               },
-              "nextExpectedAt": 1767606000000,
+              "nextExpectedAt": 1767606660000,
               "consecutiveFailures": 1,
               "silencedUntil": null,
               "stats": {
@@ -15712,41 +15673,12 @@
           "at": 1767605880000,
           "status": "ok",
           "expect": {
-            "alerts": [
-              {
-                "type": "recovered",
-                "run": {
-                  "id": "slow",
-                  "job": "cron",
-                  "status": "ok",
-                  "startedAt": 1767605400000,
-                  "finishedAt": 1767605880000,
-                  "durationMs": 480000,
-                  "error": null,
-                  "output": null,
-                  "metrics": {},
-                  "trigger": "run"
-                },
-                "details": {
-                  "after": [
-                    "missed"
-                  ]
-                },
-                "job": "cron",
-                "definition": {
-                  "name": "cron",
-                  "schedule": "*/5 * * * *",
-                  "grace": "1m",
-                  "timeout": "2h"
-                },
-                "title": "cron recovered",
-                "message": "A run 2026-01-05 09:30:00 UTC (8m ago) succeeded after: missed.\nRan 8m.",
-                "at": 1767605880000
-              }
-            ],
+            "alerts": [],
             "state": {
               "job": "cron",
-              "open": {},
+              "open": {
+                "missed": 1767605820000
+              },
               "consecutiveFailures": 0,
               "silencedUntil": null,
               "lastAlertAt": null,
@@ -17632,6 +17564,2126 @@
                 "okRate": 1,
                 "p50Ms": 1000,
                 "p95Ms": 1000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a cron run that started before the missed fire leaves missed open when it finishes",
+      "definition": {
+        "name": "hourly",
+        "schedule": "0 * * * *",
+        "timezone": "UTC",
+        "grace": "10m",
+        "timeout": "3h"
+      },
+      "createdAt": 1767519000000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767607200000,
+          "expect": {
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767611700000,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "hourly",
+                  "status": "running",
+                  "startedAt": 1767607200000,
+                  "finishedAt": null,
+                  "durationMs": null,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767610800000,
+                  "deadline": 1767611400000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767607200000
+                },
+                "job": "hourly",
+                "definition": {
+                  "name": "hourly",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "hourly missed its scheduled run",
+                "message": "Due 2026-01-05 11:00:00 UTC (15m ago), and no run had started by 2026-01-05 11:10:00 UTC (5m ago) (grace 10m).\nSchedule: 0 * * * * (UTC).\nLast run: running 2026-01-05 10:00:00 UTC (1h 15m ago).",
+                "at": 1767611700000
+              }
+            ],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hourly",
+                "status": "running",
+                "startedAt": 1767607200000,
+                "finishedAt": null,
+                "durationMs": null,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 0,
+                "okRate": 1,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767612600000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767612660000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hourly",
+                "status": "ok",
+                "startedAt": 1767607200000,
+                "finishedAt": 1767612600000,
+                "durationMs": 5400000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 5400000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r2",
+          "at": 1767614400000,
+          "expect": {
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [
+                "missed"
+              ],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r2",
+          "at": 1767614401000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r2",
+                  "job": "hourly",
+                  "status": "ok",
+                  "startedAt": 1767614400000,
+                  "finishedAt": 1767614401000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "missed"
+                  ]
+                },
+                "job": "hourly",
+                "definition": {
+                  "name": "hourly",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "hourly recovered",
+                "message": "A run 2026-01-05 12:00:00 UTC (now) succeeded after: missed.\nRan 1s.",
+                "at": 1767614401000
+              }
+            ],
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767614460000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767618000000,
+            "dueAt": 1767618000000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r2",
+                "job": "hourly",
+                "status": "ok",
+                "startedAt": 1767614400000,
+                "finishedAt": 1767614401000,
+                "durationMs": 1000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767618000000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a cron run that started before the missed fire leaves missed open when it fails",
+      "definition": {
+        "name": "hourly",
+        "schedule": "0 * * * *",
+        "timezone": "UTC",
+        "grace": "10m",
+        "timeout": "3h"
+      },
+      "createdAt": 1767519000000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767607200000,
+          "expect": {
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767611700000,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "hourly",
+                  "status": "running",
+                  "startedAt": 1767607200000,
+                  "finishedAt": null,
+                  "durationMs": null,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767610800000,
+                  "deadline": 1767611400000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767607200000
+                },
+                "job": "hourly",
+                "definition": {
+                  "name": "hourly",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "hourly missed its scheduled run",
+                "message": "Due 2026-01-05 11:00:00 UTC (15m ago), and no run had started by 2026-01-05 11:10:00 UTC (5m ago) (grace 10m).\nSchedule: 0 * * * * (UTC).\nLast run: running 2026-01-05 10:00:00 UTC (1h 15m ago).",
+                "at": 1767611700000
+              }
+            ],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hourly",
+                "status": "running",
+                "startedAt": 1767607200000,
+                "finishedAt": null,
+                "durationMs": null,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 0,
+                "okRate": 1,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767612600000,
+          "status": "failed",
+          "error": "Error: boom",
+          "expect": {
+            "alerts": [
+              {
+                "type": "failed",
+                "run": {
+                  "id": "r1",
+                  "job": "hourly",
+                  "status": "failed",
+                  "startedAt": 1767607200000,
+                  "finishedAt": 1767612600000,
+                  "durationMs": 5400000,
+                  "error": "Error: boom",
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                },
+                "job": "hourly",
+                "definition": {
+                  "name": "hourly",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "hourly failed",
+                "message": "Started 2026-01-05 10:00:00 UTC (1h 30m ago), ran 1h 30m.\nError: boom",
+                "at": 1767612600000
+              }
+            ],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000,
+                "failed": 1767612600000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767612660000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hourly",
+              "open": {
+                "missed": 1767611700000,
+                "failed": 1767612600000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "failing",
+              "open": [
+                "missed",
+                "failed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hourly",
+                "status": "failed",
+                "startedAt": 1767607200000,
+                "finishedAt": 1767612600000,
+                "durationMs": 5400000,
+                "error": "Error: boom",
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 0,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r2",
+          "at": 1767614400000,
+          "expect": {
+            "state": {
+              "job": "hourly",
+              "open": {
+                "failed": 1767612600000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [
+                "missed"
+              ],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r2",
+          "at": 1767614401000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r2",
+                  "job": "hourly",
+                  "status": "ok",
+                  "startedAt": 1767614400000,
+                  "finishedAt": 1767614401000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "missed",
+                    "failed"
+                  ]
+                },
+                "job": "hourly",
+                "definition": {
+                  "name": "hourly",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "hourly recovered",
+                "message": "A run 2026-01-05 12:00:00 UTC (now) succeeded after: missed and failed.\nRan 1s.",
+                "at": 1767614401000
+              }
+            ],
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767614460000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hourly",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767618000000,
+            "dueAt": 1767618000000,
+            "summary": {
+              "name": "hourly",
+              "definition": {
+                "name": "hourly",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r2",
+                "job": "hourly",
+                "status": "ok",
+                "startedAt": 1767614400000,
+                "finishedAt": 1767614401000,
+                "durationMs": 1000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767618000000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 0.5,
+                "p50Ms": 1000,
+                "p95Ms": 1000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a run a source reports at its finish closes missed only when its start covers the fire",
+      "definition": {
+        "name": "imported",
+        "schedule": "0 * * * *",
+        "timezone": "UTC",
+        "grace": "10m"
+      },
+      "createdAt": 1767600000000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767607200000,
+          "expect": {
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767607201000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767611700000,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "imported",
+                  "status": "ok",
+                  "startedAt": 1767607200000,
+                  "finishedAt": 1767607201000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767610800000,
+                  "deadline": 1767611400000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767607200000
+                },
+                "job": "imported",
+                "definition": {
+                  "name": "imported",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m"
+                },
+                "title": "imported missed its scheduled run",
+                "message": "Due 2026-01-05 11:00:00 UTC (15m ago), and no run had started by 2026-01-05 11:10:00 UTC (5m ago) (grace 10m).\nSchedule: 0 * * * * (UTC).\nLast run: ok 2026-01-05 10:00:00 UTC (1h 15m ago).",
+                "at": 1767611700000
+              }
+            ],
+            "state": {
+              "job": "imported",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "imported",
+              "definition": {
+                "name": "imported",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "imported",
+                "status": "ok",
+                "startedAt": 1767607200000,
+                "finishedAt": 1767607201000,
+                "durationMs": 1000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 1000,
+                "p95Ms": 1000
+              }
+            }
+          }
+        },
+        {
+          "op": "record",
+          "id": "r2",
+          "startedAt": 1767610680000,
+          "at": 1767612480000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767612540000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {
+                "missed": 1767611700000
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767610800000,
+            "summary": {
+              "name": "imported",
+              "definition": {
+                "name": "imported",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r2",
+                "job": "imported",
+                "status": "ok",
+                "startedAt": 1767610680000,
+                "finishedAt": 1767612480000,
+                "durationMs": 1800000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "source"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1000,
+                "p95Ms": 1800000
+              }
+            }
+          }
+        },
+        {
+          "op": "record",
+          "id": "r3",
+          "startedAt": 1767610740000,
+          "at": 1767612540000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r3",
+                  "job": "imported",
+                  "status": "ok",
+                  "startedAt": 1767610740000,
+                  "finishedAt": 1767612540000,
+                  "durationMs": 1800000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "source"
+                },
+                "details": {
+                  "after": [
+                    "missed"
+                  ]
+                },
+                "job": "imported",
+                "definition": {
+                  "name": "imported",
+                  "schedule": "0 * * * *",
+                  "timezone": "UTC",
+                  "grace": "10m"
+                },
+                "title": "imported recovered",
+                "message": "A run 2026-01-05 10:59:00 UTC (30m ago) succeeded after: missed.\nRan 30m.",
+                "at": 1767612540000
+              }
+            ],
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767612600000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767614400000,
+            "summary": {
+              "name": "imported",
+              "definition": {
+                "name": "imported",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r3",
+                "job": "imported",
+                "status": "ok",
+                "startedAt": 1767610740000,
+                "finishedAt": 1767612540000,
+                "durationMs": 1800000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "source"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 3,
+                "okRate": 1,
+                "p50Ms": 1800000,
+                "p95Ms": 1800000
+              }
+            }
+          }
+        },
+        {
+          "op": "record",
+          "id": "r4",
+          "startedAt": 1767610920000,
+          "at": 1767612720000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767612780000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "imported",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767614400000,
+            "summary": {
+              "name": "imported",
+              "definition": {
+                "name": "imported",
+                "schedule": "0 * * * *",
+                "timezone": "UTC",
+                "grace": "10m"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r4",
+                "job": "imported",
+                "status": "ok",
+                "startedAt": 1767610920000,
+                "finishedAt": 1767612720000,
+                "durationMs": 1800000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "source"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 4,
+                "okRate": 1,
+                "p50Ms": 1800000,
+                "p95Ms": 1800000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an interval run that outlasts its period is followed by a full period",
+      "definition": {
+        "name": "long",
+        "schedule": "every 1h",
+        "grace": "10m",
+        "timeout": "3h"
+      },
+      "createdAt": 1767605400000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767609900000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767609000000,
+            "dueAt": 1767609000000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r1",
+                "job": "long",
+                "status": "running",
+                "startedAt": 1767605400000,
+                "finishedAt": null,
+                "durationMs": null,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767609000000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 0,
+                "okRate": 1,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767610800000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767610860000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767614400000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r1",
+                "job": "long",
+                "status": "ok",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610800000,
+                "durationMs": 5400000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 5400000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767615000000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767614400000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r1",
+                "job": "long",
+                "status": "ok",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610800000,
+                "durationMs": 5400000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 5400000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767615000001,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "long",
+                  "status": "ok",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767610800000,
+                  "durationMs": 5400000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767614400000,
+                  "deadline": 1767615000000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767605400000
+                },
+                "job": "long",
+                "definition": {
+                  "name": "long",
+                  "schedule": "every 1h",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "long missed its scheduled run",
+                "message": "Due 2026-01-05 12:00:00 UTC (10m ago), and no run had started by 2026-01-05 12:10:00 UTC (now) (grace 10m).\nSchedule: every 1h.\nLast run: ok 2026-01-05 09:30:00 UTC (2h 40m ago).",
+                "at": 1767615000001
+              }
+            ],
+            "state": {
+              "job": "long",
+              "open": {
+                "missed": 1767615000001
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614400000,
+            "dueAt": 1767614400000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "long",
+                "status": "ok",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610800000,
+                "durationMs": 5400000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614400000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 5400000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r2",
+          "at": 1767615600000,
+          "expect": {
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [
+                "missed"
+              ],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r2",
+          "at": 1767615601000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r2",
+                  "job": "long",
+                  "status": "ok",
+                  "startedAt": 1767615600000,
+                  "finishedAt": 1767615601000,
+                  "durationMs": 1000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "missed"
+                  ]
+                },
+                "job": "long",
+                "definition": {
+                  "name": "long",
+                  "schedule": "every 1h",
+                  "grace": "10m",
+                  "timeout": "3h"
+                },
+                "title": "long recovered",
+                "message": "A run 2026-01-05 12:20:00 UTC (now) succeeded after: missed.\nRan 1s.",
+                "at": 1767615601000
+              }
+            ],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767615660000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "long",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767619200000,
+            "dueAt": 1767619200000,
+            "summary": {
+              "name": "long",
+              "definition": {
+                "name": "long",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "3h"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r2",
+                "job": "long",
+                "status": "ok",
+                "startedAt": 1767615600000,
+                "finishedAt": 1767615601000,
+                "durationMs": 1000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767619200000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1000,
+                "p95Ms": 5400000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an interval run that finishes on its period, or within it, is due a period after its start",
+      "definition": {
+        "name": "even",
+        "schedule": "every 1h",
+        "grace": "10m"
+      },
+      "createdAt": 1767605400000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r1",
+          "at": 1767609000000,
+          "status": "ok",
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767609600000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767609000000,
+            "dueAt": 1767609000000,
+            "summary": {
+              "name": "even",
+              "definition": {
+                "name": "even",
+                "schedule": "every 1h",
+                "grace": "10m"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r1",
+                "job": "even",
+                "status": "ok",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767609000000,
+                "durationMs": 3600000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767609000000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 3600000,
+                "p95Ms": 3600000
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767609600001,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "even",
+                  "status": "ok",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767609000000,
+                  "durationMs": 3600000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767609000000,
+                  "deadline": 1767609600000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767605400000
+                },
+                "job": "even",
+                "definition": {
+                  "name": "even",
+                  "schedule": "every 1h",
+                  "grace": "10m"
+                },
+                "title": "even missed its scheduled run",
+                "message": "Due 2026-01-05 10:30:00 UTC (10m ago), and no run had started by 2026-01-05 10:40:00 UTC (now) (grace 10m).\nSchedule: every 1h.\nLast run: ok 2026-01-05 09:30:00 UTC (1h 10m ago).",
+                "at": 1767609600001
+              }
+            ],
+            "state": {
+              "job": "even",
+              "open": {
+                "missed": 1767609600001
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767609000000,
+            "dueAt": 1767609000000,
+            "summary": {
+              "name": "even",
+              "definition": {
+                "name": "even",
+                "schedule": "every 1h",
+                "grace": "10m"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "even",
+                "status": "ok",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767609000000,
+                "durationMs": 3600000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767609000000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 1,
+                "p50Ms": 3600000,
+                "p95Ms": 3600000
+              }
+            }
+          }
+        },
+        {
+          "op": "start",
+          "id": "r2",
+          "at": 1767609660000,
+          "expect": {
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [
+                "missed"
+              ],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "id": "r2",
+          "at": 1767611460000,
+          "status": "ok",
+          "expect": {
+            "alerts": [
+              {
+                "type": "recovered",
+                "run": {
+                  "id": "r2",
+                  "job": "even",
+                  "status": "ok",
+                  "startedAt": 1767609660000,
+                  "finishedAt": 1767611460000,
+                  "durationMs": 1800000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "after": [
+                    "missed"
+                  ]
+                },
+                "job": "even",
+                "definition": {
+                  "name": "even",
+                  "schedule": "every 1h",
+                  "grace": "10m"
+                },
+                "title": "even recovered",
+                "message": "A run 2026-01-05 10:41:00 UTC (30m ago) succeeded after: missed.\nRan 30m.",
+                "at": 1767611460000
+              }
+            ],
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767613260000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "even",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767613260000,
+            "dueAt": 1767613260000,
+            "summary": {
+              "name": "even",
+              "definition": {
+                "name": "even",
+                "schedule": "every 1h",
+                "grace": "10m"
+              },
+              "health": "healthy",
+              "open": [],
+              "lastRun": {
+                "id": "r2",
+                "job": "even",
+                "status": "ok",
+                "startedAt": 1767609660000,
+                "finishedAt": 1767611460000,
+                "durationMs": 1800000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767613260000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1800000,
+                "p95Ms": 3600000
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767613860001,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r2",
+                  "job": "even",
+                  "status": "ok",
+                  "startedAt": 1767609660000,
+                  "finishedAt": 1767611460000,
+                  "durationMs": 1800000,
+                  "error": null,
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767613260000,
+                  "deadline": 1767613860000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767609660000
+                },
+                "job": "even",
+                "definition": {
+                  "name": "even",
+                  "schedule": "every 1h",
+                  "grace": "10m"
+                },
+                "title": "even missed its scheduled run",
+                "message": "Due 2026-01-05 11:41:00 UTC (10m ago), and no run had started by 2026-01-05 11:51:00 UTC (now) (grace 10m).\nSchedule: every 1h.\nLast run: ok 2026-01-05 10:41:00 UTC (1h 10m ago).",
+                "at": 1767613860001
+              }
+            ],
+            "state": {
+              "job": "even",
+              "open": {
+                "missed": 1767613860001
+              },
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767613260000,
+            "dueAt": 1767613260000,
+            "summary": {
+              "name": "even",
+              "definition": {
+                "name": "even",
+                "schedule": "every 1h",
+                "grace": "10m"
+              },
+              "health": "late",
+              "open": [
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r2",
+                "job": "even",
+                "status": "ok",
+                "startedAt": 1767609660000,
+                "finishedAt": 1767611460000,
+                "durationMs": 1800000,
+                "error": null,
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767613260000,
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 2,
+                "okRate": 1,
+                "p50Ms": 1800000,
+                "p95Ms": 3600000
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an interval run marked timeout by a check counts as finished then",
+      "definition": {
+        "name": "hung",
+        "schedule": "every 1h",
+        "grace": "10m",
+        "timeout": "90m"
+      },
+      "createdAt": 1767605400000,
+      "events": [
+        {
+          "op": "start",
+          "id": "r1",
+          "at": 1767605400000,
+          "expect": {
+            "state": {
+              "job": "hung",
+              "open": {},
+              "consecutiveFailures": 0,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767610860000,
+          "expect": {
+            "alerts": [
+              {
+                "type": "stuck",
+                "run": {
+                  "id": "r1",
+                  "job": "hung",
+                  "status": "timeout",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767610860000,
+                  "durationMs": 5460000,
+                  "error": "Still running after 1h 30m; marked as timed out",
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "consecutiveFailures": 1,
+                  "threshold": 1
+                },
+                "job": "hung",
+                "definition": {
+                  "name": "hung",
+                  "schedule": "every 1h",
+                  "grace": "10m",
+                  "timeout": "90m"
+                },
+                "title": "hung is stuck",
+                "message": "Started 2026-01-05 09:30:00 UTC (1h 31m ago) and never reported finishing. Marked as timed out after 1h 31m.\nIf the process was killed mid-run (a serverless timeout, a deploy), this is what that looks like.",
+                "at": 1767610860000
+              }
+            ],
+            "state": {
+              "job": "hung",
+              "open": {
+                "stuck": 1767610860000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614460000,
+            "dueAt": 1767614460000,
+            "summary": {
+              "name": "hung",
+              "definition": {
+                "name": "hung",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "90m"
+              },
+              "health": "stuck",
+              "open": [
+                "stuck"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hung",
+                "status": "timeout",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610860000,
+                "durationMs": 5460000,
+                "error": "Still running after 1h 30m; marked as timed out",
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614460000,
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 0,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767611460000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hung",
+              "open": {
+                "stuck": 1767610860000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614460000,
+            "dueAt": 1767614460000,
+            "summary": {
+              "name": "hung",
+              "definition": {
+                "name": "hung",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "90m"
+              },
+              "health": "stuck",
+              "open": [
+                "stuck"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hung",
+                "status": "timeout",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610860000,
+                "durationMs": 5460000,
+                "error": "Still running after 1h 30m; marked as timed out",
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614460000,
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 0,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767615060000,
+          "expect": {
+            "alerts": [],
+            "state": {
+              "job": "hung",
+              "open": {
+                "stuck": 1767610860000
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614460000,
+            "dueAt": 1767614460000,
+            "summary": {
+              "name": "hung",
+              "definition": {
+                "name": "hung",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "90m"
+              },
+              "health": "stuck",
+              "open": [
+                "stuck"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hung",
+                "status": "timeout",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610860000,
+                "durationMs": 5460000,
+                "error": "Still running after 1h 30m; marked as timed out",
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614460000,
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 0,
+                "p50Ms": null,
+                "p95Ms": null
+              }
+            }
+          }
+        },
+        {
+          "op": "check",
+          "at": 1767615060001,
+          "expect": {
+            "alerts": [
+              {
+                "type": "missed",
+                "run": {
+                  "id": "r1",
+                  "job": "hung",
+                  "status": "timeout",
+                  "startedAt": 1767605400000,
+                  "finishedAt": 1767610860000,
+                  "durationMs": 5460000,
+                  "error": "Still running after 1h 30m; marked as timed out",
+                  "output": null,
+                  "metrics": {},
+                  "trigger": "run"
+                },
+                "details": {
+                  "dueAt": 1767614460000,
+                  "deadline": 1767615060000,
+                  "graceMs": 600000,
+                  "lastRunAt": 1767605400000
+                },
+                "job": "hung",
+                "definition": {
+                  "name": "hung",
+                  "schedule": "every 1h",
+                  "grace": "10m",
+                  "timeout": "90m"
+                },
+                "title": "hung missed its scheduled run",
+                "message": "Due 2026-01-05 12:01:00 UTC (10m ago), and no run had started by 2026-01-05 12:11:00 UTC (now) (grace 10m).\nSchedule: every 1h.\nLast run: timeout 2026-01-05 09:30:00 UTC (2h 41m ago).",
+                "at": 1767615060001
+              }
+            ],
+            "state": {
+              "job": "hung",
+              "open": {
+                "stuck": 1767610860000,
+                "missed": 1767615060001
+              },
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "lastAlertAt": null,
+              "pendingRecovery": [],
+              "undelivered": []
+            },
+            "nextExpectedAt": 1767614460000,
+            "dueAt": 1767614460000,
+            "summary": {
+              "name": "hung",
+              "definition": {
+                "name": "hung",
+                "schedule": "every 1h",
+                "grace": "10m",
+                "timeout": "90m"
+              },
+              "health": "stuck",
+              "open": [
+                "stuck",
+                "missed"
+              ],
+              "lastRun": {
+                "id": "r1",
+                "job": "hung",
+                "status": "timeout",
+                "startedAt": 1767605400000,
+                "finishedAt": 1767610860000,
+                "durationMs": 5460000,
+                "error": "Still running after 1h 30m; marked as timed out",
+                "output": null,
+                "metrics": {},
+                "trigger": "run"
+              },
+              "nextExpectedAt": 1767614460000,
+              "consecutiveFailures": 1,
+              "silencedUntil": null,
+              "stats": {
+                "runs": 1,
+                "okRate": 0,
+                "p50Ms": null,
+                "p95Ms": null
               }
             }
           }

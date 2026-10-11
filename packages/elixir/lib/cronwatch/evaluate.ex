@@ -225,7 +225,7 @@ defmodule Cronwatch.Evaluate do
   @doc """
   A run just started, held in `pending_runs` until its finish is evaluated
   (`release_run/2`), so a check can evaluate it if the process that finished
-  it stops before writing the evaluation. Written with `on_run_start/1`'s
+  it stops before writing the evaluation. Written with `on_run_start/4`'s
   state. Only the newest #{@max_pending_runs} are kept.
   """
   @spec hold_run(JobState.t(), String.t()) :: JobState.t()
@@ -487,17 +487,53 @@ defmodule Cronwatch.Evaluate do
     String.replace(body, ~r/\.(?=[eE]|\z)/, ".0")
   end
 
+  @doc "When a run finished, or nil while it runs (a run marked timeout has finished)."
+  def finished_at_of(%{status: status, finished_at: at}) when status != "running" and is_number(at), do: at
+  def finished_at_of(_run), do: nil
+
   @doc """
-  Called when a run starts. Missed and stuck are about the absence of a run,
-  so a run starting closes them without an alert; the recovered message
-  waits for a successful finish.
+  Whether `run` brings the schedule up to date at `now`, so missed may close
+  for it: judged with it as the job's last run, as `on_check/5` judges, the
+  run the schedule wants next is not yet past its deadline. A run that
+  started before the fire missed opened for does not cover that fire,
+  however late it finishes, and neither does a run a source reports only
+  once it is over whose start was before it. Every run starting now covers
+  it. A job with no schedule, or one that no longer parses, has nothing
+  due, so any run does.
   """
-  def on_run_start(state) do
-    state |> clone() |> close_condition("missed") |> close_condition("stuck")
+  def catches_up?(def, %Run{} = run, now) do
+    if Format.truthy?(Object.get(def, "schedule")) do
+      with {:ok, parsed} <- parsed_schedule(def),
+           {:ok, grace} <- grace_ms(def) do
+        case Schedule.expectation(parsed, run.started_at, run.started_at, grace, finished_at_of(run)) do
+          nil -> true
+          %{deadline: deadline} -> now <= deadline
+        end
+      else
+        _ -> true
+      end
+    else
+      true
+    end
   end
 
-  @doc "A run's start as it is written: `on_run_start/1`, and the run held as pending (`hold_run/2`)."
-  def start_run(state, run_id), do: state |> on_run_start() |> hold_run(run_id)
+  @doc """
+  Called when a run starts, or when a run a source reports is recorded.
+  Missed and stuck are about the absence of a run, so a run starting closes
+  them without an alert; the recovered message waits for a successful
+  finish. Missed closes only when the run catches the schedule up
+  (`catches_up?/3`), which a run starting now always does.
+  """
+  def on_run_start(def, %Run{} = run, state, now) do
+    state |> clone() |> close_missed(def, run, now) |> close_condition("stuck")
+  end
+
+  @doc "A run's start as it is written: `on_run_start/4`, and the run held as pending (`hold_run/2`)."
+  def start_run(def, run, state, now), do: def |> on_run_start(run, state, now) |> hold_run(run.id)
+
+  defp close_missed(state, def, run, now) do
+    if catches_up?(def, run, now), do: close_condition(state, "missed"), else: state
+  end
 
   # Math.max(1, def.failuresBeforeAlert ?? 1)
   defp failures_before_alert(def) do
@@ -514,7 +550,9 @@ defmodule Cronwatch.Evaluate do
 
   @doc """
   Called when a run finishes with status ok, failed, or timeout. `history` is
-  the job's earlier runs, newest first, not including this one. Answers
+  the job's earlier runs, newest first, not including this one. Missed
+  closes only when the run catches the schedule up (`catches_up?/3`): a run
+  that started before the fire missed opened for leaves it open. Answers
   `{:ok, {state, drafts}}`.
   """
   def on_run_finish(def, %Run{} = run, state, history, now) do
@@ -522,7 +560,7 @@ defmodule Cronwatch.Evaluate do
 
     if run.status == "ok" do
       next = %{next | consecutive_failures: 0}
-      next = next |> close_condition("missed") |> close_condition("stuck") |> close_condition("failed")
+      next = next |> close_missed(def, run, now) |> close_condition("stuck") |> close_condition("failed")
 
       with {:ok, slow} <- slow_threshold(def, history) do
         {next, alerts} =
@@ -584,7 +622,7 @@ defmodule Cronwatch.Evaluate do
       # failed or timeout
       # Held at 2^53 - 1: a count at the limit stays at the top.
       next = %{next | consecutive_failures: JobState.add_failure(next.consecutive_failures)}
-      next = close_condition(next, "missed")
+      next = close_missed(next, def, run, now)
       threshold = failures_before_alert(def)
       condition = if run.status == "timeout", do: "stuck", else: "failed"
 
@@ -667,20 +705,20 @@ defmodule Cronwatch.Evaluate do
       last_run_at = if last_run, do: last_run.started_at
       interval? = parsed.kind == "interval"
 
-      next_expected_at =
-        if interval?,
-          do: Schedule.next_fire(parsed, stored.created_at, last_run_at),
-          else: Schedule.next_fire(parsed, now, nil)
+      last_finished_at = if last_run, do: finished_at_of(last_run)
 
-      case Schedule.expectation(parsed, last_run_at, stored.created_at, grace) do
+      case Schedule.expectation(parsed, last_run_at, stored.created_at, grace, last_finished_at) do
         nil ->
-          {:ok, {{next, []}, next_expected_at, nil}}
+          {:ok, {{next, []}, Schedule.next_fire(parsed, now, nil), nil}}
 
         %{due_at: due_at, deadline: deadline} ->
+          next_expected_at = if interval?, do: due_at, else: Schedule.next_fire(parsed, now, nil)
+
           cond do
             # An interval's next run is due a period after the last one
-            # started. If that run is still going, the job is busy, not
-            # late; stuck covers one that never ends.
+            # started, or after it finished when it outlasted the period
+            # (Schedule.interval_due/3). If that run is still going, the job
+            # is busy, not late; stuck covers one that never ends.
             interval? and last_run != nil and last_run.status == "running" ->
               {:ok, {{next, []}, next_expected_at, due_at}}
 

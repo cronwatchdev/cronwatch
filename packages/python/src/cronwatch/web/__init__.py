@@ -20,7 +20,7 @@ token:       required to reach anything. Send it as `Authorization: Bearer <toke
              open the dashboard once with `?token=<token>` and a cookie is set. Defaults to
              $CRONWATCH_TOKEN; "" or only whitespace counts as unset, and anything but a
              string or None raises TypeError. With no token while the environment is
-             development or test (cronwatch._env), the routes make a random one and print a
+             development (cronwatch._env; "test" is not), the routes make a random one and print a
              sign-in link to stdout on their first request; with no token otherwise they
              answer 503. Pass token=None to opt out and serve them open everywhere, for
              example behind your own auth. /api/check also accepts the client's cron_secret
@@ -156,6 +156,14 @@ class BodyTooLarge(Exception):
         super().__init__(f"the request body is larger than {_MAX_BODY} bytes")
 
 
+class BadContentLength(Exception):
+    """A Content-Length that is not a length: answered 400, as Node's server
+    answers one before the SDK's routes see it, and the body is not read."""
+
+    def __init__(self) -> None:
+        super().__init__("the request's Content-Length is not a number of bytes")
+
+
 @dataclass
 class Request:
     """What the routes read of a request, in the shape of a fetch Request.
@@ -199,7 +207,11 @@ class Request:
 
     @classmethod
     def from_wsgi(cls, environ: Mapping[str, Any]) -> Request:
-        """A WSGI environ, read as the SDK reads a fetch Request."""
+        """A WSGI environ, read as the SDK reads a fetch Request. A
+        Content-Length that is not a length raises BadContentLength here,
+        before anything is read."""
+        length = environ.get("CONTENT_LENGTH")
+        size = _content_length(length) if length else None
         headers: dict[str, str] = {}
         for key, value in environ.items():
             if key.startswith("HTTP_"):
@@ -219,9 +231,7 @@ class Request:
             stream = environ.get("wsgi.input")
             if stream is None:
                 return b""
-            length = environ.get("CONTENT_LENGTH")
-            if length:
-                size = int(length)
+            if size is not None:
                 if size > _MAX_BODY:
                     raise BodyTooLarge()
                 # read(-1) would read everything.
@@ -435,13 +445,54 @@ def _is_loopback_origin(origin: str) -> bool:
     return octets is not None and all(int(o) <= 255 for o in octets.groups())
 
 
-def _strip_base(pathname: str, base: str) -> str:
-    path = pathname[len(base) :] if pathname.startswith(base) else pathname
+def _content_length(value: Any) -> int:
+    """A Content-Length header's value as a number of bytes: digits only, as
+    HTTP has it (no sign, no spaces inside); BadContentLength otherwise."""
+    text = str(value).strip(" \t")
+    if not text.isascii() or not text.isdigit():
+        raise BadContentLength()
+    return int(text)
+
+
+def _strip_base(pathname: str, base: str) -> str | None:
+    """The path below the base, or None when the request is not under it.
+    The pathname, its dot segments resolved (see _resolve_dots), must be the
+    base or start with the base and a "/": "/cronwatchapi/jobs" is not under
+    "/cronwatch", and neither is "/cronwatch/../api/jobs" (read as
+    "/api/jobs"). An empty base, for routes mounted at the root, takes every
+    path."""
+    pathname = _resolve_dots(pathname)
+    if base != "" and pathname != base and not pathname.startswith(f"{base}/"):
+        return None
+    path = pathname[len(base) :]
     if path == "":
         path = "/"
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
     return path
+
+
+def _resolve_dots(pathname: str) -> str:
+    """The pathname with its dot segments resolved as the WHATWG URL parser
+    resolves them ("." and ".." and their %2e spellings, any case),
+    percent-encoding otherwise left as it is. A server usually does this
+    before the app sees the path; some do not."""
+    segments = pathname.split("/")[1:] if pathname.startswith("/") else pathname.split("/")
+    out: list[str] = []
+    for i, segment in enumerate(segments):
+        last = i == len(segments) - 1
+        lower = segment.lower()
+        if lower in ("..", ".%2e", "%2e.", "%2e%2e"):
+            if out:
+                out.pop()
+            if last:
+                out.append("")
+        elif lower in (".", "%2e"):
+            if last:
+                out.append("")
+        else:
+            out.append(segment)
+    return "/" + "/".join(out)
 
 
 def _first_value(value: str | None) -> str | None:
@@ -624,7 +675,12 @@ class Web:
 
     def __call__(self, environ: Mapping[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         """The WSGI app."""
-        response = self.handle(Request.from_wsgi(environ))
+        try:
+            request = Request.from_wsgi(environ)
+        except BadContentLength:
+            response = _bad_length()
+        else:
+            response = self.handle(request)
         start_response(f"{response.status} {http.HTTPStatus(response.status).phrase}", response.wsgi_headers())
         return [] if str(environ.get("REQUEST_METHOD", "")).upper() == "HEAD" else [response.body]
 
@@ -667,10 +723,15 @@ class Web:
         base = self._base_path if self._base_path is not None else re.sub(r"/+\Z", "", request.mount)
         try:
             path = _strip_base(request.path, base)
+            if path is None:
+                # Not under the base at all: nothing here answers it, signed in or not.
+                return _html_response(_html.message_page("Not found", _resolve_dots(request.path), base), 404)
             wants_html = not path.startswith("/api")
             return self._serve(request, path, wants_html, base)
         except BodyTooLarge:
             return _too_large()
+        except BadContentLength:
+            return _bad_length()
         except Exception as error:
             try:
                 self.client.on_error(error, "routes")
@@ -988,6 +1049,11 @@ def _too_large_body() -> bytes:
 def _too_large() -> Response:
     """The answer to a body over MAX_BODY bytes."""
     return _api({"ok": False, "error": "Request body too large"}, 413)
+
+
+def _bad_length() -> Response:
+    """The answer to a Content-Length that is not a length."""
+    return _api({"ok": False, "error": "Bad request"}, 400)
 
 
 async def _read_asgi_body(receive: Callable[..., Any]) -> bytes | BodyTooLarge | None:

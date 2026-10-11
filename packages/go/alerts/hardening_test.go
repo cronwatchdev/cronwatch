@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,7 +140,8 @@ func TestOneDeadlineForTheWholeRequest(t *testing.T) {
 		t.Fatalf("took %v", took)
 	}
 
-	// An answer whose body is still arriving at the deadline is the answer with no body.
+	// An error answer whose body is still arriving at the deadline is
+	// quoted as far as it was read, as the SDK's errorText keeps it.
 	drip := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		for i := 0; i < 100; i++ {
@@ -156,7 +158,8 @@ func TestOneDeadlineForTheWholeRequest(t *testing.T) {
 	}))
 	defer drip.Close()
 	rb, _ := Rollbar(RollbarOptions{AccessToken: "rb-secret", HTTPClient: to(drip)})
-	if err := rb.Send(bg, sample(t), cronwatch.ChannelContext{}); err == nil || err.Error() != "Rollbar https://api.rollbar.com answered 500" {
+	if err := rb.Send(bg, sample(t), cronwatch.ChannelContext{}); err == nil ||
+		!regexp.MustCompile(`^Rollbar https://api\.rollbar\.com answered 500: x+$`).MatchString(err.Error()) {
 		t.Fatalf("got %v", err)
 	}
 
@@ -169,7 +172,8 @@ func TestOneDeadlineForTheWholeRequest(t *testing.T) {
 }
 
 func TestAnAnswerIsReadToOneMebibyteAtMost(t *testing.T) {
-	// 64 MiB of zeros, gzipped: the transport decodes it, and only the first MiB is read.
+	// 64 MiB of zeros, gzipped: the transport decodes it, and only the
+	// first MiB of a success is read, 64 KiB of an error.
 	var zipped bytes.Buffer
 	z := gzip.NewWriter(&zipped)
 	chunk := make([]byte, 1<<20)
@@ -177,16 +181,24 @@ func TestAnAnswerIsReadToOneMebibyteAtMost(t *testing.T) {
 		z.Write(chunk)
 	}
 	z.Close()
+	var status atomic.Int32
+	status.Store(500)
 	bomb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
-		w.WriteHeader(500)
+		w.WriteHeader(int(status.Load()))
 		w.Write(zipped.Bytes())
 	}))
 	defer bomb.Close()
 	resp, err := post.Do(bg, nil, bomb.URL, nil, "{}")
-	if err != nil || resp.Status != 500 || len(resp.Body) != post.MaxBody {
+	if err != nil || resp.Status != 500 || len(resp.Body) != post.ErrorReadMax {
 		t.Fatalf("status %d, %d bytes, %v", resp.Status, len(resp.Body), err)
 	}
+	status.Store(200)
+	resp, err = post.Do(bg, nil, bomb.URL, nil, "{}")
+	if err != nil || resp.Status != 200 || len(resp.Body) != post.MaxBody {
+		t.Fatalf("status %d, %d bytes, %v", resp.Status, len(resp.Body), err)
+	}
+	status.Store(500)
 	rb, _ := Rollbar(RollbarOptions{AccessToken: "rb-secret", HTTPClient: to(bomb)})
 	err = rb.Send(bg, sample(t), cronwatch.ChannelContext{})
 	if err == nil || js.Length16(err.Error()) > len("Rollbar https://api.rollbar.com answered 500: ")+200 {

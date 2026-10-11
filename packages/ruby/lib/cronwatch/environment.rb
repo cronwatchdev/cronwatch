@@ -120,7 +120,7 @@ module Cronwatch
     # environment, so under one of them, in production too, RACK_ENV alone
     # reads "development". There it takes CRONWATCH_ENV, APP_ENV, Rails.env,
     # or RAILS_ENV to say development; any other value of RACK_ENV that reads
-    # as development ("test", "dev") still counts, as no server sets it.
+    # as development ("dev", "local") still counts, as no server sets it.
     def stated_development?
       return false unless development?
 

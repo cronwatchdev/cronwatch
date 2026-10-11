@@ -155,10 +155,14 @@ def test_the_prefix_without_its_slash_is_redirected_by_django() -> None:
 
 
 def test_base_path_and_origin_come_from_the_settings() -> None:
-    with override_settings(CRONWATCH={"TOKEN": "tok", "BASE_PATH": "/elsewhere/", "ORIGIN": "https://app.example.com"}):
+    with override_settings(CRONWATCH={"TOKEN": "tok", "BASE_PATH": f"{BASE}//", "ORIGIN": "https://app.example.com"}):
         res = Client().get(f"{BASE}/?token=tok")
         assert res["location"] == f"{BASE}/"
-        assert res["set-cookie"].endswith("; Path=/elsewhere; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure"), "the public origin is https"
+        assert res["set-cookie"].endswith(f"; Path={BASE}; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure"), "the public origin is https"
+    with override_settings(CRONWATCH={"TOKEN": "tok", "BASE_PATH": "/elsewhere/"}):
+        res = Client().get(f"{BASE}/?token=tok")
+        assert res.status_code == 404, "the routes answer only under their base path"
+        assert f"{BASE}/".encode() in res.content, "the not-found page names the path"
 
 
 def test_debug_is_the_development_environment(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:

@@ -29,9 +29,10 @@ class Slack:
     (api.slack.com/messaging/webhooks)::
 
         Slack(webhook_url=os.environ["SLACK_WEBHOOK_URL"],
-              link=lambda alert: f"https://app.example.com/cronwatch/jobs/{alert.job}")
+              link=lambda alert: f"https://app.example.com/cronwatch/jobs/{urllib.parse.quote(alert.job, safe='')}")
 
-    The URL is taken by name; ``Slack(url)``, positionally, is deprecated (it
+    Any ``<``, ``>``, or ``|`` in the link is percent-encoded, so it cannot
+    end Slack's link early. The URL is taken by name; ``Slack(url)``, positionally, is deprecated (it
     warns, and goes in 2.0).
     """
 
@@ -55,7 +56,7 @@ class Slack:
 
     def send(self, alert: Alert, context: Any = None) -> None:
         url = link_for(self._link, alert)
-        title = f"{_EMOJI[str(alert.type)]} *{_escape(alert.title)}*{f' (<{url}|open>)' if url else ''}"
+        title = f"{_EMOJI[str(alert.type)]} *{_escape(alert.title)}*{f' (<{_link_target(url)}|open>)' if url else ''}"
         body = slice16(_code_block_safe(_escape(alert.message)), 2900)
         blocks: list[dict[str, Any]] = [
             {"type": "section", "text": {"type": "mrkdwn", "text": title}},
@@ -79,6 +80,11 @@ class Slack:
 def _escape(text: str) -> str:
     """Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _link_target(url: str) -> str:
+    """A link's URL as Slack's <url|text> can hold it: ``<``, ``>``, and ``|`` percent-encoded, which ends neither the link nor its text."""
+    return url.replace("<", "%3C").replace(">", "%3E").replace("|", "%7C")
 
 
 def _code_block_safe(text: str) -> str:

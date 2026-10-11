@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   emptyState, failureCount, jobHealth, MAX_DURATION_MS, muteOpens, normalizeState, onCheck, onRunFinish, onRunStart, runDuration, stateVersion, summarize,
 } from "../src/evaluate.js";
-import type { AlertDetails, AlertDraft, JobDefinition, Run, StoredJob } from "../src/types.js";
+import type { AlertDetails, AlertDraft, JobDefinition, JobState, Run, StoredJob, StoredJobDefinition } from "../src/types.js";
 import { MIN, HOUR, T0 } from "./helpers.js";
 
 let counter = 0;
@@ -12,6 +12,11 @@ function run(job: string, status: Run["status"], startedAt: number, durationMs: 
     id: `r${++counter}`, job, status, startedAt, finishedAt: durationMs === null ? null : startedAt + durationMs,
     durationMs, error: status === "failed" ? "boom" : null, output: null, metrics: {}, trigger: "run", ...extra,
   };
+}
+
+/** onRunStart for a run starting at `at`, as the client calls it. */
+function startNow(d: JobDefinition, state: JobState, at: number): JobState {
+  return onRunStart(d, { startedAt: at, status: "running", finishedAt: null }, state, at);
 }
 
 function details<K extends AlertDraft["type"]>(draft: AlertDraft | undefined, type: K): AlertDetails[K] {
@@ -34,7 +39,7 @@ test("a failure opens `failed` once, and success recovers", () => {
   assert.equal(e2.state.consecutiveFailures, 2);
 
   const r3 = run("j", "ok", T0 + 2 * HOUR);
-  const started = onRunStart(e2.state);
+  const started = startNow(def, e2.state, T0 + 2 * HOUR);
   const e3 = onRunFinish(def, r3, started, [r2, r1], T0 + 2 * HOUR + 1000);
   assert.deepEqual(e3.alerts.map((a) => a.type), ["recovered"]);
   assert.deepEqual(details(e3.alerts[0], "recovered").after, ["failed"]);
@@ -213,7 +218,7 @@ test("a schedule removed while missed is open closes missed with a recovery of i
   assert.equal(gone.nextExpectedAt, null);
   assert.deepEqual(onCheck(bare, { ...stored, definition: bare }, null, gone.state, T0 + 2 * MIN).alerts, [], "once");
   // The next successful run has nothing left to recover.
-  const ok = onRunFinish(bare, run("j", "ok", T0 + HOUR), onRunStart(gone.state), [], T0 + HOUR + 1000);
+  const ok = onRunFinish(bare, run("j", "ok", T0 + HOUR), startNow(bare, gone.state, T0 + HOUR), [], T0 + HOUR + 1000);
   assert.deepEqual(ok.alerts, []);
 });
 
@@ -221,7 +226,7 @@ test("an unscheduled recovery names missed alone; other conditions keep their ow
   const d = { name: "j", schedule: "every 30m", grace: "1m" };
   const stored: StoredJob = { name: "j", definition: d, createdAt: T0, updatedAt: T0 };
   const failedRun = run("j", "failed", T0 + MIN);
-  const failed = onRunFinish(d, failedRun, onRunStart(emptyState("j")), [], T0 + MIN + 1000);
+  const failed = onRunFinish(d, failedRun, startNow(d, emptyState("j"), T0 + MIN), [], T0 + MIN + 1000);
   const missed = onCheck(d, stored, failedRun, failed.state, T0 + 40 * MIN);
   assert.deepEqual(missed.alerts.map((a) => a.type), ["missed"]);
   // An earlier missed, closed by a run start, may already be waiting in pendingRecovery.
@@ -232,7 +237,7 @@ test("an unscheduled recovery names missed alone; other conditions keep their ow
   assert.equal(gone.alerts[0]!.run?.id, failedRun.id);
   assert.deepEqual(Object.keys(gone.state.open), ["failed"], "failed stays open");
   assert.deepEqual(gone.state.pendingRecovery, [], "missed is not owed a second recovery");
-  const ok = onRunFinish(bare, run("j", "ok", T0 + HOUR), onRunStart(gone.state), [failedRun], T0 + HOUR + 1000);
+  const ok = onRunFinish(bare, run("j", "ok", T0 + HOUR), startNow(bare, gone.state, T0 + HOUR), [failedRun], T0 + HOUR + 1000);
   assert.deepEqual(details(ok.alerts[0], "recovered"), { after: ["failed"] }, "the normal recovery names failed only");
 });
 
@@ -251,12 +256,12 @@ test("missed closed by a run start still recovers, even when that run fails quie
   const missed = onCheck(d, stored, null, emptyState("j"), T0);
   assert.deepEqual(missed.alerts.map((a) => a.type), ["missed"]);
   // A run starts (closing missed without a message) and fails, below the alert threshold.
-  const started = onRunStart(missed.state);
+  const started = startNow(d, missed.state, T0);
   assert.deepEqual(started.open, {});
   const failed = onRunFinish(d, run("j", "failed", T0), started, [], T0 + 1000);
   assert.deepEqual(failed.alerts, []);
   // The next success owes the recovery.
-  const ok = onRunFinish(d, run("j", "ok", T0 + HOUR), onRunStart(failed.state), [], T0 + HOUR + 1000);
+  const ok = onRunFinish(d, run("j", "ok", T0 + HOUR), startNow(d, failed.state, T0 + HOUR), [], T0 + HOUR + 1000);
   assert.deepEqual(ok.alerts.map((a) => a.type), ["recovered"]);
   assert.deepEqual(details(ok.alerts[0], "recovered").after, ["missed"]);
 });
@@ -266,7 +271,7 @@ test("stuck closed by the next run start is recovered by a later success", () =>
   const stuck = onRunFinish(d, run("j", "timeout", T0 - HOUR), emptyState("j"), [], T0);
   assert.deepEqual(stuck.alerts.map((a) => a.type), ["stuck"]);
   // The next run starts in another process, so its finish sees stuck already closed.
-  const closed = onRunStart(stuck.state);
+  const closed = startNow(d, stuck.state, T0 + MIN);
   const ok = onRunFinish(d, run("j", "ok", T0 + MIN), closed, [], T0 + 2 * MIN);
   assert.deepEqual(details(ok.alerts[0], "recovered").after, ["stuck"]);
 });
@@ -355,3 +360,61 @@ test("failureCount: a whole number held at 2^53 - 1, else 0; a failed run from t
   assert.equal(state.consecutiveFailures, MAX_DURATION_MS);
   assert.deepEqual(alerts.map((a) => a.details), [{ consecutiveFailures: MAX_DURATION_MS, threshold: 3 }]);
 });
+
+test("a finish closes missed only when the run covers the fire missed opened for", () => {
+  const d: StoredJobDefinition = { name: "j", schedule: "0 * * * *", timezone: "UTC", grace: "10m" };
+  const stored: StoredJob = { name: "j", definition: d, createdAt: T0 - 3 * HOUR, updatedAt: T0 - 3 * HOUR };
+  const at = (h: number, m = 0) => Date.UTC(2026, 0, 5, h, m);
+  const running = run("j", "running", at(2), null);
+  const started = startNow(d, emptyState("j"), at(2));
+  const missed = onCheck(d, stored, running, started, at(3, 15));
+  assert.deepEqual(missed.alerts.map((a) => a.type), ["missed"]);
+  for (const status of ["ok", "failed"] as const) {
+    const done = { ...running, status, finishedAt: at(3, 30), durationMs: 90 * MIN };
+    const finished = onRunFinish(d, done, missed.state, [], at(3, 30));
+    assert.equal(finished.state.open.missed, at(3, 15), `${status}: missed stays open`);
+    assert.ok(!finished.alerts.some((a) => a.type === "recovered"), status);
+    assert.deepEqual(onCheck(d, stored, done, finished.state, at(3, 31)).alerts, [], `${status}: not opened again`);
+  }
+  // A run that covers the fire does close it, and the finish recovers.
+  const late = run("j", "ok", at(3, 20), 60_000);
+  const closed = onRunFinish(d, late, missed.state, [], at(3, 21));
+  assert.deepEqual(closed.alerts.map((a) => a.type), ["recovered"]);
+  assert.deepEqual(closed.state.open, {});
+});
+
+test("a run a source reports at its finish closes missed only when its start covers the fire", () => {
+  const d: JobDefinition = { name: "j", schedule: "0 * * * *", timezone: "UTC", grace: "10m" };
+  const at = (h: number, m = 0) => Date.UTC(2026, 0, 5, h, m);
+  const open = { ...emptyState("j"), open: { missed: at(3, 11) } };
+  const before = run("j", "ok", at(2, 58), 32 * MIN);
+  assert.equal(onRunStart(d, before, open, at(3, 30)).open.missed, at(3, 11), "started before 03:00 and its minute of slack");
+  const covering = run("j", "ok", at(3, 2), 28 * MIN);
+  assert.deepEqual(onRunStart(d, covering, open, at(3, 30)).open, {});
+  assert.deepEqual(onRunStart(d, covering, open, at(3, 30)).pendingRecovery, ["missed"]);
+  // Stuck always closes on a start.
+  assert.deepEqual(onRunStart(d, before, { ...emptyState("j"), open: { stuck: at(3) } }, at(3, 30)).open, {});
+  // No schedule: nothing is due, so any run closes missed.
+  assert.deepEqual(onRunStart({ name: "j" }, before, open, at(3, 30)).open, {});
+});
+
+test("an interval is due a period after the finish of a run that outlasted it", () => {
+  const d: StoredJobDefinition = { name: "j", schedule: "every 1h", grace: "10m" };
+  const stored: StoredJob = { name: "j", definition: d, createdAt: T0 - DAY_MS, updatedAt: T0 - DAY_MS };
+  const long = run("j", "ok", T0, 90 * MIN);
+  const after = onCheck(d, stored, long, emptyState("j"), T0 + 91 * MIN);
+  assert.deepEqual(after.alerts, []);
+  assert.equal(after.dueAt, T0 + 150 * MIN);
+  assert.equal(after.nextExpectedAt, T0 + 150 * MIN);
+  assert.deepEqual(onCheck(d, stored, long, emptyState("j"), T0 + 160 * MIN).alerts, []);
+  assert.deepEqual(onCheck(d, stored, long, emptyState("j"), T0 + 160 * MIN + 1).alerts.map((a) => a.type), ["missed"]);
+  // Within its period: due a period after it started, as before.
+  const short = run("j", "ok", T0, 30 * MIN);
+  assert.equal(onCheck(d, stored, short, emptyState("j"), T0 + 31 * MIN).dueAt, T0 + HOUR);
+  // Finishing exactly at the period is not past it.
+  assert.equal(onCheck(d, stored, run("j", "ok", T0, HOUR), emptyState("j"), T0 + HOUR).dueAt, T0 + HOUR);
+  // A run marked timeout by a check has finished too.
+  assert.equal(onCheck(d, stored, run("j", "timeout", T0, 2 * HOUR), emptyState("j"), T0 + 2 * HOUR).dueAt, T0 + 3 * HOUR);
+});
+
+const DAY_MS = 24 * HOUR;

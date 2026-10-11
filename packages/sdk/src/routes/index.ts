@@ -17,10 +17,10 @@ export interface RoutesOptions {
    * only whitespace, given here or in the variable, counts as unset, and any
    * other type (false, a number) throws.
    * With no token in development (the first of CRONWATCH_ENV, APP_ENV, and
-   * NODE_ENV that is set names "development", "dev", "local", "test", or
-   * "testing"), the routes make a random one and print a sign-in link to the
-   * server log on their first request; with no token otherwise they answer
-   * 503. Pass `null` to opt out
+   * NODE_ENV that is set names "development", "dev", or "local"; "test" and
+   * "testing" are not development), the routes make a random one and print a
+   * sign-in link to the server log on their first request; with no token
+   * otherwise they answer 503. Pass `null` to opt out
    * and serve them open everywhere, for example behind your own auth.
    *
    * The check endpoint (/api/check) also accepts the client's cronSecret, so
@@ -252,8 +252,16 @@ function signInReturn(referer: string | null, publicOrigin: string, base: string
   return url.searchParams.has("token") ? `${base}/` : referer;
 }
 
-function stripBase(pathname: string, base: string): string {
-  let path = pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
+/**
+ * The path below the base, or null when the request is not under it. The
+ * pathname, its dot segments already resolved by URL, must be the base or
+ * start with the base and a "/": "/cronwatchapi/jobs" is not under
+ * "/cronwatch", and neither is "/cronwatch/../api/jobs" (read as "/api/jobs").
+ * An empty base, for routes mounted at the root, takes every path.
+ */
+function stripBase(pathname: string, base: string): string | null {
+  if (base !== "" && pathname !== base && !pathname.startsWith(`${base}/`)) return null;
+  let path = pathname.slice(base.length);
   if (path === "") path = "/";
   if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
   return path;
@@ -591,6 +599,8 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
     try {
       const url = new URL(request.url);
       const path = stripBase(url.pathname, base);
+      // Not under the base at all: nothing here answers it, signed in or not.
+      if (path === null) return html(messagePage("Not found", url.pathname, base), 404);
       wantsHtml = !path.startsWith("/api");
       return await serve(request, url, path, wantsHtml);
     } catch (e) {

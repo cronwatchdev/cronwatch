@@ -215,6 +215,12 @@ const requests = [
   ["POST", "/cronwatch/signin", { ...form, origin: "https://evil.example" }, "token=tok"],
   ["GET", "/cronwatch/signin"],
   ["GET", "/cronwatch/signin", bearer],
+  // Only the base and the paths under it are the routes': a path that merely
+  // starts with the base's text, or lies outside it, is not found, signed in or not.
+  ["GET", "/cronwatch", bearer],
+  ["GET", "/cronwatchapi/jobs", bearer],
+  ["GET", "/api/jobs", bearer],
+  ["GET", "/cronwatch-x/api/jobs"],
 ];
 
 const captures = [];

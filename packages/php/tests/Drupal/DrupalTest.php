@@ -699,6 +699,20 @@ final class DrupalTest extends TestCase
         $this->assertSame('1h', $definition['grace']);
         $this->assertSame(2, $definition['failuresBeforeAlert']);
 
+        // The worker handed out is wrapped: its own methods are passed on to it, and inner() gives it.
+        $worker = self::inDrupal(<<<'PHP'
+            $worker = \Drupal::service('plugin.manager.queue_worker')->createInstance('cwt_flaky');
+            try {
+              $worker->noSuchMethod();
+              $missing = 'none';
+            }
+            catch (\BadMethodCallException $e) {
+              $missing = $e->getMessage();
+            }
+            echo json_encode([get_class($worker), $worker->attempts('a'), get_class($worker->inner()), $missing]);
+            PHP);
+        $this->assertSame([\Drupal\cronwatch\WatchedQueueWorker::class, 3, 'Drupal\cwt_fixtures\Plugin\QueueWorker\Flaky', 'Call to undefined method Drupal\cwt_fixtures\Plugin\QueueWorker\Flaky::noSuchMethod()'], $worker);
+
         // Cron's own processing of a watched queue is recorded the same way.
         self::inDrupal("\\Drupal::queue('cwt_flaky')->createItem(['id' => 'c']); echo json_encode(TRUE);");
         $this->must(['cron']);
@@ -915,6 +929,20 @@ final class DrupalTest extends TestCase
         $settings = self::$web . '/sites/default/settings.php';
         @chmod(dirname($settings), 0755);
         @chmod($settings, 0644);
+        // A token shorter than 24 characters keeps the API shut, saying why, on the settings page too.
+        file_put_contents($settings, "\$settings['cronwatch_token'] = 'short-token';\n", FILE_APPEND);
+        self::stopServer();
+        [$status, $headers, $body] = self::http('GET', '/cronwatch/api/jobs', null, ['Authorization' => 'Bearer short-token']);
+        $this->assertSame(503, $status, $body);
+        $this->assertStringStartsWith('text/plain', $headers['content-type']);
+        $this->assertStringContainsString('needs at least 24', $body);
+        $this->assertStringNotContainsString('short-token', $body);
+        [$status] = self::http('POST', '/cronwatch/api/check', null, ['Authorization' => 'Bearer short-token']);
+        $this->assertSame(503, $status);
+        $this->assertStringContainsString('The JSON API is off', self::inDrupal(<<<'PHP'
+            $form = \Drupal::formBuilder()->getForm(\Drupal\cronwatch\Form\SettingsForm::class);
+            echo json_encode((string) ($form['api']['#markup'] ?? ''));
+            PHP));
         $token = 'cwt-' . bin2hex(random_bytes(12));
         file_put_contents($settings, "\$settings['cronwatch_token'] = '{$token}';\n", FILE_APPEND);
         self::stopServer();

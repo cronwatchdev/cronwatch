@@ -328,6 +328,16 @@ pub(crate) struct Inner {
     pub warned_deferred_start: AtomicBool,
 }
 
+impl Drop for Inner {
+    /// The checking task holds the client only weakly, and would end at its
+    /// next tick; it is ended now instead.
+    fn drop(&mut self) {
+        if let Some(timer) = self.timer.get_mut().unwrap_or_else(|e| e.into_inner()).take() {
+            timer.abort();
+        }
+    }
+}
+
 /// Watches an app's jobs: it records their runs in a store, judges each one,
 /// sends alerts, and runs the checks that find missed and stuck runs. One per
 /// app, made once with [`Client::builder`]. A cheap handle (an `Arc`
@@ -470,12 +480,59 @@ impl Client {
         }
         self.inner.store.init().await.map_err(Error::store)?;
         *ready = true;
+        let missing = self.missing_conditional_writes().await;
+        if !missing.is_empty() {
+            // Once per client: it still works, but only as long as one
+            // process at a time uses the store.
+            self.report(
+                Error::Other(format!(
+                    "the store has no {}, so two processes sharing it can overwrite each other's state or both evaluate the same run; it is safe only while one process at a time uses it",
+                    missing.join(" or ")
+                )),
+                "store",
+            );
+        }
         if self.inner.default_store && environment() == "production" {
             eprintln!(
                 "[cronwatch] using the in-memory store: runs and state are lost on restart. Pass a store with ClientBuilder::store, such as cronwatch_sqlx::SqlStore over the app's database."
             );
         }
         Ok(())
+    }
+
+    /// The conditional writes the store does not implement, in the SDK's
+    /// order. A trait's provided method cannot be told from one the store
+    /// overrides, so each is asked for a write that can never happen (a
+    /// state of a job no name allows, at a version no state has; a run no id
+    /// allows), and only `Unsupported` counts as missing: an error or a
+    /// panic is the store's own, which its next real call reports.
+    async fn missing_conditional_writes(&self) -> Vec<&'static str> {
+        use crate::run::CatchUnwind;
+        let store = &self.inner.store;
+        type Answer = Result<Result<bool, crate::store::BoxError>, Box<dyn std::any::Any + Send>>;
+        let unsupported = |answer: Answer| matches!(answer, Ok(Err(e)) if crate::store::is_unsupported(&e));
+        let mut missing = Vec::new();
+        let state = crate::evaluate::empty_state("");
+        if unsupported(CatchUnwind(Box::pin(async { store.compare_and_set_state(&state, -1).await })).await) {
+            missing.push("compare_and_set_state");
+        }
+        let run = crate::types::Run {
+            id: String::new(),
+            job: String::new(),
+            status: crate::types::RunStatus::Running,
+            started_at: 0,
+            finished_at: None,
+            duration_ms: None,
+            error: None,
+            output: None,
+            metrics: crate::types::Metrics::new(),
+            trigger: String::new(),
+        };
+        let from = [crate::types::RunStatus::Running];
+        if unsupported(CatchUnwind(Box::pin(async { store.update_run_if(&run, &from).await })).await) {
+            missing.push("update_run_if");
+        }
+        missing
     }
 
     /// Writes the declaration of `def`'s name as it stands, unless the store

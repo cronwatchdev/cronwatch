@@ -250,6 +250,7 @@ fn every(transport: Option<Arc<dyn Transport>>, webhook_url: &str) -> Vec<Arc<dy
             headers: vec![(s("authorization"), s("Bearer wh-secret"))],
             secret: s("s"),
             transport: t(),
+            ..Default::default()
         }),
         slack(SlackOptions { webhook_url: webhook_url.into(), transport: t(), ..Default::default() }),
         discord(DiscordOptions { webhook_url: webhook_url.into(), transport: t(), ..Default::default() }),
@@ -294,12 +295,15 @@ async fn one_deadline_for_the_whole_request() {
     assert_eq!(err.to_string(), "The operation was aborted due to timeout");
     assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
 
-    // An answer whose body is still arriving at the deadline is the answer with no body.
+    // A refusal whose body is still arriving at the deadline is the answer
+    // with what had arrived, as the SDK's errorText keeps it.
     let drip = Server::start(|_| Reply::Drip).await;
     let answer = fetch(&t, Duration::from_millis(300), &drip.url, &[], b"{}".to_vec()).await.unwrap();
-    assert_eq!((answer.status, answer.body.as_str()), (500, ""));
+    assert_eq!(answer.status, 500);
+    assert!(answer.body.len() < 100 && answer.body.bytes().all(|b| b == b'x'), "{:?}", answer.body);
     let refused = post::refused("Rollbar", "https://api.rollbar.com/api/1/item/", &answer, &[]);
-    assert_eq!(refused.to_string(), "Rollbar https://api.rollbar.com answered 500");
+    let quoted = if answer.body.is_empty() { String::new() } else { format!(": {}", answer.body) };
+    assert_eq!(refused.to_string(), format!("Rollbar https://api.rollbar.com answered 500{quoted}"));
 }
 
 /// A channel's own deadline, on tokio's paused clock: a server that never
@@ -315,19 +319,26 @@ async fn a_channel_stops_waiting_at_ten_seconds() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_answer_is_read_to_one_mebibyte_at_most() {
-    // 64 MiB of zeros, gzipped: the transport decodes it, and only the first MiB is read.
+async fn an_answer_is_read_to_one_mebibyte_and_a_refusal_to_64_kibibytes_at_most() {
+    // 64 MiB of zeros, gzipped: the transport decodes it, and only the first
+    // 64 KiB of a refusal is read (a MiB of an answer that is not one).
     let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     let chunk = vec![0u8; 1 << 20];
     for _ in 0..64 {
         z.write_all(&chunk).unwrap();
     }
     let zipped = z.finish().unwrap();
+    let ok_zipped = zipped.clone();
     let bomb =
         Server::start(move |_| Reply::Answer(500, vec![("content-encoding", "gzip".into())], zipped.clone())).await;
     let answer =
         fetch(&ReqwestTransport::new().unwrap(), post::DEADLINE, &bomb.url, &[], b"{}".to_vec()).await.unwrap();
-    assert_eq!((answer.status, answer.body.len()), (500, post::ANSWER_MAX));
+    assert_eq!((answer.status, answer.body.len()), (500, post::ERROR_READ_MAX));
+    let accepted =
+        Server::start(move |_| Reply::Answer(200, vec![("content-encoding", "gzip".into())], ok_zipped.clone())).await;
+    let answer =
+        fetch(&ReqwestTransport::new().unwrap(), post::DEADLINE, &accepted.url, &[], b"{}".to_vec()).await.unwrap();
+    assert_eq!((answer.status, answer.body.len()), (200, post::ANSWER_MAX));
     let rb = rollbar(RollbarOptions { access_token: "rb-secret".into(), transport: to(&bomb), ..Default::default() })
         .unwrap();
     let err = rb.send(&sample(), &quiet()).await.unwrap_err().to_string();

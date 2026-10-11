@@ -224,7 +224,7 @@ public sealed partial class CronwatchClient
         }
         // Closing missed and stuck happens beside the job, which never waits on it. A run that may
         // be given back closes them only once it is known not to be.
-        Task? closing = recorded && !options.TakesBack ? Spawn(() => CloseOnStartAsync(def.Name, run.Id)) : null;
+        Task? closing = recorded && !options.TakesBack ? Spawn(() => CloseOnStartAsync(def, run)) : null;
 
         double timeout = TimeoutOrDefault(def.Stored);
         double delay = Math.Min(Math.Max(0, timeout), Evaluate.MaxDurationMs);
@@ -270,7 +270,7 @@ public sealed partial class CronwatchClient
         Task? closing = o.Closing;
         if (o.Recorded && o.Options.TakesBack)
         {
-            closing = Spawn(() => CloseOnStartAsync(def.Name, run.Id));
+            closing = Spawn(() => CloseOnStartAsync(def, run));
         }
         string? failure;
         string? resultText = null;
@@ -394,18 +394,20 @@ public sealed partial class CronwatchClient
     }
 
     /// <summary>
-    /// A run's start as the job's state takes it: missed and stuck close, and the run is held in
+    /// A run's start as the job's state takes it: missed (when the run catches the schedule up,
+    /// <see cref="Evaluate.CatchesUp"/>) and stuck close, and the run is held in
     /// <c>pendingRuns</c> (<see cref="Evaluate.HoldRun"/>) until its finish is evaluated.
+    /// <paramref name="run"/> is the run as it started.
     /// </summary>
-    internal async Task CloseOnStartAsync(string name, string runId)
+    internal async Task CloseOnStartAsync(JobDef def, Run run)
     {
         try
         {
-            await UpdateStateAsync(name, s => (Evaluate.HoldRun(Evaluate.OnRunStart(s), runId), true)).ConfigureAwait(false);
+            await UpdateStateAsync(def.Name, s => (Evaluate.HoldRun(Evaluate.OnRunStart(def.Stored, run, s, Now()), run.Id), true)).ConfigureAwait(false);
         }
         catch (Exception e)
         {
-            Report(e, "starting " + name);
+            Report(e, "starting " + def.Name);
         }
     }
 
@@ -713,7 +715,7 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        await UpdateStateAsync(run.Job, s => (Evaluate.HoldRun(Evaluate.OnRunStart(s), run.Id), true)).ConfigureAwait(false);
+        await UpdateStateAsync(run.Job, s => (Evaluate.HoldRun(Evaluate.OnRunStart(def.Stored, run, s, Now()), run.Id), true)).ConfigureAwait(false);
         if (run.Status == RunStatus.Running)
         {
             return [];

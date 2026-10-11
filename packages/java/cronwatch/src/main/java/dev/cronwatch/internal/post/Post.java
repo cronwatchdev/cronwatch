@@ -28,9 +28,9 @@ import org.jspecify.annotations.Nullable;
  * alerts/shared.ts}), the Go port's {@code internal/post}, the Rust port's {@code alerts::post},
  * and the Elixir port's {@code Alerts.Post}: the URL read as fetch reads it, only http and https,
  * headers checked as fetch checks them, one ten second deadline for the whole request, a redirect
- * refused rather than followed (the transport's rule), at most 1 MiB of an answer read, and an
- * error that names only the URL's origin, with every secret the caller holds cut out of a quoted
- * answer before it is cut to 200 characters.
+ * refused rather than followed (the transport's rule), at most 1 MiB of an answer read (64 KiB of
+ * an error's), and an error that names only the URL's origin, with every secret the caller holds
+ * cut out of a quoted answer before it is cut to 200 characters.
  *
  * <p>The request goes out through a {@link Transport} on a virtual thread of its own, interrupted
  * past the deadline, so the deadline holds whatever the transport does, while connecting, sending,
@@ -44,6 +44,13 @@ public final class Post {
 
   /** How much of an answer is read. */
   public static final int MAX_BODY = 1 << 20;
+
+  /**
+   * How much of an error answer's body is read (64 KiB), far more than any secret plus {@link
+   * #ERROR_BODY_MAX} needs, so a provider (or something posing as one) cannot make a send hold a
+   * body of any size. The rest is let go.
+   */
+  public static final int ERROR_READ_MAX = 64 * 1024;
 
   /** How much of an answer's body goes into an error, in UTF-16 code units. */
   public static final int ERROR_BODY_MAX = 200;
@@ -303,7 +310,10 @@ public final class Post {
     return Math.max(0, deadline - System.nanoTime());
   }
 
-  /** The exchange, on the worker: the answer's head, then at most MAX_BODY bytes of its body. */
+  /**
+   * The exchange, on the worker: the answer's head, then at most MAX_BODY bytes of its body, or
+   * ERROR_READ_MAX of an error answer's, of which whatever was read before reading failed is kept.
+   */
   private static void exchange(
       Transport transport,
       Request request,
@@ -330,15 +340,26 @@ public final class Post {
         data.complete(new byte[0]);
         return;
       }
+      boolean ok = r.status() >= 200 && r.status() < 300;
+      int max = ok ? MAX_BODY : ERROR_READ_MAX;
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       // Given up on once the caller has (a body of empty chunks that never blocks would otherwise
       // spin here for good).
-      while (out.size() < MAX_BODY && !abandoned.get()) {
-        byte[] chunk = r.body().next();
+      while (out.size() < max && !abandoned.get()) {
+        byte[] chunk;
+        try {
+          chunk = r.body().next();
+        } catch (Exception e) {
+          if (ok || e instanceof InterruptedException) {
+            throw e;
+          }
+          // The status is enough; whatever was read is kept.
+          break;
+        }
         if (chunk == null) {
           break;
         }
-        out.write(chunk, 0, Math.min(chunk.length, MAX_BODY - out.size()));
+        out.write(chunk, 0, Math.min(chunk.length, max - out.size()));
       }
       data.complete(out.toByteArray());
     } catch (Throwable e) {

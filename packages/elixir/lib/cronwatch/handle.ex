@@ -109,7 +109,9 @@ defmodule Cronwatch.RunHandle do
         recorded ->
           if recorded do
             try do
-              Core.update_state!(c, job.name, fn before -> {Evaluate.start_run(before, run.id), nil} end)
+              Core.update_state!(c, job.name, fn before ->
+                {Evaluate.start_run(job.definition, run, before, Core.now(c)), nil}
+              end)
             rescue
               e -> Core.report(c, e, "starting #{job.name}")
             end

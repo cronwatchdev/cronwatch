@@ -238,8 +238,12 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	// have missed closed by each attempt given back and opened again by the
 	// next check, an alert each time.
 	var started sync.WaitGroup
+	// The run as it started, which the job's finish does not touch.
+	begun := run.clone()
 	closeOnStart := func(sctx context.Context) {
-		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) { return holdRun(onRunStart(s), run.ID), struct{}{}, nil }); err != nil {
+		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) {
+			return holdRun(onRunStart(def.stored, begun, s, c.now()), begun.ID), struct{}{}, nil
+		}); err != nil {
 			c.report(err, "starting "+name)
 		}
 	}
@@ -636,7 +640,9 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if !evaluate {
 		return []Alert{}, nil
 	}
-	if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) { return holdRun(onRunStart(s), run.ID), struct{}{}, nil }); err != nil {
+	if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) {
+		return holdRun(onRunStart(def.stored, run, s, c.now()), run.ID), struct{}{}, nil
+	}); err != nil {
 		return nil, err
 	}
 	if run.Status == StatusRunning {

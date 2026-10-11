@@ -70,6 +70,16 @@ public sealed class RoutesOptions
     /// </summary>
     public bool TrustProxy { get; init; }
 
+    /// <summary>
+    /// These options, with the token of <paramref name="defaults"/> when these name none (neither a
+    /// token nor <see cref="DashboardToken.None"/>): an adapter given an app's own options keeps the
+    /// token the app configured elsewhere (<c>Cronwatch:Token</c>) rather than dropping it.
+    /// </summary>
+    public RoutesOptions WithDefaultToken(RoutesOptions? defaults) =>
+        Token != null || defaults?.Token == null
+            ? this
+            : new RoutesOptions { Token = defaults.Token, BasePath = BasePath, Origin = Origin, TrustProxy = TrustProxy };
+
     /// <summary>Says whether a token is set, never the token, and the origin without any credentials in it.</summary>
     public override string ToString() =>
         "RoutesOptions(token " + (Token == null ? "CRONWATCH_TOKEN" : Token.Value == null ? "none" : "set")

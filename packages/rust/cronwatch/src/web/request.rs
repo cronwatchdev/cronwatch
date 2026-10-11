@@ -94,11 +94,19 @@ pub(crate) fn normalize_path(raw: &str) -> String {
     format!("/{}", out.join("/"))
 }
 
-/// The path under the base, without a trailing slash.
-pub(crate) fn strip_base(pathname: &str, base: &str) -> String {
-    let path = pathname.strip_prefix(base).unwrap_or(pathname);
+/// The path under the base, without a trailing slash, or None when the
+/// request is not under it. The pathname, its dot segments already
+/// resolved, must be the base or start with the base and a "/":
+/// "/cronwatchapi/jobs" is not under "/cronwatch", and neither is
+/// "/cronwatch/../api/jobs" (read as "/api/jobs"). An empty base, for routes
+/// mounted at the root, takes every path.
+pub(crate) fn strip_base(pathname: &str, base: &str) -> Option<String> {
+    let path = pathname.strip_prefix(base)?;
+    if !base.is_empty() && !path.is_empty() && !path.starts_with('/') {
+        return None;
+    }
     let path = if path.is_empty() { "/" } else { path };
-    if path.len() > 1 && path.ends_with('/') { path[..path.len() - 1].to_string() } else { path.to_string() }
+    Some(if path.len() > 1 && path.ends_with('/') { path[..path.len() - 1].to_string() } else { path.to_string() })
 }
 
 /// `decodeURIComponent`, or `None` where it would throw: an escape that is

@@ -103,12 +103,29 @@ module Cronwatch
     end
 
     # The first fire strictly after `from`, or nil when the cron never fires
-    # again. The walker works on the wall clock and Zone.to_utc takes the
-    # earlier of a repeated time, so, like croner, asked from inside the hour
-    # that repeats when clocks go back it can answer with times in the past.
-    # Its answers are filtered, and a stretch of nothing but past times is
-    # stepped over an hour at a time. Ported from fireAfter in schedule.ts.
+    # again. On the night clocks spring forward every slot the pattern names
+    # still fires: one whose local time the jump skips is moved forward by the
+    # gap's length (see spring_gap and gap_fire_after), so the fires stay
+    # strictly ascending whichever instant they are counted from. Ported from
+    # fireAfter in schedule.ts.
     def fire_after(parsed, from)
+      found = crone_fire_after(parsed, from)
+      start = count_from(from)
+      return found if start.nil?
+
+      moved = gap_fire_after(parsed, start)
+      !moved.nil? && (found.nil? || moved < found) ? moved : found
+    end
+
+    # The first fire strictly after `from` as croner counts it, or nil when
+    # the cron never fires again. The walker works on the wall clock and
+    # Zone.to_utc takes the earlier of a repeated time, so, like croner, asked
+    # from inside the hour that repeats when clocks go back it can answer with
+    # times in the past. Its answers are filtered, and a stretch of nothing
+    # but past times is stepped over an hour at a time. Asked from inside a
+    # spring-forward gap it skips the slots moved out of it, which fire_after
+    # adds back. Ported from croneFireAfter in schedule.ts.
+    def crone_fire_after(parsed, from)
       raise ArgumentError, "schedule \"#{parsed.source}\" was not made by Schedule.parse" unless parsed.pattern
       return nil if parsed.never
 
@@ -128,10 +145,79 @@ module Cronwatch
       nil
     end
 
+    # A spring-forward jump: `jump_at`, the first instant on the later offset;
+    # `gap_ms`, the later offset less the earlier one; `before_ms`, the earlier
+    # offset. All in milliseconds.
+    Gap = Struct.new(:jump_at, :gap_ms, :before_ms)
+
+    # How far back a spring-forward jump is looked for: more than any gap a zone has had.
+    JUMP_LOOKBACK_MS = 3 * 3_600_000
+
+    # The window a spring-forward jump moves skipped slots into, when `at`
+    # lies in one: from the jump for the gap's length (30 minutes on Lord Howe
+    # Island, an hour in most zones). Nil when `at` is not within a gap's
+    # length after a jump in the three hours before it.
+    def spring_gap(timezone, at)
+      jump = spring_jump(timezone, at)
+      jump && at < jump.jump_at + jump.gap_ms ? jump : nil
+    end
+
+    # The spring-forward jump in the three hours up to `at`, found to the
+    # minute: the first minute on the later offset. Nil when the offset at
+    # `at` is not ahead of the offset three hours before.
+    def spring_jump(timezone, at)
+      # Every zone kept its local mean time, with no clock change, in the year 1.
+      return nil if at - JUMP_LOOKBACK_MS < Duration::FIRST_DATE_MS || at >= Duration::LAST_DATE_MS
+
+      after = utc_offset(at, timezone)
+      before = utc_offset(at - JUMP_LOOKBACK_MS, timezone)
+      return nil if after <= before
+
+      lo = at - JUMP_LOOKBACK_MS
+      hi = at
+      while hi - lo > 60_000
+        mid = lo + (hi - lo).div(2)
+        if utc_offset(mid, timezone) == after then hi = mid
+        else lo = mid
+        end
+      end
+      Gap.new(hi.div(60_000) * 60_000, after - before, before)
+    end
+
+    # The first slot the pattern names strictly after `at`, the pattern read
+    # in UTC, which stands for wall-clock time in gap_fire_after.
+    def wall_fire_after(parsed, at)
+      next_runs(parsed, 1, at, "UTC").first
+    end
+
+    # The first slot moved out of a spring-forward gap strictly after
+    # `start`, when `start` lies in that gap's window, else nil. A slot whose
+    # local time the jump skips fires at that local time read on the earlier
+    # offset, which is the same as moving it forward by the gap's length:
+    # 01:20 on the night London skips 01:00 to 02:00 fires at 02:20 BST
+    # (01:20Z). The walker moves them the same way when asked from before the
+    # jump, as croner does, but not from inside it.
+    def gap_fire_after(parsed, start)
+      return nil if parsed.never
+
+      gap = spring_gap(parsed.timezone, start)
+      return nil unless gap
+
+      # Wall-clock time as if it were UTC: the slots the jump skips run from
+      # jump_at + before_ms for gap_ms.
+      slot = wall_fire_after(parsed, start + gap.before_ms)
+      return nil if slot.nil? || slot >= gap.jump_at + gap.before_ms + gap.gap_ms
+
+      slot - gap.before_ms
+    end
+
     # Every fire of a cron strictly after `from` and at or before `to`,
-    # ascending, or nil when there are more than `limit`. Walks the fires in
-    # batches, as firesBetween in schedule.ts asks croner for them, and drops
-    # any that do not move forward (see fire_after).
+    # ascending, or nil when there are more than `limit`: the fires next_fire
+    # gives one after another. Walks the fires in batches, as firesBetween in
+    # schedule.ts asks croner for them, and drops any that do not move forward
+    # (the hour that repeats when clocks go back, see crone_fire_after).
+    # Around a spring-forward gap, where a batch can skip a moved slot or give
+    # one out of order, it counts with fire_after instead.
     def fires_between(parsed, from, to, limit)
       raise ArgumentError, "schedule \"#{parsed.source}\" was not made by Schedule.parse" unless parsed.pattern
       return [] if parsed.never
@@ -143,17 +229,46 @@ module Cronwatch
       probe = start
       last = start
       1000.times do
+        if spring_gap(parsed.timezone, last)
+          # Counting from inside a gap's window: the walker would skip its moved slots.
+          t = fire_after(parsed, last)
+          return out if t.nil? || t > to
+
+          out << t
+          last = probe = t
+          return nil if out.length > limit
+
+          next
+        end
         batch = next_runs(parsed, [limit + 1 - out.length, 24].min, probe)
         return out if batch.empty?
 
+        stepped = false
         batch.each do |t|
           next if t <= last
+
+          if spring_gap(parsed.timezone, t)
+            # The batch reached a gap's window, where its order is the
+            # walker's: the next fire is counted from the last one, and the
+            # rest with it.
+            following = fire_after(parsed, last)
+            return out if following.nil? || following > to
+
+            out << following
+            last = probe = following
+            return nil if out.length > limit
+
+            stepped = true
+            break
+          end
           return out if t > to
 
           out << t
           last = t
           return nil if out.length > limit
         end
+        next if stepped
+
         finish = batch.last
         probe = finish > probe ? finish : probe + 3_600_000
       end
@@ -177,7 +292,7 @@ module Cronwatch
     # moved back, as runsAfter in schedule.ts asks croner: a time before 400
     # goes forward, into the same local mean time every zone kept then, and
     # one from 2800 goes back, to where the zone's present rules already hold.
-    def next_runs(parsed, count, from)
+    def next_runs(parsed, count, from, timezone = parsed.timezone)
       from = count_from(from)
       return [] if from.nil?
 
@@ -189,7 +304,7 @@ module Cronwatch
       runs = []
       at = from + shift
       count.times do
-        at = parsed.pattern.next_after(at, parsed.timezone)
+        at = parsed.pattern.next_after(at, timezone)
         break if at.nil? || at - shift > Duration::LAST_DATE_MS
 
         runs << (at - shift)
@@ -197,25 +312,38 @@ module Cronwatch
       runs
     end
 
-    # The next time the schedule fires strictly after `from`. For an interval, counted from the last run when there is one.
+    # The next time the schedule fires strictly after `from`. For an interval,
+    # counted from the last run's start when there is one (see interval_due
+    # for a run that outlasted its period).
     def next_fire(parsed, from, last_run_at)
       return (last_run_at || from) + parsed.every_ms if parsed.interval?
 
       fire_after(parsed, from)
     end
 
+    # When an interval of `every_ms` is next due after a run: a period after
+    # it started, or, when it finished (`finished_at` not nil) later than
+    # that, a period after it finished. A run that outlasts its period is not
+    # followed by a missed alert the moment it ends.
+    def interval_due(every_ms, started_at, finished_at)
+      due = started_at + every_ms
+      !finished_at.nil? && finished_at > due ? finished_at + every_ms : due
+    end
+
     # When the schedule next wants a run, given the last one. For a cron that is
     # the first fire the last run does not already cover; with no run yet, the
     # first fire at or after registration. For an interval it is the last run's
-    # start (or registration) plus the interval. Nil for a cron that never
-    # fires again.
+    # start (or registration) plus the interval, or its finish plus the
+    # interval when it finished (`last_finished_at`, nil while it runs) later
+    # than that (interval_due). Nil for a cron that never fires again.
     #
     # Counting forward from the last run, rather than back from now, is what
     # lets a job whose period is shorter than its grace be missed at all, and it
     # works for a cron that fires once a year or less.
-    def expectation(parsed, last_run_at, registered_at, grace_ms)
+    def expectation(parsed, last_run_at, registered_at, grace_ms, last_finished_at = nil)
       due_at =
-        if parsed.interval? then (last_run_at || registered_at) + parsed.every_ms
+        if parsed.interval?
+          last_run_at.nil? ? registered_at + parsed.every_ms : interval_due(parsed.every_ms, last_run_at, last_finished_at)
         elsif last_run_at.nil? then fire_after(parsed, registered_at - 1)
         else due_after_run(parsed, last_run_at)
         end
@@ -227,12 +355,17 @@ module Cronwatch
     # year 1 is due; after 9999 there is none (see count_from).
     def due_after_run(parsed, started_at)
       # A fire at or before the start is covered by the run itself.
-      following_fire = fire_after(parsed, started_at)
-      return nil if following_fire.nil?
+      due = fire_after(parsed, started_at)
+      # Bounded: a gap holds at most a few hours of moved slots.
+      100_000.times do
+        return nil if due.nil?
 
-      following = fire_after(parsed, following_fire)
-      covers = run_covers?(started_at, following_fire, following) || in_spring_forward_gap?(parsed, started_at, following_fire)
-      covers ? following : following_fire
+        following = fire_after(parsed, due)
+        return due unless run_covers?(started_at, due, following) || in_spring_forward_gap?(parsed, started_at, due)
+
+        due = following
+      end
+      due
     end
 
     # Whether a run starting at `started_at` covers the fire at `due_at`. A minute
@@ -244,39 +377,21 @@ module Cronwatch
       started_at >= due_at - slack
     end
 
-    # On the night clocks spring forward, a fire whose local time does not exist
-    # (02:30 when 02:00 jumps to 03:00) is moved by croner to the same distance
-    # past the jump (03:30), while vixie cron runs it at the jump itself (03:00).
-    # A run that starts at or after the jump, and before the first fire after
-    # it when that fire lies within one gap of it, is taken to cover that fire,
-    # so neither scheduler's run is reported as missed. A cron that really fires
-    # at 03:30 that night is treated the same way, which only matters if it also
-    # ran early by up to an hour.
+    # On the night clocks spring forward, a slot whose local time does not
+    # exist (02:30 when 02:00 jumps to 03:00) fires moved forward by the gap
+    # (03:30; see gap_fire_after), while vixie cron runs every skipped job
+    # once, at the jump itself (03:00). A run that starts at or after the jump
+    # (less a minute of slack), and before such a moved fire, is taken to
+    # cover it, so neither scheduler's run is reported as missed. Only a moved
+    # slot that is not also a slot of its own on the later offset counts: a
+    # cron that fires every 10 minutes moves 02:10 onto its own 03:10, which
+    # was not skipped.
     def in_spring_forward_gap?(parsed, started_at, fire_at)
-      lookback = 3 * 3_600_000
-      # Every zone kept its local mean time, with no clock change, in the year 1.
-      return false if fire_at - lookback < Duration::FIRST_DATE_MS
+      gap = spring_gap(parsed.timezone, fire_at)
+      return false if gap.nil? || started_at < gap.jump_at - EARLY_SLACK_MS || started_at >= fire_at
 
-      after = utc_offset(fire_at, parsed.timezone)
-      before = utc_offset(fire_at - lookback, parsed.timezone)
-      gap = after - before
-      return false if gap <= 0
-
-      # Find the jump: the first minute in the window with the later offset.
-      lo = fire_at - lookback
-      hi = fire_at
-      while hi - lo > 60_000
-        mid = lo + (hi - lo).div(2)
-        if utc_offset(mid, parsed.timezone) == after then hi = mid
-        else lo = mid
-        end
-      end
-      jump_at = hi.div(60_000) * 60_000
-      return false if fire_at - jump_at >= gap || started_at < jump_at - EARLY_SLACK_MS || started_at >= fire_at
-
-      # Only the first fire after the jump can be a moved one; a cron that also
-      # fires at the jump (every 10 minutes, say) was not moved at all.
-      fire_after(parsed, jump_at - 1) == fire_at
+      names = ->(at) { wall_fire_after(parsed, at - 1) == at }
+      names.call(fire_at + gap.before_ms) && !names.call(fire_at + gap.before_ms + gap.gap_ms)
     end
 
     # Milliseconds the zone's wall clock is ahead of UTC at `at`.

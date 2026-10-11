@@ -62,7 +62,7 @@ defmodule Cronwatch.Transport.HTTP do
 
     with {:ok, u} <- target(r.url),
          {:ok, sock} <- connect(u, opts, deadline),
-         :ok <- write(sock, request(u, r)),
+         :ok <- send_request(sock, request(u, r)),
          {:ok, status, headers, buf} <- read_head(sock, "", deadline, 0) do
       framing = framing(status, headers)
       state = %{sock: sock, buf: buf, mode: framing, deadline: deadline}
@@ -105,23 +105,27 @@ defmodule Cronwatch.Transport.HTTP do
     ["POST ", target, " HTTP/1.1\r\n", lines, "\r\n", body]
   end
 
+  # The least time one address is given to connect, when there are several
+  # to share what is left of the deadline.
+  @min_attempt 2_000
+
   # Connecting: every address the host has, IPv4 first, until one answers.
   defp connect(%URL{} = u, opts, deadline) do
     port = u.port || if(u.scheme == "https", do: 443, else: 80)
 
-    with {:ok, addresses} <- addresses(u.host) do
+    with {:ok, addresses} <- addresses(u.host, deadline) do
       try_addresses(addresses, u, port, opts, deadline, :nxdomain)
     end
   end
 
-  defp addresses("[" <> v6) do
+  defp addresses("[" <> v6, _deadline) do
     case :inet.parse_ipv6strict_address(String.to_charlist(String.trim_trailing(v6, "]"))) do
       {:ok, a} -> {:ok, [a]}
       _ -> {:error, :invalid_url}
     end
   end
 
-  defp addresses(host) do
+  defp addresses(host, deadline) do
     name = String.to_charlist(host)
 
     case :inet.parse_ipv4strict_address(name) do
@@ -129,13 +133,19 @@ defmodule Cronwatch.Transport.HTTP do
         {:ok, [a]}
 
       _ ->
-        v4 = getaddrs(name, :inet)
-        v6 = getaddrs(name, :inet6)
+        # Both families at once, neither past the deadline: a resolver that
+        # hangs on one costs only the time that was left.
+        lookups = for family <- [:inet, :inet6], do: Task.async(fn -> getaddrs(name, family) end)
 
-        case v4 ++ v6 do
-          [] -> {:error, :nxdomain}
-          list -> {:ok, list}
-        end
+        found =
+          Enum.flat_map(lookups, fn task ->
+            case Task.yield(task, left(deadline)) || Task.shutdown(task, :brutal_kill) do
+              {:ok, list} -> list
+              _ -> []
+            end
+          end)
+
+        if found == [], do: {:error, :nxdomain}, else: {:ok, found}
     end
   end
 
@@ -148,8 +158,14 @@ defmodule Cronwatch.Transport.HTTP do
 
   defp try_addresses([], _u, _port, _opts, _deadline, last), do: {:error, last}
 
-  defp try_addresses([address | rest], u, port, opts, deadline, _last) do
-    case open(address, u, port, opts, left(deadline)) do
+  # Each address gets a share of what is left, so one that never answers
+  # does not spend the whole deadline before the next is tried; the last
+  # gets all that remains.
+  defp try_addresses([address | rest] = all, u, port, opts, deadline, _last) do
+    remaining = left(deadline)
+    within = min(remaining, max(div(remaining, length(all)), @min_attempt))
+
+    case open(address, u, port, opts, within) do
       {:ok, sock} -> {:ok, sock}
       # A certificate refused is the answer; another address would say the same.
       {:error, {:tls_alert, _} = reason} -> {:error, reason}
@@ -197,6 +213,19 @@ defmodule Cronwatch.Transport.HTTP do
       sni ++
       [customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]] ++
       Keyword.get(opts, :ssl, [])
+  end
+
+  # Writes the request; a write that fails closes the socket, as every
+  # failure after connecting does.
+  defp send_request(sock, data) do
+    case write(sock, data) do
+      :ok ->
+        :ok
+
+      e ->
+        close(sock)
+        e
+    end
   end
 
   defp write({:tcp, s}, data), do: :gen_tcp.send(s, data)

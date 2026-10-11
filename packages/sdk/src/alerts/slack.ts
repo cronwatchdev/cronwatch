@@ -1,10 +1,14 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { drain, errorBody, postable, urlSecrets } from "./shared.js";
+import { drain, errorBody, errorText, postable, urlSecrets } from "./shared.js";
 
 export interface SlackOptions {
   /** An incoming webhook URL from api.slack.com/messaging/webhooks. */
   webhookUrl: string;
-  /** Link back to the job in your dashboard: (alert) => `https://app.example.com/cronwatch/jobs/${alert.job}`. */
+  /**
+   * Link back to the job in your dashboard:
+   * (alert) => `https://app.example.com/cronwatch/jobs/${encodeURIComponent(alert.job)}`.
+   * Any `<`, `>`, or `|` in it is percent-encoded, so it cannot end Slack's link early.
+   */
   link?: (alert: Alert) => string;
 }
 
@@ -27,7 +31,7 @@ export function slack(options: SlackOptions): AlertChannel {
     name: "slack",
     async send(alert) {
       const url = options.link?.(alert);
-      const title = `${EMOJI[alert.type]} *${escape(alert.title)}*${url ? ` (<${url}|open>)` : ""}`;
+      const title = `${EMOJI[alert.type]} *${escape(alert.title)}*${url ? ` (<${linkTarget(url)}|open>)` : ""}`;
       const body = codeBlockSafe(escape(alert.message)).slice(0, 2900);
       const response = await fetch(postable(options.webhookUrl), {
         method: "POST",
@@ -47,7 +51,7 @@ export function slack(options: SlackOptions): AlertChannel {
         }),
       });
       // The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
-      if (!response.ok) throw new Error(`Slack webhook answered ${response.status}: ${errorBody(await response.text(), urlSecrets(options.webhookUrl))}`);
+      if (!response.ok) throw new Error(`Slack webhook answered ${response.status}: ${errorBody(await errorText(response), urlSecrets(options.webhookUrl))}`);
       await drain(response);
     },
   };
@@ -56,6 +60,11 @@ export function slack(options: SlackOptions): AlertChannel {
 /** Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>. */
 function escape(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|` percent-encoded, which ends neither the link nor its text. */
+function linkTarget(url: string): string {
+  return url.replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C");
 }
 
 /** Breaks up ``` so text inside a code block cannot close it. */

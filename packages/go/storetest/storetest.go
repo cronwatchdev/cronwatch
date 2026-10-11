@@ -150,12 +150,15 @@ func Run(t *testing.T, newStore func(t *testing.T) cronwatch.Store) {
 	list, err = store.ListRuns(ctx, "a", 2)
 	must(err)
 	eq("limit", ids(list), []string{"r3", "r2"})
-	last, err := store.LastRun(ctx, "a")
-	must(err)
-	eq("last run", last.ID, "r3")
-	none, err := store.LastRun(ctx, "none")
-	must(err)
-	eq("no last run", none == nil, true)
+	// LastRun is optional (the client never calls it): checked when there.
+	if lr, ok := store.(cronwatch.LastRunner); ok {
+		last, err := lr.LastRun(ctx, "a")
+		must(err)
+		eq("last run", last.ID, "r3")
+		none, err := lr.LastRun(ctx, "none")
+		must(err)
+		eq("no last run", none == nil, true)
+	}
 	running, err := store.RunningRuns(ctx)
 	must(err)
 	eq("oldest first, then insertion order", ids(running), []string{"rb", "rc", "r3"})

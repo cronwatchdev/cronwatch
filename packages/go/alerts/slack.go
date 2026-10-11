@@ -18,7 +18,10 @@ type SlackOptions struct {
 	// api.slack.com/messaging/webhooks. It is its own credential: errors
 	// never quote it.
 	WebhookURL string
-	// Link is a link back to the job in your dashboard, "" for none.
+	// Link is a link back to the job in your dashboard, "" for none:
+	// "https://app.example.com/cronwatch/jobs/" + url.PathEscape(a.Job).
+	// Any <, >, or | in it is percent-encoded, so it cannot end Slack's
+	// link early.
 	Link func(cronwatch.Alert) string
 	// HTTPClient sends the request; nil for Go's default transport. It is
 	// used as a copy that never follows a redirect.
@@ -45,7 +48,7 @@ func Slack(o SlackOptions) (cronwatch.Channel, error) {
 		link := js.WellFormed(linkFor(o.Link, a))
 		head := slackEmoji[a.Type] + " *" + slackEscape(title) + "*"
 		if link != "" {
-			head += " (<" + link + "|open>)"
+			head += " (<" + slackLinkTarget(link) + "|open>)"
 		}
 		body := js.Head16Lone(codeBlockSafe(slackEscape(message)), 2900)
 		blocks := []any{
@@ -78,6 +81,12 @@ func Slack(o SlackOptions) (cronwatch.Channel, error) {
 // also stops <!channel> and <url|links>.
 func slackEscape(text string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+}
+
+// slackLinkTarget is a link's URL as Slack's <url|text> can hold it: <, >,
+// and | percent-encoded, which ends neither the link nor its text.
+func slackLinkTarget(url string) string {
+	return strings.NewReplacer("<", "%3C", ">", "%3E", "|", "%7C").Replace(url)
 }
 
 // codeBlockSafe breaks up ``` so text inside a code block cannot close it.

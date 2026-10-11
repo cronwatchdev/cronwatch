@@ -592,22 +592,60 @@ final class Evaluate
         return ltrim($digits, '0') === '' ? '0' : $digits;
     }
 
+    /** When a run finished, or null while it runs (a run marked timeout has finished). */
+    public static function finishedAtOf(Run $run): int|float|null
+    {
+        return $run->status !== RunStatus::RUNNING && (is_int($run->finishedAt) || is_float($run->finishedAt)) ? $run->finishedAt : null;
+    }
+
     /**
-     * Called when a run starts. Missed and stuck are about the absence of a
-     * run, so a run starting closes them without an alert; the recovered
-     * message waits for a successful finish.
+     * Whether `run` brings the schedule up to date at `now`, so missed may
+     * close for it: judged with it as the job's last run, as onCheck judges,
+     * the run the schedule wants next is not yet past its deadline. A run
+     * that started before the fire missed opened for does not cover that
+     * fire, however late it finishes, and neither does a run a source reports
+     * only once it is over whose start was before it. Every run starting now
+     * covers it. A job with no schedule, or one that no longer parses, has
+     * nothing due, so any run does.
      */
-    public static function onRunStart(JobState $state): JobState
+    public static function catchesUp(JobDefinition $def, Run $run, int|float $now): bool
+    {
+        $schedule = $def->get('schedule');
+        if ($schedule === null || $schedule === '' || $schedule === false || $schedule === 0) {
+            return true;
+        }
+        try {
+            $timezone = $def->get('timezone');
+            $parsed = Schedule::parse((string) $schedule, is_string($timezone) && $timezone !== '' ? $timezone : null);
+            $exp = Schedule::expectation($parsed, $run->startedAt, $run->startedAt, self::graceMs($def), self::finishedAtOf($run));
+            return $exp === null || $now <= $exp->deadline;
+        } catch (\Throwable) {
+            return true;
+        }
+    }
+
+    /**
+     * Called when a run starts, or when a run a source reports is recorded.
+     * Missed and stuck are about the absence of a run, so a run starting
+     * closes them without an alert; the recovered message waits for a
+     * successful finish. Missed closes only when the run catches the
+     * schedule up (catchesUp), which a run starting now always does.
+     */
+    public static function onRunStart(JobDefinition $def, Run $run, JobState $state, int|float $now): JobState
     {
         $next = self::cloneState($state);
-        self::closeCondition($next, Condition::MISSED);
+        if (self::catchesUp($def, $run, $now)) {
+            self::closeCondition($next, Condition::MISSED);
+        }
         self::closeCondition($next, Condition::STUCK);
         return $next;
     }
 
     /**
      * Called when a run finishes with status ok, failed, or timeout. `history`
-     * is the job's earlier runs, newest first, not including this one.
+     * is the job's earlier runs, newest first, not including this one. Missed
+     * closes only when the run catches the schedule up (catchesUp): a run
+     * that started before the fire missed opened for leaves it open.
      *
      * @param list<Run> $history
      */
@@ -618,7 +656,9 @@ final class Evaluate
 
         if ($run->status === RunStatus::OK) {
             $next->consecutiveFailures = 0;
-            self::closeCondition($next, Condition::MISSED);
+            if (self::catchesUp($def, $run, $now)) {
+                self::closeCondition($next, Condition::MISSED);
+            }
             self::closeCondition($next, Condition::STUCK);
             self::closeCondition($next, Condition::FAILED);
 
@@ -662,7 +702,9 @@ final class Evaluate
         // failed or timeout
         // Held at the top: a count at the limit neither turns into a float nor passes 2^53 - 1.
         $next->consecutiveFailures = min(self::failureCount($next) + 1, self::MAX_DURATION_MS);
-        self::closeCondition($next, Condition::MISSED);
+        if (self::catchesUp($def, $run, $now)) {
+            self::closeCondition($next, Condition::MISSED);
+        }
         $threshold = max(1, $def->get('failuresBeforeAlert') ?? 1);
         $condition = $run->status === RunStatus::TIMEOUT ? Condition::STUCK : Condition::FAILED;
         if ($next->consecutiveFailures >= $threshold) {
@@ -706,16 +748,15 @@ final class Evaluate
         $parsed = Schedule::parse((string) $schedule, is_string($timezone) && $timezone !== '' ? $timezone : null);
         $grace = self::graceMs($def);
         $lastRunAt = $lastRun?->startedAt;
-        $exp = Schedule::expectation($parsed, $lastRunAt, $stored->createdAt, $grace);
-        $nextExpectedAt = $parsed->isInterval()
-            ? Schedule::nextFire($parsed, $stored->createdAt, $lastRunAt)
-            : Schedule::nextFire($parsed, $now, null);
+        $exp = Schedule::expectation($parsed, $lastRunAt, $stored->createdAt, $grace, $lastRun === null ? null : self::finishedAtOf($lastRun));
+        $nextExpectedAt = $parsed->isInterval() ? $exp?->dueAt : Schedule::nextFire($parsed, $now, null);
         if ($exp === null) {
             return new CheckEvaluation($next, $alerts, $nextExpectedAt, null);
         }
 
-        // An interval's next run is due a period after the last one started. If
-        // that run is still going, the job is busy, not late; stuck covers one that never ends.
+        // An interval's next run is due a period after the last one started, or
+        // after it finished when it outlasted the period (intervalDue). If that
+        // run is still going, the job is busy, not late; stuck covers one that never ends.
         if ($parsed->isInterval() && $lastRun !== null && $lastRun->status === RunStatus::RUNNING) {
             return new CheckEvaluation($next, $alerts, $nextExpectedAt, $exp->dueAt);
         }

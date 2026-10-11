@@ -163,8 +163,9 @@ impl Client {
             }
         };
         if recorded {
-            let started =
-                self.update_state(name, async { Ok(()) }, |s, _| Ok((hold_run(&on_run_start(&s), &run.id), ())));
+            let started = self.update_state(name, async { Ok(()) }, |s, _| {
+                Ok((hold_run(&on_run_start(&def.stored, &run, &s, self.now()), &run.id), ()))
+            });
             if let Err(err) = started.await {
                 self.report(err, &format!("starting {name}"));
             }

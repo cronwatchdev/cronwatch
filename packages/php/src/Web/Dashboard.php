@@ -29,8 +29,10 @@ use Cronwatch\Js;
  *
  * token:      required to reach anything. Send it as `Authorization: Bearer <token>`, or open
  *             the dashboard once with `?token=<token>` and a cookie is set. Defaults to
- *             CRONWATCH_TOKEN; "" counts as unset. With no token while the environment is
- *             development or test (Cronwatch\Env), the dashboard makes a random one, keeps it
+ *             CRONWATCH_TOKEN; "" counts as unset. A token shorter than 24 characters is reported
+ *             once through onError, as short enough to guess, and still used. With no token while
+ *             the environment is development ("development", "dev", or "local"; "test" and
+ *             "testing" are not, see Cronwatch\Env), the dashboard makes a random one, keeps it
  *             in a file (developmentTokenFile, default in the system's temporary directory) so
  *             every PHP request after it asks for the same one, and writes a sign-in link to
  *             the server log (error_log) when it makes it; with no token otherwise it answers
@@ -92,6 +94,9 @@ final class Dashboard
      */
     public const SECURITY_HEADERS = ['x-content-type-options' => 'nosniff', 'referrer-policy' => 'same-origin', 'x-robots-tag' => 'noindex'];
 
+    /** A configured token shorter than this is reported once through onError (see the token option). */
+    public const SHORT_TOKEN = 24;
+
     public const LOCKED = 'Set CRONWATCH_TOKEN (or pass token: to $cw->routes()), or pass token: null to serve them open behind your own auth.';
 
     private readonly bool $optedOut;
@@ -105,6 +110,7 @@ final class Dashboard
     /** @var (\Closure(string): string)|null */
     private readonly ?\Closure $head;
     private readonly ?string $empty;
+    private bool $warnedShortToken = false;
 
     /**
      * @param string|FromEnv|false|null $token the dashboard's token; the default (FromEnv::Read) reads CRONWATCH_TOKEN, as ""
@@ -164,10 +170,15 @@ final class Dashboard
     /** One request, answered as the SDK's routes answer it. */
     public function handle(Request $request): Response
     {
+        $this->warnShortToken();
         $wantsHtml = true;
         $base = $this->basePath ?? rtrim($request->mount ?? '/cronwatch', '/');
         try {
             $path = self::stripBase($request->path, $base);
+            if ($path === null) {
+                // Not under the base at all: nothing here answers it, signed in or not.
+                return self::html(Html::messagePage('Not found', $request->path, $base, head: $this->head), 404);
+            }
             $wantsHtml = !str_starts_with($path, '/api');
             return $this->serveRequest($request, $path, $wantsHtml, $base);
         } catch (\Throwable $error) {
@@ -179,6 +190,24 @@ final class Dashboard
             return $wantsHtml
                 ? self::html(Html::messagePage('Something went wrong', 'The request failed and the error was reported.', $base, head: $this->head), 500)
                 : self::api(['ok' => false, 'error' => 'Internal error'], 500);
+        }
+    }
+
+    /**
+     * Reports, once, a configured token short enough to guess. It is still
+     * used: the SDK takes any token, and refusing one here would lock out a
+     * dashboard that worked before.
+     */
+    private function warnShortToken(): void
+    {
+        if ($this->warnedShortToken || $this->generated || $this->token === null || Js::length16($this->token) >= self::SHORT_TOKEN) {
+            return;
+        }
+        $this->warnedShortToken = true;
+        try {
+            $this->cw->onError(new \RuntimeException('the dashboard token is shorter than ' . self::SHORT_TOKEN . ' characters, short enough to guess; set CRONWATCH_TOKEN (or token:) to a long random one, such as the output of `openssl rand -hex 24`'), 'routes');
+        } catch (\Throwable) {
+            // A warning must not stop the request.
         }
     }
 
@@ -218,9 +247,20 @@ final class Dashboard
         return $first === '' ? null : $first;
     }
 
-    private static function stripBase(string $pathname, string $base): string
+    /**
+     * The path below the base, or null when the request is not under it. The
+     * pathname, its dot segments already resolved (Request), must be the base
+     * or start with the base and a "/": "/cronwatchapi/jobs" is not under
+     * "/cronwatch", and neither is "/cronwatch/../api/jobs" (read as
+     * "/api/jobs"). An empty base, for routes mounted at the root, takes
+     * every path.
+     */
+    private static function stripBase(string $pathname, string $base): ?string
     {
-        $path = str_starts_with($pathname, $base) ? substr($pathname, strlen($base)) : $pathname;
+        if ($base !== '' && $pathname !== $base && !str_starts_with($pathname, $base . '/')) {
+            return null;
+        }
+        $path = substr($pathname, strlen($base));
         if ($path === '') {
             $path = '/';
         }
@@ -286,15 +326,17 @@ final class Dashboard
         $publicOrigin = $this->publicOrigin($request);
 
         if ($this->generated && $this->token === null) {
-            // DevelopmentToken keeps it in a file between requests. A host that
-            // always gives a token (the WordPress plugin) may leave that class out.
+            // DevelopmentToken keeps it in a file between requests. A host
+            // that never reaches here may leave that class out: the WordPress
+            // plugin gives its JSON API a token, and serves wp-admin's
+            // dashboard with token: null, the opt-out, so neither makes one.
             [$this->token, $made] = class_exists(DevelopmentToken::class)
                 ? DevelopmentToken::obtain($this->developmentTokenFile, $this->basePath ?? $base)
                 : [rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '='), true];
             if ($made) {
                 $shown = $this->origin ?? (self::isLoopbackOrigin($publicOrigin) ? $publicOrigin : null);
                 $line = self::developmentSignInLine($shown, $base, $this->token);
-                $this->log !== null ? ($this->log)($line) : error_log($line); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- a development server's sign-in line; never reached in the WordPress plugin, which gives a token.
+                $this->log !== null ? ($this->log)($line) : error_log($line); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- a development server's sign-in line; never reached in the WordPress plugin, which gives a token or opts out.
             }
         }
 

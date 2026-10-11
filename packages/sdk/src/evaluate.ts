@@ -387,21 +387,49 @@ export function formatNumber(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
+/** When a run finished, or null while it runs (a run marked timeout has finished). */
+export function finishedAtOf(run: Pick<Run, "status" | "finishedAt">): number | null {
+  return run.status !== "running" && typeof run.finishedAt === "number" ? run.finishedAt : null;
+}
+
 /**
- * Called when a run starts. Missed and stuck are about the absence of a run,
- * so a run starting closes them without an alert; the recovered message
- * waits for a successful finish.
+ * Whether `run` brings the schedule up to date at `now`, so missed may close
+ * for it: judged with it as the job's last run, as onCheck judges, the run
+ * the schedule wants next is not yet past its deadline. A run that started
+ * before the fire missed opened for does not cover that fire, however late
+ * it finishes, and neither does a run a source reports only once it is over
+ * whose start was before it. Every run starting now covers it. A job with no
+ * schedule, or one that no longer parses, has nothing due, so any run does.
  */
-export function onRunStart(state: JobState): JobState {
+export function catchesUp(def: JobDefinition | StoredJobDefinition, run: Pick<Run, "startedAt" | "status" | "finishedAt">, now: number): boolean {
+  if (!def.schedule) return true;
+  try {
+    const exp = expectation(parseSchedule(def.schedule, def.timezone), run.startedAt, run.startedAt, graceMs(def), finishedAtOf(run));
+    return exp === null || now <= exp.deadline;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Called when a run starts, or when a run a source reports is recorded.
+ * Missed and stuck are about the absence of a run, so a run starting closes
+ * them without an alert; the recovered message waits for a successful
+ * finish. Missed closes only when the run catches the schedule up
+ * (catchesUp), which a run starting now always does.
+ */
+export function onRunStart(def: JobDefinition | StoredJobDefinition, run: Pick<Run, "startedAt" | "status" | "finishedAt">, state: JobState, now: number): JobState {
   const next = cloneState(state);
-  closeCondition(next, "missed");
+  if (catchesUp(def, run, now)) closeCondition(next, "missed");
   closeCondition(next, "stuck");
   return next;
 }
 
 /**
  * Called when a run finishes with status ok, failed, or timeout. `history` is
- * the job's earlier runs, newest first, not including this one.
+ * the job's earlier runs, newest first, not including this one. Missed
+ * closes only when the run catches the schedule up (catchesUp): a run that
+ * started before the fire missed opened for leaves it open.
  */
 export function onRunFinish(
   def: JobDefinition | StoredJobDefinition,
@@ -415,7 +443,7 @@ export function onRunFinish(
 
   if (run.status === "ok") {
     next.consecutiveFailures = 0;
-    closeCondition(next, "missed");
+    if (catchesUp(def, run, now)) closeCondition(next, "missed");
     closeCondition(next, "stuck");
     closeCondition(next, "failed");
 
@@ -459,7 +487,7 @@ export function onRunFinish(
   // failed or timeout
   // Held at the top: a count at the limit neither loses precision nor wraps below a threshold.
   next.consecutiveFailures = Math.min(next.consecutiveFailures + 1, MAX_DURATION_MS);
-  closeCondition(next, "missed");
+  if (catchesUp(def, run, now)) closeCondition(next, "missed");
   const threshold = Math.max(1, def.failuresBeforeAlert ?? 1);
   const condition = run.status === "timeout" ? "stuck" : "failed";
   if (next.consecutiveFailures >= threshold) {
@@ -504,12 +532,13 @@ export function onCheck(
   const parsed = parseSchedule(def.schedule, def.timezone);
   const grace = graceMs(def);
   const lastRunAt = lastRun?.startedAt ?? null;
-  const exp = expectation(parsed, lastRunAt, stored.createdAt, grace);
-  const nextExpectedAt = parsed.kind === "interval" ? nextFire(parsed, stored.createdAt, lastRunAt) : nextFire(parsed, now, null);
+  const exp = expectation(parsed, lastRunAt, stored.createdAt, grace, lastRun ? finishedAtOf(lastRun) : null);
+  const nextExpectedAt = parsed.kind === "interval" ? exp!.dueAt : nextFire(parsed, now, null);
   if (!exp) return { state: next, alerts, nextExpectedAt, dueAt: null };
 
-  // An interval's next run is due a period after the last one started. If that
-  // run is still going, the job is busy, not late; stuck covers one that never ends.
+  // An interval's next run is due a period after the last one started, or
+  // after it finished when it outlasted the period (intervalDue). If that run
+  // is still going, the job is busy, not late; stuck covers one that never ends.
   if (parsed.kind === "interval" && lastRun?.status === "running") {
     return { state: next, alerts, nextExpectedAt, dueAt: exp.dueAt };
   }

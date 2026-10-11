@@ -526,3 +526,70 @@ test("a cronSecret or handler secret that is not a string or null throws, so fal
     assert.throws(() => cw.job("j").handler(async () => {}, { secret: value as unknown as string }), /^TypeError: handler: secret must be a string, or null to opt out, not (boolean|number|object|an array)$/, String(value));
   }
 });
+
+test("a throwing onError with a failing store still runs the job and returns its result", async () => {
+  const broken = new Set(["upsertJob", "insertRun", "getState", "setState", "compareAndSetState", "updateRun", "updateRunIf", "listRuns", "getRun"]);
+  const seen: string[] = [];
+  const { cw } = make({ store: flaky(memory(), broken), onError: (_e, where) => { seen.push(where); throw new Error("logger down"); } });
+  let ran = 0;
+  assert.equal(await cw.run("t", async () => { ran++; return 7; }), 7);
+  await assert.rejects(cw.run("t", async () => { ran++; throw new Error("the job's own"); }), /the job's own/);
+  assert.equal(ran, 2);
+  assert.ok(seen.length > 0 && seen.every((w) => w === "recording t"), seen.join(", "));
+  // job.start() too: the handle comes back, and finishing it does not throw.
+  const handle = await cw.job("t").start();
+  assert.equal(await handle.finish("done"), null);
+});
+
+test("a store without compareAndSetState or updateRunIf is reported once, when it is first used", async () => {
+  const { compareAndSetState: _cas, updateRunIf: _if, ...plain } = memory();
+  const errors: [string, string][] = [];
+  const { cw } = make({ store: plain, onError: (e, where) => errors.push([where, (e as Error).message]) });
+  await cw.run("p", async () => {});
+  await cw.run("p", async () => {});
+  await cw.check();
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.equal(errors[0]![0], "store");
+  assert.match(errors[0]![1], /^the store has no compareAndSetState or updateRunIf, so two processes sharing it/);
+  // A store with both says nothing.
+  const quiet: string[] = [];
+  const { cw: full } = make({ onError: (_e, where) => quiet.push(where) });
+  await full.run("p", async () => {});
+  assert.deepEqual(quiet, []);
+});
+
+test("a cron run that started before the missed fire does not recover missed when it finishes", async () => {
+  const { cw, c, alerts } = make();
+  const job = cw.job("hourly", { schedule: "0 * * * *", timezone: "UTC", grace: "10m", timeout: "3h" });
+  c.set(Date.UTC(2026, 0, 5, 10, 0));
+  const handle = await job.start();
+  c.set(Date.UTC(2026, 0, 5, 11, 15));
+  assert.deepEqual((await cw.check()).alerts.map((a) => a.type), ["missed"], "11:00 never started");
+  c.set(Date.UTC(2026, 0, 5, 11, 30));
+  await handle.finish("done");
+  assert.deepEqual(alerts.types(), ["missed"], "the 10:00 run does not cover 11:00, so nothing recovered");
+  c.set(Date.UTC(2026, 0, 5, 11, 31));
+  assert.deepEqual((await cw.check()).alerts, [], "and missed is not opened a second time");
+  assert.deepEqual((await cw.jobSummary("hourly"))!.open, ["missed"]);
+  c.set(Date.UTC(2026, 0, 5, 12, 0));
+  await job.run(async () => {});
+  assert.deepEqual(alerts.types(), ["missed", "recovered"]);
+});
+
+test("an interval job is due a period after a run that outlasted the period finished", async () => {
+  const { cw, c, alerts } = make();
+  const job = cw.job("every-hour", { schedule: "every 1h", grace: "10m", timeout: "3h" });
+  c.set(Date.UTC(2026, 0, 5, 10, 0));
+  const handle = await job.start();
+  c.set(Date.UTC(2026, 0, 5, 11, 30));
+  await handle.finish("done");
+  c.set(Date.UTC(2026, 0, 5, 11, 31));
+  const checked = await cw.check();
+  assert.deepEqual(checked.alerts, [], "not missed the moment it ends");
+  assert.equal(checked.jobs.find((j) => j.name === "every-hour")!.nextExpectedAt, Date.UTC(2026, 0, 5, 12, 30));
+  c.set(Date.UTC(2026, 0, 5, 12, 40));
+  assert.deepEqual((await cw.check()).alerts, []);
+  c.set(Date.UTC(2026, 0, 5, 12, 41));
+  assert.deepEqual((await cw.check()).alerts.map((a) => a.type), ["missed"]);
+  assert.deepEqual(alerts.alerts[0]!.details, { dueAt: Date.UTC(2026, 0, 5, 12, 30), deadline: Date.UTC(2026, 0, 5, 12, 40), graceMs: 10 * MIN, lastRunAt: Date.UTC(2026, 0, 5, 10, 0) });
+});

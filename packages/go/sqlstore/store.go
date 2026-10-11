@@ -83,6 +83,7 @@ var (
 	_ cronwatch.RunUpdater    = (*Store)(nil)
 	_ cronwatch.StateComparer = (*Store)(nil)
 	_ cronwatch.RunDeleter    = (*Store)(nil)
+	_ cronwatch.LastRunner    = (*Store)(nil)
 )
 
 // New is a store over db in the dialect given.

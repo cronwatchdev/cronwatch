@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Cronwatch\Craft\controllers;
 
 use Cronwatch\Craft\Plugin;
-use Cronwatch\Env;
+use Cronwatch\Craft\Recorder;
 use Cronwatch\Web\Dashboard;
 use Cronwatch\Web\Request;
+use Craft;
 use craft\web\Controller;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
@@ -15,11 +16,12 @@ use yii\web\Response;
 /**
  * The JSON API for @cronwatch/mcp, at /cronwatch/api/... on the site, with
  * the dashboard's token (the apiToken setting, else CRONWATCH_TOKEN) as a
- * bearer token. Without a token it is not there (404). Only the /api paths
- * are served; the dashboard's pages are in the Control Panel. A check
- * through it declares the settings' jobs first, and only once the token is
- * right: a caller without it gets the dashboard's 401 having made nothing
- * run.
+ * bearer token. Without a token it is not there (404), and with one shorter
+ * than Recorder::TOKEN_MIN it is shut (503, the reason logged and shown on
+ * the plugin's settings). Only the /api paths are served; the dashboard's
+ * pages are in the Control Panel. A check through it declares the
+ * settings' jobs first, and only once the token is right: a caller without
+ * it gets the dashboard's 401 having made nothing run.
  */
 final class ApiController extends Controller
 {
@@ -29,10 +31,21 @@ final class ApiController extends Controller
     public function actionIndex(): Response
     {
         $recorder = Plugin::getInstance()->getRecorder();
-        $token = $recorder->settings()->value('apiToken');
-        $token = $token !== '' ? $token : (string) Env::read('CRONWATCH_TOKEN');
+        $token = $recorder->apiToken();
         if ($token === '') {
             throw new NotFoundHttpException();
+        }
+        $problem = Recorder::tokenProblem($token);
+        if ($problem !== null) {
+            // Shut, and said where the owner looks: Craft's log and the plugin's settings.
+            Craft::error($problem, 'cronwatch');
+            $response = $this->response;
+            $response->format = Response::FORMAT_RAW;
+            $response->setStatusCode(503);
+            $response->getHeaders()->set('content-type', 'text/plain; charset=utf-8');
+            $response->getHeaders()->set('cache-control', 'no-store');
+            $response->content = $problem . "\n";
+            return $response;
         }
         $request = Request::fromGlobals();
         $at = strpos($request->path, '/cronwatch/api');

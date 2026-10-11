@@ -98,19 +98,26 @@ defmodule Cronwatch.Web.Request do
     "/" <> (out |> Enum.reverse() |> Enum.join("/"))
   end
 
-  @doc "The path under the base, without a trailing slash."
-  @spec strip_base(String.t(), String.t()) :: String.t()
+  @doc """
+  The path under the base, without a trailing slash, or nil when the
+  request is not under it. The pathname, its dot segments already
+  resolved, must be the base or start with the base and a "/":
+  "/cronwatchapi/jobs" is not under "/cronwatch", and neither is
+  "/cronwatch/../api/jobs" (read as "/api/jobs"). An empty base, for routes
+  mounted at the root, takes every path.
+  """
+  @spec strip_base(String.t(), String.t()) :: String.t() | nil
   def strip_base(pathname, base) do
-    path =
-      if String.starts_with?(pathname, base),
-        do: binary_part(pathname, byte_size(base), byte_size(pathname) - byte_size(base)),
-        else: pathname
+    if base != "" and pathname != base and not String.starts_with?(pathname, base <> "/") do
+      nil
+    else
+      path = binary_part(pathname, byte_size(base), byte_size(pathname) - byte_size(base))
+      path = if path == "", do: "/", else: path
 
-    path = if path == "", do: "/", else: path
-
-    if byte_size(path) > 1 and String.ends_with?(path, "/"),
-      do: binary_part(path, 0, byte_size(path) - 1),
-      else: path
+      if byte_size(path) > 1 and String.ends_with?(path, "/"),
+        do: binary_part(path, 0, byte_size(path) - 1),
+        else: path
+    end
   end
 
   @doc """

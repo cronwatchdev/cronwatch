@@ -70,9 +70,9 @@ def _describe(context: Any) -> str:
     lines.append(f"Job definition: {_js.dumps(definition)}")
     if run is not None:
         lines.append("")
-        lines.append(f"Triggering run: status {run.status}, started {_stamp(run.started_at)}, duration {_duration(run)}, trigger {run.trigger}")
+        lines.append(f"Triggering run: status {run.status}, started {_stamp(run.started_at)}, duration {_duration(run)}, trigger {_data(str(run.trigger))}")
         if run.metrics:
-            lines.append(f"Metrics: {_js.dumps(run.metrics)}")
+            lines.append(f"Metrics: {_data(_js.dumps(run.metrics))}")
         if run.error:
             lines.append(f"Error:\n{_data(_js.head16(run.error, 3000))}")
         if run.output:
@@ -83,7 +83,7 @@ def _describe(context: Any) -> str:
         lines.append("Earlier runs, newest first:")
         for r in earlier:
             error = f", error: {_data(_js.head16(r.error.split(chr(10))[0], 160))}" if r.error else ""
-            metrics = f", metrics {_js.dumps(r.metrics)}" if r.metrics else ""
+            metrics = f", metrics {_data(_js.dumps(r.metrics))}" if r.metrics else ""
             lines.append(f"- {r.status}, {_stamp(r.started_at)}, {_duration(r)}{error}{metrics}")
     return "\n".join(lines)
 

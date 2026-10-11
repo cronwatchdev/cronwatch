@@ -2,6 +2,13 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## Unreleased
+
+### Changed
+- The API refuses a token shorter than 24 characters (503), and the settings form says why.
+- A watched queue worker passes calls to its own methods through to the worker; `inner()` returns the worker itself. A check with `instanceof` against the worker's class still fails, as the "Watched queues" setting now says.
+- From the library: see the CronWatch changelog for this release's changes in every language.
+
 ## 0.13.1 - 2026-10-11
 
 ### Changed

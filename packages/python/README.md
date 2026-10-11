@@ -86,10 +86,12 @@ A `prefix` is lowercase letters, digits, and underscores, not starting with a di
 In `cronwatch.alerts`, standard library only, each the SDK's request for request:
 
 ```python
+from urllib.parse import quote
+
 from cronwatch.alerts import Slack, Resend, Twilio, Sentry
 
 alerts = [
-    Slack(webhook_url=os.environ["SLACK_WEBHOOK_URL"], link=lambda a: f"https://app.example.com/cronwatch/jobs/{a.job}"),
+    Slack(webhook_url=os.environ["SLACK_WEBHOOK_URL"], link=lambda a: f"https://app.example.com/cronwatch/jobs/{quote(a.job, safe='')}"),
     Resend(api_key=os.environ["RESEND_API_KEY"], from_="alerts@example.com", to="ops@example.com"),
     Twilio(account_sid=..., auth_token=..., from_="+15005550006", to=["+15551110000"]),
     Sentry(dsn=os.environ["SENTRY_DSN"]),

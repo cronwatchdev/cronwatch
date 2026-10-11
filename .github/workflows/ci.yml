@@ -24,9 +24,10 @@
 # linted, and every service image is pinned by digest.
 # A green run on main is what lets deploy.yml ship the site. A push or pull
 # request that touches only site/ and deploy/ skips the packages' jobs: the
-# commits, the lint, and the site job (the dash check, the site's build, and
-# its links) run, and the rest show as skipped, so a docs fix deploys in a
-# minute or two. Anything else, a release included, runs every job.
+# commits, the lint, and the site job (the dash check, the site's build, its
+# links, and the contact service's and IndexNow's tests) run, and the rest
+# show as skipped, so a docs fix deploys in a minute or two. Anything else,
+# a release included, runs every job.
 name: CI
 
 on:
@@ -97,9 +98,10 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # A change to the site alone: the dash check, the site's build, and its
-  # links, as the test job checks them on a full run. The site needs only
-  # marked, so no package's install scripts run.
+  # A change to the site alone: the dash check, the site's build, its
+  # links, the contact service's tests, and the IndexNow script's, as the
+  # test job checks them on a full run. The site needs only marked, and the
+  # two tests only Node, so no package's install scripts run.
   site:
     needs: changes
     if: needs.changes.outputs.code == 'false'
@@ -116,6 +118,8 @@ jobs:
       - run: npm run check:dashes
       - run: npm run build:site
       - run: node scripts/check-links.mjs site/dist
+      - run: npm run test:contact
+      - run: node --test site/scripts/indexnow.test.mjs
 
   # The workflows (actionlint, which also runs shellcheck on every run:
   # step), the deploy and helper scripts (shellcheck), and the nginx vhost
@@ -502,7 +506,7 @@ jobs:
       # install WordPress into a temporary directory (WP-CLI checks the
       # download's checksum against api.wordpress.org), install the built
       # plugin zip, and drive it through wp-cli and wp-cron.php. PHP 8.2 runs
-      # them on WordPress 6.1, the plugin's floor; 8.5 on the default, current one.
+      # them on WordPress 6.5, the plugin's floor; 8.5 on the default, current one.
       # A 5xx fails the download, not the checksum, and is retried five
       # times, curl doubling its wait from a second each time.
       - name: Download WP-CLI
@@ -517,7 +521,7 @@ jobs:
           CRONWATCH_TEST_PG: postgres://postgres:pw@127.0.0.1:5432/cw
           CRONWATCH_TEST_WORDPRESS: mysql://root:pw@127.0.0.1:3306/cw
           CRONWATCH_TEST_WPCLI: ${{ runner.temp }}/wp-cli.phar
-          CRONWATCH_TEST_WP_VERSION: ${{ matrix.php == '8.2' && '6.1.14' || '' }}
+          CRONWATCH_TEST_WP_VERSION: ${{ matrix.php == '8.2' && '6.5.13' || '' }}
       # @cronwatch/mcp's tools against the PHP dashboard's serve(), under
       # PHP's built-in server with packages/php/tests/servers/web.php.
       - name: MCP server against Cronwatch\Web\Dashboard

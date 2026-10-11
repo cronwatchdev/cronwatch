@@ -159,8 +159,9 @@ public final class Timeline {
   /**
    * When the job was due within {@code from} to {@code to}, ascending, and whether they are too
    * many to draw one by one. A cron's fires come from its schedule. An interval is due one period
-   * after each run started, and after the last run once a period for as long as nothing runs; with
-   * no run yet, from its next expected time.
+   * after each run started (after it finished, for a run that outlasted the period: {@code
+   * intervalDue}), and after the last run once a period for as long as nothing runs; with no run
+   * yet, from its next expected time.
    */
   private static Due dueTimes(
       JobSummary job, @Nullable ParsedSchedule parsed, List<Run> runs, long from, long to) {
@@ -175,22 +176,19 @@ public final class Timeline {
       if ((double) (to - from) / (double) every > MAX_TICKS) {
         return new Due(List.of(), true);
       }
-      List<Long> starts = new ArrayList<>();
-      for (Run r : runs) {
-        starts.add(r.startedAt());
+      List<Run> ordered = new ArrayList<>(runs);
+      ordered.sort(Comparator.comparingLong(Run::startedAt));
+      List<Long> dues = new ArrayList<>();
+      for (Run r : ordered) {
+        dues.add(Schedules.intervalDue(parsed.everyMs(), r.startedAt(), Evaluate.finishedAtOf(r)));
       }
-      starts.sort(null);
       TreeSet<Long> set = new TreeSet<>();
-      for (long start : starts) {
-        long t = saturatingAdd(start, every);
+      for (long t : dues) {
         if (t >= from && t <= to) {
           set.add(t);
         }
       }
-      Long next =
-          starts.isEmpty()
-              ? job.nextExpectedAt()
-              : Long.valueOf(saturatingAdd(starts.get(starts.size() - 1), every));
+      Long next = dues.isEmpty() ? job.nextExpectedAt() : dues.get(dues.size() - 1);
       if (next != null) {
         long t = next;
         if (t < from) {
@@ -237,7 +235,8 @@ public final class Timeline {
     if (last != null) {
       long started = last.startedAt();
       try {
-        Schedules.Expectation e = Schedules.expectation(parsed, started, started, grace);
+        Schedules.Expectation e =
+            Schedules.expectation(parsed, started, started, grace, Evaluate.finishedAtOf(last));
         return e == null ? null : e.dueAt();
       } catch (RuntimeException e) {
         return null;

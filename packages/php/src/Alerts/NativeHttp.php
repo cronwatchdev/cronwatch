@@ -75,9 +75,10 @@ final class NativeHttp implements Http
                 }
                 return strlen($line);
             },
-            CURLOPT_WRITEFUNCTION => function ($handle, string $chunk) use (&$received, &$full): int {
-                $received .= substr($chunk, 0, max(0, self::MAX_BODY - strlen($received)));
-                if (strlen($received) >= self::MAX_BODY) {
+            CURLOPT_WRITEFUNCTION => function ($handle, string $chunk) use (&$received, &$full, &$status): int {
+                $max = self::bodyMax($status);
+                $received .= substr($chunk, 0, max(0, $max - strlen($received)));
+                if (strlen($received) >= $max) {
                     // Enough: stop reading (curl answers CURLE_WRITE_ERROR).
                     $full = true;
                     return 0;
@@ -234,7 +235,7 @@ final class NativeHttp implements Http
     /**
      * The answer: its status once the headers are in (skipping any 1xx, up
      * to MAX_INFORMATIONAL of them), and its body, de-chunked as it arrives,
-     * at most MAX_BODY bytes of it. Every read is under the deadline, however
+     * at most MAX_BODY bytes of it (ERROR_READ_MAX outside 2xx). Every read is under the deadline, however
      * fast the bytes come, and nothing read is kept past what the body needs.
      *
      * @param resource $socket
@@ -282,7 +283,8 @@ final class NativeHttp implements Http
             $buffer .= $chunk;
         }
         $chunked = str_contains(strtolower($headers['transfer-encoding'] ?? ''), 'chunked');
-        $length = !$chunked && isset($headers['content-length']) && ctype_digit($headers['content-length']) ? (int) $headers['content-length'] : null;
+        $length = !$chunked && isset($headers['content-length']) && preg_match('/^[0-9]+$/D', $headers['content-length']) === 1 ? (int) $headers['content-length'] : null;
+        $max = self::bodyMax($status);
         // The body: past the deadline while it arrives, the answer stands with an empty body.
         $body = '';
         // For a chunked body: the bytes left of the chunk being read, or null while a size line is.
@@ -295,18 +297,24 @@ final class NativeHttp implements Http
                 $buffer = '';
                 $complete = $length !== null && strlen($body) >= $length;
             }
-            if ($complete || strlen($body) >= self::MAX_BODY) {
-                return new HttpResponse($status, substr($length !== null ? substr($body, 0, $length) : $body, 0, self::MAX_BODY));
+            if ($complete || strlen($body) >= $max) {
+                return new HttpResponse($status, substr($length !== null ? substr($body, 0, $length) : $body, 0, $max));
             }
             $chunk = self::read($socket, $deadline);
             if ($chunk === null) {
                 return new HttpResponse($status, '');
             }
             if ($chunk === '') {
-                return new HttpResponse($status, substr($body, 0, self::MAX_BODY));
+                return new HttpResponse($status, substr($body, 0, $max));
             }
             $buffer .= $chunk;
         }
+    }
+
+    /** The most of a body kept for an answer with this status: an error's is only read for its start. */
+    private static function bodyMax(int $status): int
+    {
+        return $status >= 200 && $status < 300 ? self::MAX_BODY : self::ERROR_READ_MAX;
     }
 
     /**
@@ -367,7 +375,7 @@ final class NativeHttp implements Http
             }
             $hex = trim(explode(';', substr($raw, 0, $eol))[0]);
             $raw = substr($raw, $eol + 2);
-            if ($hex === '' || !ctype_xdigit($hex) || strlen(ltrim($hex, '0')) > 15) {
+            if (preg_match('/^[0-9A-Fa-f]+$/D', $hex) !== 1 || strlen(ltrim($hex, '0')) > 15) {
                 return true;
             }
             $size = (int) hexdec($hex);

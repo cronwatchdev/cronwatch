@@ -166,6 +166,22 @@ class WebTimelineTest < Minitest::Test
     assert_includes 4..5, night.length, night.length.to_s
   end
 
+  # An interval run that outlasts its period is followed by a full period
+  # from its finish, on the lane and as the slot missed is drawn at.
+  def test_an_interval_run_that_outlasts_its_period_is_due_a_period_after_it_finished
+    cw, clock, = make
+    timeline = Cronwatch::Web::Timeline
+    cw.job("long", schedule: "every 1h", grace: "10m").run { clock.advance(90 * MIN) }
+    parsed = Cronwatch::Schedule.parse("every 1h")
+    summary = cw.job_summary("long")
+    times = timeline.due_times(summary, parsed, [summary.last_run], T0, T0 + (4 * HOUR)).times
+    assert_equal [T0 + (150 * MIN), T0 + (210 * MIN)], times
+    clock.now = T0 + (161 * MIN)
+    assert_equal [:missed], cw.check.alerts.map(&:type)
+    summary = cw.job_summary("long")
+    assert_equal T0 + (150 * MIN), timeline.missed_at(summary, parsed, times, clock.now)
+  end
+
   def test_week_runs_limit_follows_the_schedule
     cw, = make
     timeline = Cronwatch::Web::Timeline

@@ -2,9 +2,10 @@
 // as the SDK makes it with fetch (alerts/shared.ts): the URL cleaned and
 // read as fetch reads it, only http and https, headers checked as fetch
 // checks them, one ten second deadline for the whole request, a redirect
-// refused rather than followed, at most 1 MiB of an answer read, and an
-// error that names only the URL's origin, with every secret the caller holds
-// cut out of a quoted answer before it is cut to 200 characters.
+// refused rather than followed, at most 1 MiB of an answer read (64 KiB of
+// an error answer), and an error that names only the URL's origin, with
+// every secret the caller holds cut out of a quoted answer before it is cut
+// to 200 characters.
 package post
 
 import (
@@ -32,6 +33,11 @@ const MaxBody = 1 << 20
 
 // ErrorBodyMax is how much of an answer's body goes into an error.
 const ErrorBodyMax = 200
+
+// ErrorReadMax is the most of an error answer's body read (64 KiB), far
+// more than any secret plus ErrorBodyMax needs, so a provider (or something
+// posing as one) cannot make a send hold a body of any size.
+const ErrorReadMax = 64 * 1024
 
 // ErrTimeout is fetch's error for a request past its deadline. It is a
 // context.DeadlineExceeded, so an app telling a channel's timeout from its
@@ -299,12 +305,23 @@ func DoWithin(ctx context.Context, timeout time.Duration, client *http.Client, r
 		return Response{}, fmt.Errorf("%s: %w", origin, err)
 	}
 	defer resp.Body.Close()
+	answer := Response{Status: resp.StatusCode}
+	if !answer.OK() {
+		// The start of an error answer, the rest let go; whatever was read
+		// before a failure is kept, as the SDK's errorText keeps it. A
+		// character cut at the end reads as U+FFFD, far past what ErrorBody
+		// keeps.
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, ErrorReadMax))
+		answer.Body = Text(data)
+		return answer, nil
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxBody))
 	if err != nil {
 		// A body the deadline cut short, as the SDK treats a body it could not read.
-		return Response{Status: resp.StatusCode}, nil
+		return answer, nil
 	}
-	return Response{Status: resp.StatusCode, Body: Text(data)}, nil
+	answer.Body = Text(data)
+	return answer, nil
 }
 
 // withoutURL is text with every spelling of the URL posted to written as

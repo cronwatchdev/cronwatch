@@ -8,7 +8,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any, TypeVar
 
-from .. import _js
+from .. import _fork, _js
 from .._deprecated import names as _deprecated_names
 from .._evaluate import state_version
 from .._output import strip_json_nul, strip_nul
@@ -54,6 +54,12 @@ class MemoryStore:
         self._order: dict[str, int] = {}
         self._states: dict[str, JobState] = {}
         self._seq = 0
+        self._lock = threading.RLock()
+        _fork.track(self)
+
+    def _after_fork(self) -> None:
+        """A forked child keeps a copy of the data and gets a lock of its own,
+        which another thread of the parent cannot be holding (see cronwatch._fork)."""
         self._lock = threading.RLock()
 
     def upsert_job(self, definition: JobDefinition, now: int) -> None:

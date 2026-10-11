@@ -251,7 +251,7 @@ module Cronwatch
       # just before the block runs. The result is the same.
       if recorded
         begin
-          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
+          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
         rescue StandardError => e
           report(e, "starting #{name}")
         end
@@ -425,7 +425,7 @@ module Cronwatch
       end
       return [] unless evaluate
 
-      update_state(run.job) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
+      update_state(run.job) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
       return [] if run.status == :running
 
       finish_run(definition, run, now)
@@ -763,10 +763,12 @@ module Cronwatch
     def ensure_ready
       return if @ready
 
+      missing = nil
       @ready_lock.synchronize do
         next if @ready
 
         @store.init if @store.respond_to?(:init)
+        missing = %i[compare_and_set_state update_run_if].reject { |method| @store.respond_to?(method) }
         if @using_default_store && Environment.production?
           warn "[cronwatch] using the in-memory store: runs and state are lost on restart. " \
                "Pass a store such as Cronwatch::Stores::ActiveRecord."
@@ -774,6 +776,12 @@ module Cronwatch
         # Only once init has gone through: a failure is tried again on the next call.
         @ready = true
       end
+      return if missing.nil? || missing.empty?
+
+      # Once per client, outside the lock: it still works, but only as long
+      # as one process at a time uses the store.
+      report(RuntimeError.new("the store has no #{missing.join(" or ")}, so two processes sharing it can overwrite each other's " \
+                              "state or both evaluate the same run; it is safe only while one process at a time uses it"), "store")
     end
 
     # Writes the declaration of `definition`'s name as it stands, unless the
@@ -1074,7 +1082,7 @@ module Cronwatch
       end
       if recorded
         begin
-          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(before), run.id), nil] }
+          update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
         rescue StandardError => e
           report(e, "starting #{name}")
         end

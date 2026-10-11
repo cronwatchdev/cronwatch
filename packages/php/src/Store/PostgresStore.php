@@ -196,6 +196,13 @@ final class PostgresStore extends PdoStore
     }
 
     /**
+     * Every PHP process calls init(), and CREATE INDEX IF NOT EXISTS takes a
+     * SHARE lock on its table even when the index is there, which, inside
+     * the app's open transaction (a shared PDO), is held until the app
+     * commits and blocks every write to the runs meanwhile. So the catalog is
+     * read first, which takes no lock, and the tables are made only when one
+     * of them, or of the indexes, is missing.
+     *
      * Many instances starting at once would race CREATE TABLE IF NOT EXISTS,
      * which Postgres can reject with a unique violation on pg_type. A lock
      * per prefix makes them take turns. Inside the app's open transaction
@@ -203,7 +210,22 @@ final class PostgresStore extends PdoStore
      */
     public function init(): void
     {
+        if ($this->tablesExist()) {
+            return;
+        }
         $this->transacting($this->createTables(...));
+    }
+
+    /** Whether the three tables and both indexes are there, read from the catalog without a lock (to_regclass()). */
+    private function tablesExist(): bool
+    {
+        $names = array_map(fn (string $name) => $this->prefix . $name, ['jobs', 'runs', 'state', 'runs_job_started', 'runs_running']);
+        $statement = $this->run('SELECT ' . implode(' AND ', array_fill(0, count($names), 'to_regclass(?) IS NOT NULL')), $names);
+        try {
+            return in_array($statement->fetchColumn(), [true, 1, '1', 't'], true);
+        } finally {
+            $statement->closeCursor();
+        }
     }
 
     private function createTables(): void

@@ -16,9 +16,8 @@ site/dist/
 # Local notes and keys, never committed
 /files/
 
-# Cargo builds
+# Cargo builds (packages/rust/Cargo.lock is committed: the workspace has binaries)
 target/
-packages/rust/Cargo.lock
 
 # Mix builds
 packages/elixir/**/_build/
@@ -37,3 +36,8 @@ packages/dotnet/**/obj/
 packages/dotnet/**/TestResults/
 packages/dotnet/artifacts/
 preflight.yml
+
+# Local agent state
+/.claude/
+/.agents/
+/skills-lock.json

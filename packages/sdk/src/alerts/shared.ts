@@ -57,16 +57,48 @@ export const ERROR_BODY_MAX = 200;
 export async function post(provider: string, url: string, init: { headers: Record<string, string>; body: string }, secrets: (string | undefined)[] = []): Promise<Response> {
   const response = await fetch(postable(url), { method: "POST", headers: init.headers, body: init.body, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!response.ok) {
-    let text = "";
-    try {
-      text = await response.text();
-    } catch {
-      // The status is enough.
-    }
+    const text = await errorText(response);
     throw new Error(`${provider} ${origin(url)} answered ${response.status}${text ? `: ${errorBody(text, secrets)}` : ""}`);
   }
   await drain(response);
   return response;
+}
+
+/** The most of an error body read (64 KiB), far more than any secret plus ERROR_BODY_MAX needs. */
+export const ERROR_READ_MAX = 64 * 1024;
+
+/**
+ * The start of an error answer's body, at most ERROR_READ_MAX bytes read
+ * from the stream and the rest let go, so a provider (or something posing
+ * as one) cannot make a send hold a body of any size. "" when it cannot be
+ * read. A character cut at the end decodes as U+FFFD, far past what
+ * errorBody keeps.
+ */
+export async function errorText(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < ERROR_READ_MAX) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const take = value.subarray(0, ERROR_READ_MAX - size);
+      chunks.push(take);
+      size += take.byteLength;
+    }
+  } catch {
+    // The status is enough; whatever was read is kept.
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /**

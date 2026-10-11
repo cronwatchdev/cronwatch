@@ -8,6 +8,7 @@ import dev.cronwatch.internal.post.Post;
 import dev.cronwatch.json.JsObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import org.jspecify.annotations.Nullable;
@@ -39,10 +40,23 @@ public final class Webhook implements Channel {
 
   /**
    * The webhook's signature of a body: the HMAC-SHA256 of the body with the secret, as lowercase
-   * hex. The request carries it as {@code x-cronwatch-signature: sha256=<signature>}.
+   * hex. The request carries it as {@code x-cronwatch-signature: sha256=<signature>}. The
+   * timestamped one, {@code x-cronwatch-timestamp-signature}, is the signature of {@code
+   * <timestamp>.<body>}, with the {@code x-cronwatch-timestamp} value as sent.
    */
   public static String signature(String secret, String body) {
     return Shared.hex(Shared.hmacSha256(Js.utf8(secret), body));
+  }
+
+  /** Sets a header, first taking out any of the same name in another case. */
+  private static void setHeader(JsObject headers, String name, String value) {
+    String lower = name.toLowerCase(Locale.ROOT);
+    for (String key : headers.keys()) {
+      if (key.toLowerCase(Locale.ROOT).equals(lower)) {
+        headers.remove(key);
+      }
+    }
+    headers.set(name, value);
   }
 
   /** The request's body: {@code "schema": 1}, then the alert's own fields in the SDK's order. */
@@ -73,10 +87,16 @@ public final class Webhook implements Channel {
     for (Map.Entry<String, String> h : options.headers) {
       // A pasted Authorization value often carries a stray space or newline, which fetch would
       // refuse.
-      headers.set(h.getKey(), Js.trim(h.getValue()));
+      setHeader(headers, h.getKey(), Js.trim(h.getValue()));
     }
     if (!options.secret.isEmpty()) {
-      headers.set("x-cronwatch-signature", "sha256=" + signature(options.secret, body));
+      String timestamp = Long.toString(Math.floorDiv(options.now.getAsLong(), 1000L));
+      setHeader(headers, "x-cronwatch-signature", "sha256=" + signature(options.secret, body));
+      setHeader(headers, "x-cronwatch-timestamp", timestamp);
+      setHeader(
+          headers,
+          "x-cronwatch-timestamp-signature",
+          "sha256=" + signature(options.secret, timestamp + "." + body));
     }
     List<Map.Entry<String, String>> list = new ArrayList<>();
     for (Map.Entry<String, Object> e : headers.entries()) {

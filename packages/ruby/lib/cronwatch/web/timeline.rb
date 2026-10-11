@@ -121,9 +121,10 @@ module Cronwatch
 
       # When the job was due within `from` to `to`. A cron's fires come from
       # Schedule.fires_between. An interval is due one period after each run
-      # started, and after the last run once a period for as long as nothing
-      # runs (the times a missed interval job keeps being asked for); with no
-      # run yet, from its next expected time.
+      # started (after it finished, for a run that outlasted the period:
+      # Schedule.interval_due), and after the last run once a period for as
+      # long as nothing runs (the times a missed interval job keeps being
+      # asked for); with no run yet, from its next expected time.
       def due_times(job, parsed, runs, from, to)
         return DueTimes.new(times: [], dense: false) if parsed.nil?
 
@@ -131,13 +132,14 @@ module Cronwatch
           every = parsed.every_ms
           return DueTimes.new(times: [], dense: true) if (to - from).fdiv(every) > MAX_TICKS
 
-          starts = runs.map(&:started_at).sort
+          # Oldest start first, runs that started together in the order given, as a stable sort leaves them.
+          ordered = runs.each_with_index.sort_by { |run, i| [run.started_at, i] }.map(&:first)
+          dues = ordered.map { |run| Schedule.interval_due(every, run.started_at, Evaluate.finished_at_of(run)) }
           times = []
-          starts.each do |start|
-            t = start + every
-            times << t if t >= from && t <= to
+          dues.each do |due|
+            times << due if due >= from && due <= to
           end
-          t = starts.empty? ? job.next_expected_at : starts.last + every
+          t = dues.empty? ? job.next_expected_at : dues.last
           unless t.nil?
             t += (from - t).fdiv(every).ceil * every if t < from
             while t <= to
@@ -160,8 +162,10 @@ module Cronwatch
         return nil if parsed.nil? || !open?(job, :missed)
 
         grace = safely(0) { Evaluate.grace_ms(job.definition) }
-        last = job.last_run&.started_at
-        return safely(nil) { Schedule.expectation(parsed, last, last, grace)&.due_at } unless last.nil?
+        last = job.last_run
+        unless last.nil?
+          return safely(nil) { Schedule.expectation(parsed, last.started_at, last.started_at, grace, Evaluate.finished_at_of(last))&.due_at }
+        end
 
         past = times.select { |t| t + grace < now }
         past.last

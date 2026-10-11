@@ -22,7 +22,7 @@ from typing import Any, Protocol
 
 from .._js import well_formed
 
-__all__ = ["HTTP", "MAX_BODY", "RequestTimeout", "Response", "TIMEOUT", "UrllibHTTP", "default", "text", "trim_header", "web_url"]
+__all__ = ["ERROR_READ_MAX", "HTTP", "MAX_BODY", "RequestTimeout", "Response", "TIMEOUT", "UrllibHTTP", "default", "text", "trim_header", "web_url"]
 
 #: Seconds a request may take, as the SDK's AbortSignal.timeout(10_000).
 TIMEOUT = 10.0
@@ -31,6 +31,12 @@ TIMEOUT = 10.0
 #: of a refusal, and a hostile or broken endpoint could otherwise send hundreds
 #: of megabytes within the deadline. Reading stops there.
 MAX_BODY = 1_048_576
+
+#: The most of an error answer's body read (64 KiB, alerts/shared.ts's
+#: ERROR_READ_MAX), far more than any secret plus ERROR_BODY_MAX needs; the
+#: rest is let go, so a provider (or something posing as one) cannot make a
+#: send hold a body of any size.
+ERROR_READ_MAX = 64 * 1024
 
 _AROUND = re.compile(r"^[ \t\r\n]+|[ \t\r\n]+\Z")
 # What the URL parser drops before it reads a URL: C0 controls and spaces around it, tabs and line breaks anywhere.
@@ -198,8 +204,10 @@ class UrllibHTTP:
     the whole request, from connecting to the last byte of the body. Past the
     deadline before an answer it raises RequestTimeout; past it while the
     body is still arriving it returns the answer with an empty body, as the
-    SDK's channels treat a body they could not read. The body kept is at most
-    MAX_BODY bytes. ``timeout`` (seconds) is for tests."""
+    SDK's channels treat a body they could not read; for an error answer
+    (outside 2xx) whatever arrived before then is kept, as the SDK's
+    errorText keeps it. The body kept is at most MAX_BODY bytes, and at most
+    ERROR_READ_MAX for an error answer. ``timeout`` (seconds) is for tests."""
 
     def __init__(self, timeout: float = TIMEOUT) -> None:
         self.timeout = timeout
@@ -226,7 +234,7 @@ class UrllibHTTP:
                     if watch.expired:
                         # The headers ended only because the deadline shut the socket.
                         raise RequestTimeout() from None
-                    return Response(error.code, _read(error.fp, watch))
+                    return Response(error.code, _read(error.fp, watch, error.code))
                 finally:
                     error.close()
             except (http.client.InvalidURL, ValueError):
@@ -243,7 +251,7 @@ class UrllibHTTP:
                 if watch.expired:
                     # The headers ended only because the deadline shut the socket.
                     raise RequestTimeout()
-                return Response(response.status, _read(response, watch))
+                return Response(response.status, _read(response, watch, response.status))
         finally:
             watch.finish()
 
@@ -253,26 +261,33 @@ def _remaining(deadline: float) -> float:
     return max(deadline - time.monotonic(), 0.001)
 
 
-def _read(response: Any, watch: _Deadline) -> str:
-    """The body, at most MAX_BODY bytes of it, read until the answer ends or
-    the deadline passes; "" when the deadline passes first. A response that
-    has read its whole body (by its length) closes itself, and a read after
-    that gives nothing, which ends the loop."""
+def _read(response: Any, watch: _Deadline, status: int) -> str:
+    """The body, at most MAX_BODY bytes of it (ERROR_READ_MAX for an error
+    answer, outside 2xx), read until the answer ends or the deadline passes;
+    "" when the deadline passes first or a read fails, except that an error
+    answer keeps what was read by then (its status is the news, and the start
+    of its body says why). A character cut at the end decodes as U+FFFD, far
+    past what error_body keeps. A response that has read its whole body (by
+    its length) closes itself, and a read after that gives nothing, which
+    ends the loop."""
     if response is None:
         return ""
+    failed = not 200 <= status < 300
+    most = ERROR_READ_MAX if failed else MAX_BODY
     chunks: list[bytes] = []
     size = 0
     try:
-        while size < MAX_BODY:
+        while size < most:
             chunk = response.read1(65536) if hasattr(response, "read1") else response.read(65536)
             if not chunk:
                 break
-            chunk = chunk[: MAX_BODY - size]
+            chunk = chunk[: most - size]
             chunks.append(chunk)
             size += len(chunk)
     except (OSError, http.client.HTTPException):
-        return ""
-    if not watch.finish():
+        if not failed:
+            return ""
+    if not watch.finish() and not failed:
         return ""
     return text(b"".join(chunks))
 

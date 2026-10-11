@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::evaluate::{grace_ms, is_stuck, js_number, parsed_schedule, timeout_ms, truthy};
+use crate::evaluate::{finished_at_of, grace_ms, is_stuck, js_number, parsed_schedule, timeout_ms, truthy};
 use crate::format::{and_list, js_text};
 use crate::js::{self, Value};
 use crate::schedule::{self, Parsed, format_duration};
@@ -110,8 +110,9 @@ pub(crate) fn lane_schedule(job: &JobSummary) -> Option<Arc<Parsed>> {
 
 /// When the job was due within `from` to `to`, ascending, and whether they
 /// are too many to draw one by one. A cron's fires come from its schedule.
-/// An interval is due one period after each run started, and after the
-/// last run once a period for as long as nothing runs; with no run yet,
+/// An interval is due one period after each run started (after it
+/// finished, for a run that outlasted the period: `interval_due`), and
+/// after the last run once a period for as long as nothing runs; with no run yet,
 /// from its next expected time.
 fn due_times(job: &JobSummary, parsed: Option<&Parsed>, runs: &[Run], from: i64, to: i64) -> (Vec<i64>, bool) {
     let Some(parsed) = parsed else {
@@ -125,16 +126,17 @@ fn due_times(job: &JobSummary, parsed: Option<&Parsed>, runs: &[Run], from: i64,
         if (to - from) as f64 / every as f64 > MAX_TICKS as f64 {
             return (Vec::new(), true);
         }
-        let mut starts: Vec<i64> = runs.iter().map(|r| r.started_at).collect();
-        starts.sort_unstable();
+        let mut ordered: Vec<&Run> = runs.iter().collect();
+        ordered.sort_by_key(|r| r.started_at);
+        let dues: Vec<i64> =
+            ordered.iter().map(|r| schedule::interval_due(every, r.started_at, finished_at_of(r))).collect();
         let mut set = BTreeSet::new();
-        for start in &starts {
-            let t = start.saturating_add(every);
+        for &t in &dues {
             if t >= from && t <= to {
                 set.insert(t);
             }
         }
-        let next = starts.last().map(|s| s.saturating_add(every)).or(job.next_expected_at);
+        let next = dues.last().copied().or(job.next_expected_at);
         if let Some(mut t) = next {
             if t < from {
                 // Saturating: a foreign row's start can be anywhere.
@@ -165,8 +167,8 @@ pub(crate) fn missed_at(job: &JobSummary, parsed: Option<&Parsed>, times: &[i64]
     }
     let grace = grace_ms(&job.definition).unwrap_or(0.0);
     if let Some(last) = &job.last_run {
-        let last = last.started_at;
-        return schedule::expect(parsed, Some(last), last, grace).map(|e| e.due_at);
+        let started = last.started_at;
+        return schedule::expect(parsed, Some(started), started, grace, finished_at_of(last)).map(|e| e.due_at);
     }
     times.iter().copied().rfind(|&t| (t as f64) + grace < now as f64)
 }

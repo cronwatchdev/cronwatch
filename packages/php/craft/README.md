@@ -72,7 +72,7 @@ Settings, Plugins, CronWatch: where alerts go (email through Craft's mailer, a S
 
 CronWatch in the Control Panel's navigation, for users with access to the plugin: the jobs' health, the last day as a timeline, each job's runs and output. Silencing, forgetting, and "Run check now" need the "Silence, forget, and check jobs from the dashboard" permission as well, and carry Craft's CSRF token.
 
-The JSON API that [`@cronwatch/mcp`](https://www.npmjs.com/package/@cronwatch/mcp) talks to is off until a token is set (`'apiToken' => '$CRONWATCH_TOKEN'` in `config/cronwatch.php`, or the `CRONWATCH_TOKEN` environment variable); it is then at `https://example.com/cronwatch/api`, with the token as a bearer token.
+The JSON API that [`@cronwatch/mcp`](https://www.npmjs.com/package/@cronwatch/mcp) talks to is off until a token is set (`'apiToken' => '$CRONWATCH_TOKEN'` in `config/cronwatch.php`, or the `CRONWATCH_TOKEN` environment variable); it is then at `https://example.com/cronwatch/api`, with the token as a bearer token. The token needs at least 24 characters (`openssl rand -hex 24` makes one); a shorter one keeps the API shut (503), and the reason is in Craft's log and on the plugin's settings.
 
 ## License
 

@@ -311,8 +311,8 @@ impl Store for TestStore {
 
 /// A view of one shared memory store for a process of its own (outbox.test.ts
 /// `mortal()`): once `kill()` is called, nothing it asks of the store ever
-/// completes, as when the process is gone. It counts its conditional state
-/// writes, and its `close` is only counted.
+/// completes, as when the process is gone. It counts the conditional state
+/// writes that land, and its `close` is only counted.
 pub struct Mortal {
     pub inner: Arc<MemoryStore>,
     dead: std::sync::atomic::AtomicBool,
@@ -399,10 +399,16 @@ impl Store for Mortal {
         state: &'a JobState,
         expected: i64,
     ) -> BoxFuture<'a, Result<bool, BoxError>> {
-        mortal!(self, {
-            self.state_writes.fetch_add(1, Ordering::SeqCst);
-            self.inner.compare_and_set_state(state, expected)
-        })
+        mortal!(
+            self,
+            Box::pin(async move {
+                let wrote = self.inner.compare_and_set_state(state, expected).await?;
+                if wrote {
+                    self.state_writes.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(wrote)
+            })
+        )
     }
     fn delete_run_if<'a>(
         &'a self,

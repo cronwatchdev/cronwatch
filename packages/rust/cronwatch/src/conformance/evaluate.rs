@@ -61,23 +61,48 @@ impl Sim {
             "start" => {
                 let id = field(ev, "id").as_str().unwrap_or("").to_string();
                 let order = self.runs.len();
-                self.runs.push((
-                    Run {
-                        id,
-                        job: self.def.name().to_string(),
-                        status: RunStatus::Running,
-                        started_at: at,
-                        finished_at: None,
-                        duration_ms: None,
-                        error: None,
-                        output: None,
-                        metrics: Metrics::new(),
-                        trigger: "run".into(),
-                    },
-                    order,
-                ));
-                self.state = on_run_start(&self.state);
+                let run = Run {
+                    id,
+                    job: self.def.name().to_string(),
+                    status: RunStatus::Running,
+                    started_at: at,
+                    finished_at: None,
+                    duration_ms: None,
+                    error: None,
+                    output: None,
+                    metrics: Metrics::new(),
+                    trigger: "run".into(),
+                };
+                self.state = on_run_start(&self.def, &run, &self.state, at);
+                self.runs.push((run, order));
                 Ok(state_only(&self.state))
+            }
+            "record" => {
+                // A run a source reports only once it is over (`record_run`):
+                // written finished, then started and finished at `at`, as the
+                // client does, so missed closes only when its start covers
+                // the fire.
+                let started_at = int(ev, "startedAt");
+                let run = Run {
+                    id: field(ev, "id").as_str().unwrap_or("").to_string(),
+                    job: self.def.name().to_string(),
+                    status: RunStatus::parse(field(ev, "status").as_str().unwrap_or("")),
+                    started_at,
+                    finished_at: Some(at),
+                    duration_ms: Some(run_duration(started_at, at)),
+                    error: ev.get("error").and_then(Value::as_str).map(str::to_string),
+                    output: ev.get("output").and_then(Value::as_str).map(str::to_string),
+                    metrics: match ev.get("metrics") {
+                        Some(m) => Metrics::from_value(m).map_err(|e| e.to_string())?,
+                        None => Metrics::new(),
+                    },
+                    trigger: "source".into(),
+                };
+                let order = self.runs.len();
+                self.runs.push((run.clone(), order));
+                self.state = on_run_start(&self.def, &run, &self.state, at);
+                let alerts = self.finish_run(&run, at)?;
+                Ok(Some(Object::new().with("alerts", alerts).with("state", self.state.to_value()).into()))
             }
             "finish" => {
                 let id = field(ev, "id").as_str().unwrap_or("");

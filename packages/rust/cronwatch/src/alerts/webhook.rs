@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use super::post::{self, Transport};
+use super::ses::now_ms;
 use super::shared::{hex, hmac_sha256, invalid};
 use crate::deliver::{Channel, ChannelContext};
 use crate::error::Error;
@@ -18,12 +19,26 @@ pub struct WebhookOptions {
     /// webhook URL's path or query is often the credential.
     pub url: String,
     /// Extra request headers, in order, an `authorization` header say.
-    /// Values are trimmed of the spaces and newlines a paste leaves.
+    /// Values are trimmed of the spaces and newlines a paste leaves. A name
+    /// is matched without regard to case, so a `Content-Type` given here
+    /// replaces the default one rather than going beside it; the signature
+    /// headers are always the channel's own.
     pub headers: Vec<(String, String)>,
-    /// When set, each request carries `x-cronwatch-signature:
-    /// sha256=<hex>`, the HMAC-SHA256 of the raw body with this secret, so
-    /// the receiver can verify it (see [`signature`]).
+    /// When set, each request is signed with this secret (HMAC-SHA256, as
+    /// lowercase hex), so the receiver can verify it:
+    ///
+    /// - `x-cronwatch-signature: sha256=<hex>` signs the raw body alone, as
+    ///   it always has (see [`signature`]).
+    /// - `x-cronwatch-timestamp: <unix seconds>` is when it was sent, and
+    ///   `x-cronwatch-timestamp-signature: sha256=<hex>` signs
+    ///   `<timestamp>.<raw body>`, so a receiver that checks this one (with
+    ///   a constant-time compare) and refuses a timestamp more than five
+    ///   minutes from its own clock cannot be sent a captured alert again
+    ///   later.
     pub secret: String,
+    /// The clock the timestamp is read from, in epoch milliseconds, for
+    /// tests; `None` for the time now.
+    pub now: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
     /// Sends the request; `None` for the default [`ReqwestTransport`](super::ReqwestTransport).
     pub transport: Option<Arc<dyn Transport>>,
 }
@@ -32,6 +47,7 @@ super::setters!(WebhookOptions {
     text url,
     pairs headers,
     text secret,
+    clock now,
     some transport: Arc<dyn Transport>,
 });
 
@@ -50,7 +66,9 @@ pub fn webhook(options: WebhookOptions) -> Result<Arc<dyn Channel>, Error> {
 
 /// The webhook's signature of a body: the HMAC-SHA256 of the body with the
 /// secret, as lowercase hex. The request carries it as
-/// `x-cronwatch-signature: sha256=<signature>`.
+/// `x-cronwatch-signature: sha256=<signature>`. The timestamped one,
+/// `x-cronwatch-timestamp-signature`, is the signature of
+/// `<timestamp>.<body>`, with the `x-cronwatch-timestamp` value as sent.
 pub fn signature(secret: &str, body: &str) -> String {
     hex(&hmac_sha256(secret.as_bytes(), body))
 }
@@ -79,6 +97,14 @@ pub(crate) fn assign(headers: &mut Vec<(String, String)>, name: &str, value: Str
     }
 }
 
+/// Sets a header, first taking out any of the same name in another case:
+/// the new one goes last, in the caller's spelling.
+fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
+    let lower = name.to_lowercase();
+    headers.retain(|(n, _)| n.to_lowercase() != lower);
+    headers.push((name.to_string(), value));
+}
+
 impl Channel for Webhook {
     fn name(&self) -> &str {
         "webhook"
@@ -94,10 +120,15 @@ impl Channel for Webhook {
             ];
             for (name, value) in &o.headers {
                 // A pasted Authorization value often carries a stray space or newline, which fetch would refuse.
-                assign(&mut headers, name, js::trim(value).to_string());
+                set_header(&mut headers, name, js::trim(value).to_string());
             }
             if !o.secret.is_empty() {
-                assign(&mut headers, "x-cronwatch-signature", format!("sha256={}", signature(&o.secret, &body)));
+                let now = o.now.as_ref().map_or_else(now_ms, |f| f());
+                let timestamp = js::floor_div(now, 1000).to_string();
+                let signed = signature(&o.secret, &format!("{timestamp}.{body}"));
+                set_header(&mut headers, "x-cronwatch-signature", format!("sha256={}", signature(&o.secret, &body)));
+                set_header(&mut headers, "x-cronwatch-timestamp", timestamp);
+                set_header(&mut headers, "x-cronwatch-timestamp-signature", format!("sha256={signed}"));
             }
             let list: Vec<(&str, String)> = headers.iter().map(|(n, v)| (n.as_str(), v.clone())).collect();
             let t = post::transport(&o.transport)?;

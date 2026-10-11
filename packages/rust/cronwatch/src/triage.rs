@@ -244,15 +244,18 @@ pub(crate) fn describe(cx: &TriageContext) -> Vec<u16> {
     ];
     if let Some(run) = run {
         lines.push(Vec::new());
-        lines.push(text(&format!(
-            "Triggering run: status {}, started {}, duration {}, trigger {}",
+        let mut line = text(&format!(
+            "Triggering run: status {}, started {}, duration {}, trigger ",
             run.status,
             js::iso_or_words(run.started_at),
             duration(run),
-            run.trigger
-        )));
+        ));
+        line.extend(data(&text(&run.trigger)));
+        lines.push(line);
         if !run.metrics.is_empty() {
-            lines.push(text(&format!("Metrics: {}", run.metrics.to_json())));
+            let mut line = text("Metrics: ");
+            line.extend(data(&text(&run.metrics.to_json())));
+            lines.push(line);
         }
         if let Some(error) = run.error.as_deref().filter(|e| !e.is_empty()) {
             let mut line = text("Error:\n");
@@ -277,7 +280,8 @@ pub(crate) fn describe(cx: &TriageContext) -> Vec<u16> {
                 line.extend(data(&js::head16_units(first, 160)));
             }
             if !r.metrics.is_empty() {
-                line.extend(text(&format!(", metrics {}", r.metrics.to_json())));
+                line.extend(text(", metrics "));
+                line.extend(data(&text(&r.metrics.to_json())));
             }
             lines.push(line);
         }

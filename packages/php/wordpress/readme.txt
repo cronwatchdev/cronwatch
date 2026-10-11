@@ -1,7 +1,7 @@
 === CronWatch ===
 Contributors: joncphillips
 Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
-Requires at least: 6.1
+Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.2
 Stable tag: 0.13.1
@@ -41,7 +41,7 @@ CronWatch is the WordPress plugin of [the CronWatch library](https://cronwatch.d
 
 = Why a check that runs on page visits misses a quiet site =
 
-CronWatch finds missed runs with a check every five minutes, which it schedules as a WP-Cron event of its own. WP-Cron runs only when someone (or something) loads a page, so on a site with no visits the check does not run either: the same silence that stops your events stops the check that would report them. A site that gets regular traffic is covered as it is; for every other site, and for events that must run on time, run WP-Cron and the check from the server's own cron instead:
+CronWatch finds missed runs with a check every five minutes, which it schedules as a WP-Cron event of its own (and schedules again on the next admin page or cron run if something removes it; CronWatch, Settings shows when it is next due, and warns when it is late). WP-Cron runs only when someone (or something) loads a page, so on a site with no visits the check does not run either: the same silence that stops your events stops the check that would report them. A site that gets regular traffic is covered as it is; for every other site, and for events that must run on time, run WP-Cron and the check from the server's own cron instead:
 
 1. Turn off WP-Cron's page-load trigger in `wp-config.php`:
 
@@ -136,6 +136,13 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 4. The foot of the settings page: the "Send a test alert" button and the watched events with their health, last run, and next due time.
 
 == Changelog ==
+
+= Unreleased =
+
+* Needs WordPress 6.5 or newer (was 6.1). The library uses `array_is_list`, which WordPress provides from 6.5, and PHP 8.2 support in WordPress is complete from 6.5.
+* The check event is put back whenever it goes missing (a migration, a restore, an emptied cron option, or an event deleted by hand), so missed and stuck alerts no longer stop without a word. CronWatch, Settings shows when the next check is due, and warns when it is late or missing.
+* The dashboard's "Run check now" is recognised however its path is written.
+* From the library: see the CronWatch changelog for this release's changes in every language.
 
 = 0.13.1 =
 

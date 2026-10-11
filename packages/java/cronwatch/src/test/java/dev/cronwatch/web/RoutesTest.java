@@ -453,6 +453,16 @@ class RoutesTest {
     }
 
     @Override
+    public boolean updateRunIf(Run run, List<RunStatus> from) throws Exception {
+      return inner.updateRunIf(run, from);
+    }
+
+    @Override
+    public boolean compareAndSetState(JobState state, long expected) throws Exception {
+      return inner.compareAndSetState(state, expected);
+    }
+
+    @Override
     public @Nullable Run getRun(String id) throws Exception {
       return inner.getRun(id);
     }
@@ -533,6 +543,30 @@ class RoutesTest {
           "<span class=\"k\">cost</span> 1.2500</span><span><span class=\"k\">n</span> 3<");
       assertFalse(page.contains("class=\"k\">rows<"), "rows is left out");
       assertFalse(page.contains("class=\"k\">far<"), "far is left out");
+    }
+  }
+
+  // Only the base and the paths under it are the routes', judged on the path with its dot segments
+  // resolved: one that leaves the base by "..", or only starts with its text, is not found, before
+  // any sign-in.
+  @Test
+  void onlyPathsUnderTheBaseAreAnswered() {
+    try (WebKit w = new WebKit(RoutesOptions.builder().token("tok").build(), b -> {})) {
+      w.ok("x");
+      for (String path :
+          List.of("/cronwatch/../api/jobs", "/cronwatchapi/jobs", "/api/jobs", "/cronwatch-x/")) {
+        for (List<Map.Entry<String, String>> h : List.of(headers(AUTH), headers())) {
+          Response r = w.get(path, h);
+          status(path, r, 404);
+          contains(path, r.header("content-type"), "text/html");
+          contains(path, r.text(), "Not found");
+        }
+      }
+      for (String path :
+          List.of("/cronwatch/./api/jobs", "/cronwatch/jobs/../api/jobs", "/cronwatch/api/jobs")) {
+        status(path, w.get(path, headers(AUTH)), 200);
+      }
+      status("the base itself", w.get("/cronwatch", headers(AUTH)), 200);
     }
   }
 

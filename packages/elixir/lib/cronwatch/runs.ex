@@ -17,7 +17,12 @@ defmodule Cronwatch.Runs do
   alias Cronwatch.Lines
   alias Cronwatch.Run.Exec
 
+  # The longest one timer waits (about 49.7 days); a longer timeout is
+  # waited out in steps. The tests shorten it through the application
+  # environment (:max_timer), which apps leave alone.
   @max_timer 4_294_967_295
+
+  defp max_timer, do: Application.get_env(:cronwatch, :max_timer, @max_timer)
 
   @doc false
   def child_spec(name), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [name]}}
@@ -242,7 +247,7 @@ defmodule Cronwatch.Runs do
     ref = Process.monitor(pid)
     :ets.insert(table(s.instance, :runs), {id, pid, ref, info})
     :ets.insert(table(s.instance, :pids), {pid, id})
-    timer = arm(id, timeout_ms)
+    timer = arm(ref, timeout_ms)
     {:reply, :ok, %{s | runs: Map.put(s.runs, ref, {id, pid, timer})}}
   end
 
@@ -321,17 +326,26 @@ defmodule Cronwatch.Runs do
     end
   end
 
-  def handle_info({:timeout, id, left}, s) do
-    if left > 0 do
-      arm(id, left)
-    else
-      case info(s.instance, id) do
-        %{cancel: cancel} -> :atomics.put(cancel, 1, 1)
-        _ -> :ok
-      end
-    end
+  # A timeout is tagged with the run's monitor, so one left over from a run
+  # already gone (whose id a later run may have taken) does nothing, and a
+  # timeout too long for one timer is re-armed with its new timer kept, so
+  # dropping the run cancels it.
+  def handle_info({:timeout, ref, left}, s) do
+    case s.runs do
+      %{^ref => {id, pid, _timer}} when left > 0 ->
+        {:noreply, %{s | runs: Map.put(s.runs, ref, {id, pid, arm(ref, left)})}}
 
-    {:noreply, s}
+      %{^ref => {id, _pid, _timer}} ->
+        case info(s.instance, id) do
+          %{cancel: cancel} -> :atomics.put(cancel, 1, 1)
+          _ -> :ok
+        end
+
+        {:noreply, s}
+
+      _ ->
+        {:noreply, s}
+    end
   end
 
   def handle_info(_msg, s), do: {:noreply, s}
@@ -339,14 +353,14 @@ defmodule Cronwatch.Runs do
   # A timeout no double holds (refused when a job is declared, so only a
   # store's foreign definition could hold one) never fires, rather than
   # crash this process and the instance with it.
-  defp arm(id, ms) do
-    if Cronwatch.Duration.double?(ms), do: arm_ms(id, ms)
+  defp arm(ref, ms) do
+    if Cronwatch.Duration.double?(ms), do: arm_ms(ref, ms)
   end
 
-  defp arm_ms(id, ms) do
+  defp arm_ms(ref, ms) do
     ms = Cronwatch.JS.to_int(Float.ceil(ms * 1.0))
-    wait = min(ms, @max_timer)
-    Process.send_after(self(), {:timeout, id, ms - wait}, wait)
+    wait = min(ms, max_timer())
+    Process.send_after(self(), {:timeout, ref, ms - wait}, wait)
   end
 
   defp drop_run(s, ref, id, pid) do

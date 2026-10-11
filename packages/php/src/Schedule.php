@@ -118,11 +118,31 @@ final class Schedule
 
     /**
      * The first fire strictly after `from`, or null when the cron never fires
-     * again. Croner answers with times in the past when asked from inside the
-     * hour that repeats when clocks go back, so its answers are filtered, and
-     * a stretch of nothing but past times is stepped over an hour at a time.
+     * again. On the night clocks spring forward every slot the pattern names
+     * still fires: one whose local time the jump skips is moved forward by
+     * the gap's length (see springGap and gapFireAfter), so the fires stay
+     * strictly ascending whichever instant they are counted from.
      */
     private static function fireAfter(ParsedSchedule $parsed, int|float $from): ?int
+    {
+        $found = self::croneFireAfter($parsed, $from);
+        $start = self::countFrom($from);
+        if ($start === null) {
+            return $found;
+        }
+        $moved = self::gapFireAfter($parsed, $start);
+        return $moved !== null && ($found === null || $moved < $found) ? $moved : $found;
+    }
+
+    /**
+     * The first fire strictly after `from` as croner counts it, or null when
+     * the cron never fires again. Croner answers with times in the past when
+     * asked from inside the hour that repeats when clocks go back, so its
+     * answers are filtered, and a stretch of nothing but past times is
+     * stepped over an hour at a time. Asked from inside a spring-forward gap
+     * it skips the slots moved out of it, which fireAfter adds back.
+     */
+    private static function croneFireAfter(ParsedSchedule $parsed, int|float $from): ?int
     {
         $cron = self::cronOf($parsed);
         $start = self::countFrom($from);
@@ -147,6 +167,89 @@ final class Schedule
         return null;
     }
 
+    /** How far back a spring-forward jump is looked for: more than any gap a zone has had. */
+    private const JUMP_LOOKBACK_MS = 3 * 3_600_000;
+
+    /**
+     * The window a spring-forward jump moves skipped slots into, when `at`
+     * lies in one: from the jump (`jumpAt`, the first instant on the later
+     * offset) for the gap's length (`gapMs`, the later offset less the
+     * earlier one, so 30 minutes on Lord Howe Island and an hour in most
+     * zones). `beforeMs` is the earlier offset. Null when `at` is not within
+     * a gap's length after a jump in the three hours before it.
+     *
+     * @return array{jumpAt: int, gapMs: int, beforeMs: int}|null
+     */
+    public static function springGap(?string $timezone, int $at): ?array
+    {
+        $jump = self::springJump($timezone, $at);
+        return $jump !== null && $at < $jump['jumpAt'] + $jump['gapMs'] ? $jump : null;
+    }
+
+    /**
+     * The spring-forward jump in the three hours up to `at`, found to the
+     * minute: the first minute on the later offset. Null when the offset at
+     * `at` is not ahead of the offset three hours before.
+     *
+     * @return array{jumpAt: int, gapMs: int, beforeMs: int}|null
+     */
+    private static function springJump(?string $timezone, int $at): ?array
+    {
+        // Every zone kept its local mean time, with no clock change, in the year 1.
+        if ($at - self::JUMP_LOOKBACK_MS < Js::FIRST_DATE_MS || $at >= Js::LAST_DATE_MS) {
+            return null;
+        }
+        $after = self::utcOffset($at, $timezone);
+        $before = self::utcOffset($at - self::JUMP_LOOKBACK_MS, $timezone);
+        if ($after <= $before) {
+            return null;
+        }
+        $lo = $at - self::JUMP_LOOKBACK_MS;
+        $hi = $at;
+        while ($hi - $lo > 60_000) {
+            $mid = $lo + intdiv($hi - $lo, 2);
+            if (self::utcOffset($mid, $timezone) === $after) {
+                $hi = $mid;
+            } else {
+                $lo = $mid;
+            }
+        }
+        return ['jumpAt' => Js::div($hi, 60_000) * 60_000, 'gapMs' => $after - $before, 'beforeMs' => $before];
+    }
+
+    /** @var \WeakMap<ParsedSchedule, Cron>|null the pattern read in UTC, which stands for wall-clock time in gapFireAfter */
+    private static ?\WeakMap $wallCrons = null;
+
+    private static function wallCron(ParsedSchedule $parsed): Cron
+    {
+        self::$wallCrons ??= new \WeakMap();
+        return self::$wallCrons[$parsed] ??= new Cron($parsed->source, 'UTC');
+    }
+
+    /**
+     * The first slot moved out of a spring-forward gap strictly after
+     * `start`, when `start` lies in that gap's window, else null. A slot
+     * whose local time the jump skips fires at that local time read on the
+     * earlier offset, which is the same as moving it forward by the gap's
+     * length: 01:20 on the night London skips 01:00 to 02:00 fires at 02:20
+     * BST (01:20Z). Croner moves them the same way when asked from before the
+     * jump, but not from inside it.
+     */
+    private static function gapFireAfter(ParsedSchedule $parsed, int $start): ?int
+    {
+        $gap = self::springGap($parsed->timezone, $start);
+        if ($gap === null) {
+            return null;
+        }
+        // Wall-clock time as if it were UTC: the slots the jump skips run
+        // from jumpAt + beforeMs for gapMs.
+        $slot = self::runsAfter(self::wallCron($parsed), 1, $start + $gap['beforeMs'])[0] ?? null;
+        if ($slot === null || $slot >= $gap['jumpAt'] + $gap['beforeMs'] + $gap['gapMs']) {
+            return null;
+        }
+        return $slot - $gap['beforeMs'];
+    }
+
     private static function cronOf(ParsedSchedule $parsed): Cron
     {
         return $parsed->cron ?? throw new \InvalidArgumentException("schedule \"{$parsed->source}\" was not made by Schedule::parse");
@@ -154,8 +257,12 @@ final class Schedule
 
     /**
      * Every fire of a cron strictly after `from` and at or before `to`,
-     * ascending, or null when there are more than `limit`. Asks for fires in
-     * batches and drops any that do not move forward (see fireAfter).
+     * ascending, or null when there are more than `limit`: the fires nextFire
+     * gives one after another. Asks for fires in batches, which is far
+     * cheaper than one nextFire per fire, and drops any that do not move
+     * forward (the hour that repeats when clocks go back, see
+     * croneFireAfter). Around a spring-forward gap, where a batch can skip a
+     * moved slot or give one out of order, it counts with fireAfter instead.
      *
      * @return list<int>|null
      */
@@ -170,13 +277,43 @@ final class Schedule
         $probe = $start;
         $last = $start;
         for ($guard = 0; $guard < 1000; $guard++) {
+            if (self::springGap($parsed->timezone, $last) !== null) {
+                // Counting from inside a gap's window: croner would skip its moved slots.
+                $t = self::fireAfter($parsed, $last);
+                if ($t === null || $t > $to) {
+                    return $out;
+                }
+                $out[] = $t;
+                $last = $probe = $t;
+                if (count($out) > $limit) {
+                    return null;
+                }
+                continue;
+            }
             $batch = self::runsAfter($cron, min($limit + 1 - count($out), 24), $probe);
             if ($batch === []) {
                 return $out;
             }
+            $stepped = false;
             foreach ($batch as $t) {
                 if ($t <= $last) {
                     continue;
+                }
+                if (self::springGap($parsed->timezone, $t) !== null) {
+                    // The batch reached a gap's window, where its order is
+                    // croner's: the next fire is counted from the last one,
+                    // and the rest with it.
+                    $next = self::fireAfter($parsed, $last);
+                    if ($next === null || $next > $to) {
+                        return $out;
+                    }
+                    $out[] = $next;
+                    $last = $probe = $next;
+                    if (count($out) > $limit) {
+                        return null;
+                    }
+                    $stepped = true;
+                    break;
                 }
                 if ($t > $to) {
                     return $out;
@@ -187,13 +324,20 @@ final class Schedule
                     return null;
                 }
             }
+            if ($stepped) {
+                continue;
+            }
             $end = $batch[count($batch) - 1];
             $probe = $end > $probe ? $end : $probe + 3_600_000;
         }
         return $out;
     }
 
-    /** The next time the schedule fires strictly after `from`. For an interval, counted from the last run when there is one. */
+    /**
+     * The next time the schedule fires strictly after `from`. For an
+     * interval, counted from the last run's start when there is one (see
+     * intervalDue for a run that outlasted its period).
+     */
     public static function nextFire(ParsedSchedule $parsed, int|float $from, int|float|null $lastRunAt): int|float|null
     {
         if ($parsed->kind === ParsedSchedule::INTERVAL) {
@@ -203,20 +347,38 @@ final class Schedule
     }
 
     /**
+     * When an interval of `everyMs` is next due after a run: a period after
+     * it started, or, when it finished (`finishedAt` not null) later than
+     * that, a period after it finished. A run that outlasts its period is not
+     * followed by a missed alert the moment it ends.
+     */
+    public static function intervalDue(int|float $everyMs, int|float $startedAt, int|float|null $finishedAt): int|float
+    {
+        $due = $startedAt + $everyMs;
+        return $finishedAt !== null && $finishedAt > $due ? $finishedAt + $everyMs : $due;
+    }
+
+    /**
      * When the schedule next wants a run, given the last one. For a cron that
      * is the first fire the last run does not already cover; with no run yet,
      * the first fire at or after registration. For an interval it is the last
-     * run's start (or registration) plus the interval. Null for a cron that
-     * never fires again.
+     * run's start (or registration) plus the interval, or its finish plus the
+     * interval when it finished (`lastFinishedAt`, null while it runs) later
+     * than that (intervalDue). Null for a cron that never fires again.
      *
      * Counting forward from the last run, rather than back from now, is what
      * lets a job whose period is shorter than its grace be missed at all, and
      * it works for a cron that fires once a year or less.
      */
-    public static function expectation(ParsedSchedule $parsed, int|float|null $lastRunAt, int|float $registeredAt, int|float $graceMs): ?Expectation
-    {
+    public static function expectation(
+        ParsedSchedule $parsed,
+        int|float|null $lastRunAt,
+        int|float $registeredAt,
+        int|float $graceMs,
+        int|float|null $lastFinishedAt = null,
+    ): ?Expectation {
         if ($parsed->kind === ParsedSchedule::INTERVAL) {
-            $dueAt = ($lastRunAt ?? $registeredAt) + $parsed->everyMs;
+            $dueAt = $lastRunAt === null ? $registeredAt + $parsed->everyMs : self::intervalDue($parsed->everyMs, $lastRunAt, $lastFinishedAt);
         } elseif ($lastRunAt === null) {
             $dueAt = self::fireAfter($parsed, $registeredAt - 1);
         } else {
@@ -234,12 +396,16 @@ final class Schedule
     {
         // A fire at or before the start is covered by the run itself.
         $next = self::fireAfter($parsed, $startedAt);
-        if ($next === null) {
-            return null;
+        // Bounded: a gap holds at most a few hours of moved slots.
+        for ($guard = 0; $next !== null && $guard < 100_000; $guard++) {
+            $following = self::fireAfter($parsed, $next);
+            $covers = self::runCovers($startedAt, $next, $following) || self::inSpringForwardGap($parsed, $startedAt, $next);
+            if (!$covers) {
+                return $next;
+            }
+            $next = $following;
         }
-        $following = self::fireAfter($parsed, $next);
-        $covers = self::runCovers($startedAt, $next, $following) || self::inSpringForwardGap($parsed, $startedAt, $next);
-        return $covers ? $following : $next;
+        return $next;
     }
 
     /**
@@ -256,44 +422,25 @@ final class Schedule
     }
 
     /**
-     * On the night clocks spring forward, a fire whose local time does not
-     * exist (02:30 when 02:00 jumps to 03:00) is moved by croner to the same
-     * distance past the jump (03:30), while vixie cron runs it at the jump
-     * itself (03:00). A run that starts at or after the jump, and before the
-     * first fire after it when that fire lies within one gap of it, is taken
-     * to cover that fire, so neither scheduler's run is reported as missed.
+     * On the night clocks spring forward, a slot whose local time does not
+     * exist (02:30 when 02:00 jumps to 03:00) fires moved forward by the gap
+     * (03:30; see gapFireAfter), while vixie cron runs every skipped job
+     * once, at the jump itself (03:00). A run that starts at or after the
+     * jump (less a minute of slack), and before such a moved fire, is taken
+     * to cover it, so neither scheduler's run is reported as missed. Only a
+     * moved slot that is not also a slot of its own on the later offset
+     * counts: a cron that fires every 10 minutes moves 02:10 onto its own
+     * 03:10, which was not skipped.
      */
     private static function inSpringForwardGap(ParsedSchedule $parsed, int|float $startedAt, int $fireAt): bool
     {
-        $lookback = 3 * 3_600_000;
-        // Every zone kept its local mean time, with no clock change, in the year 1.
-        if ($fireAt - $lookback < Js::FIRST_DATE_MS) {
+        $gap = self::springGap($parsed->timezone, $fireAt);
+        if ($gap === null || $startedAt < $gap['jumpAt'] - self::EARLY_SLACK_MS || $startedAt >= $fireAt) {
             return false;
         }
-        $after = self::utcOffset($fireAt, $parsed->timezone);
-        $before = self::utcOffset($fireAt - $lookback, $parsed->timezone);
-        $gap = $after - $before;
-        if ($gap <= 0) {
-            return false;
-        }
-        // Find the jump: the first minute in the window with the later offset.
-        $lo = $fireAt - $lookback;
-        $hi = $fireAt;
-        while ($hi - $lo > 60_000) {
-            $mid = $lo + intdiv($hi - $lo, 2);
-            if (self::utcOffset($mid, $parsed->timezone) === $after) {
-                $hi = $mid;
-            } else {
-                $lo = $mid;
-            }
-        }
-        $jumpAt = Js::div($hi, 60_000) * 60_000;
-        if ($fireAt - $jumpAt >= $gap || $startedAt < $jumpAt - self::EARLY_SLACK_MS || $startedAt >= $fireAt) {
-            return false;
-        }
-        // Only the first fire after the jump can be a moved one; a cron that
-        // also fires at the jump (every 10 minutes, say) was not moved at all.
-        return self::fireAfter($parsed, $jumpAt - 1) === $fireAt;
+        $wall = self::wallCron($parsed);
+        $fires = static fn (int $at): bool => (self::runsAfter($wall, 1, $at - 1)[0] ?? null) === $at;
+        return $fires($fireAt + $gap['beforeMs']) && !$fires($fireAt + $gap['beforeMs'] + $gap['gapMs']);
     }
 
     /** Milliseconds the zone's wall clock is ahead of UTC at `at`. */

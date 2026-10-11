@@ -98,6 +98,14 @@ final class SettingsForm extends ConfigFormBase {
       '#type' => 'item',
       '#markup' => $this->t('<a href=":url">Open the dashboard</a>.', [':url' => Url::fromRoute('cronwatch.dashboard')->toString()]),
     ];
+    $token = Recorder::apiToken();
+    if (Recorder::tokenProblem($token) !== NULL) {
+      $form['api'] = [
+        '#type' => 'item',
+        '#title' => $this->t('JSON API'),
+        '#markup' => '<div class="messages messages--error">' . $this->t("The JSON API is off: its token (\$settings['cronwatch_token'] in settings.php, or CRONWATCH_TOKEN) has @length characters, and it needs at least @min. Make a longer one, such as the output of <code>openssl rand -hex 24</code>.", ['@length' => strlen($token), '@min' => Recorder::TOKEN_MIN]) . '</div>',
+      ];
+    }
 
     $form['alerts'] = [
       '#type' => 'details',
@@ -161,7 +169,7 @@ final class SettingsForm extends ConfigFormBase {
     $form['jobs']['queues'] = [
       '#type' => 'checkboxes',
       '#title' => $this->t('Watched queues'),
-      '#description' => $this->t('Every item a watched queue processes is a run (in cron, <code>drush queue:run</code> or anywhere). A worker class marked <code>#[Cronwatch\Watch]</code> is watched whatever is chosen here.'),
+      '#description' => $this->t('Every item a watched queue processes is a run (in cron, <code>drush queue:run</code> or anywhere). A worker class marked <code>#[Cronwatch\Watch]</code> is watched whatever is chosen here. A watched worker is wrapped: code that calls its own methods still reaches them, but code that tests <code>instanceof</code> its class gets FALSE, so leave such a queue unwatched.'),
       '#options' => $options,
       '#default_value' => array_values(array_intersect((array) $config->get('queues'), array_keys($options))),
       '#access' => $options !== [],

@@ -39,7 +39,7 @@ final class WebGoldenTest extends TestCase
     /** The one header the SDK leaves to the server. */
     private const IGNORED_HEADERS = ['content-length'];
 
-    /** @var list<string> What the seed and the requests reported to onError: nothing, however far off a run's start is. */
+    /** @var list<string> What the seed and the requests reported to onError: only the short token, however far off a run's start is. */
     private static array $errors = [];
 
     /** The seed in golden.mjs, step for step. */
@@ -140,7 +140,7 @@ final class WebGoldenTest extends TestCase
     {
         $data = json_decode((string) file_get_contents(self::GOLDEN), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame(Clock::T0, $data['t0']);
-        $this->assertCount(82, $data['captures']);
+        $this->assertCount(86, $data['captures']);
         $cw = self::seed();
         $web = $cw->routes(token: 'tok', basePath: '/cronwatch');
         $ids = [];
@@ -165,7 +165,8 @@ final class WebGoldenTest extends TestCase
             $expectedBody = str_replace(['<library>', '<language>', '<version>'], ['cronwatch/cronwatch', 'php', Cronwatch::VERSION], $capture['responseBody']);
             $this->assertSame($expectedBody, $body, $label);
         }
-        $this->assertSame([], self::$errors);
+        // The fixture's token, "tok", is short enough to guess, which is reported once and nothing else.
+        $this->assertSame(['routes: the dashboard token is shorter than 24 characters, short enough to guess; set CRONWATCH_TOKEN (or token:) to a long random one, such as the output of `openssl rand -hex 24`'], self::$errors);
     }
 
     /** @param array<string, string> $headers */

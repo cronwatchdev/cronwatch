@@ -122,6 +122,8 @@ final class Plugin extends BasePlugin
             'overrides' => $overrides,
             'secrets' => Settings::secretAttributes(),
             'sections' => self::channelSections($settings),
+            // A token too short for the JSON API, which stays shut until it is longer.
+            'apiTokenProblem' => Recorder::tokenProblem($this->getRecorder()->apiToken()),
         ]);
     }
 

@@ -481,12 +481,43 @@ fn string_to_number(text: &str) -> f64 {
     body.parse::<f64>().map_or(f64::NAN, |n| sign * n)
 }
 
-/// Called when a run starts. Missed and stuck are about the absence of a
-/// run, so a run starting closes them without an alert; the recovered
-/// message waits for a successful finish.
-pub(crate) fn on_run_start(state: &JobState) -> JobState {
+/// When a run finished, or None while it runs (a run marked timeout has
+/// finished).
+pub(crate) fn finished_at_of(run: &Run) -> Option<i64> {
+    if run.status == RunStatus::Running { None } else { run.finished_at }
+}
+
+/// Whether `run` brings the schedule up to date at `now`, so missed may
+/// close for it: judged with it as the job's last run, as `on_check`
+/// judges, the run the schedule wants next is not yet past its deadline. A
+/// run that started before the fire missed opened for does not cover that
+/// fire, however late it finishes, and neither does a run a source reports
+/// only once it is over whose start was before it. Every run starting now
+/// covers it. A job with no schedule, or one that no longer parses, has
+/// nothing due, so any run does.
+pub(crate) fn catches_up(def: &Definition, run: &Run, now: i64) -> bool {
+    if !def.get("schedule").is_some_and(truthy) {
+        return true;
+    }
+    let (Ok(parsed), Ok(grace)) = (parsed_schedule(def), grace_ms(def)) else {
+        return true;
+    };
+    match schedule::expect(&parsed, Some(run.started_at), run.started_at, grace, finished_at_of(run)) {
+        None => true,
+        Some(exp) => now as f64 <= exp.deadline,
+    }
+}
+
+/// Called when a run starts, or when a run a source reports is recorded.
+/// Missed and stuck are about the absence of a run, so a run starting
+/// closes them without an alert; the recovered message waits for a
+/// successful finish. Missed closes only when the run catches the schedule
+/// up (`catches_up`), which a run starting now always does.
+pub(crate) fn on_run_start(def: &Definition, run: &Run, state: &JobState, now: i64) -> JobState {
     let mut next = clone_state(state);
-    close_condition(&mut next, Condition::Missed);
+    if catches_up(def, run, now) {
+        close_condition(&mut next, Condition::Missed);
+    }
     close_condition(&mut next, Condition::Stuck);
     next
 }
@@ -503,7 +534,9 @@ fn failures_before_alert(def: &Definition) -> f64 {
 }
 
 /// Called when a run finishes with status ok, failed, or timeout. `history`
-/// is the job's earlier runs, newest first, not including this one.
+/// is the job's earlier runs, newest first, not including this one. Missed
+/// closes only when the run catches the schedule up (`catches_up`): a run
+/// that started before the fire missed opened for leaves it open.
 pub(crate) fn on_run_finish(
     def: &Definition,
     run: &Run,
@@ -516,7 +549,9 @@ pub(crate) fn on_run_finish(
 
     if run.status == RunStatus::Ok {
         next.consecutive_failures = 0;
-        close_condition(&mut next, Condition::Missed);
+        if catches_up(def, run, now) {
+            close_condition(&mut next, Condition::Missed);
+        }
         close_condition(&mut next, Condition::Stuck);
         close_condition(&mut next, Condition::Failed);
 
@@ -578,7 +613,9 @@ pub(crate) fn on_run_finish(
     // failed or timeout
     // Held at the top: a count at the limit must not wrap below a threshold.
     next.consecutive_failures = next.consecutive_failures.clamp(0, MAX_DURATION_MS - 1) + 1;
-    close_condition(&mut next, Condition::Missed);
+    if catches_up(def, run, now) {
+        close_condition(&mut next, Condition::Missed);
+    }
     let threshold = failures_before_alert(def);
     let (condition, alert_type) = if run.status == RunStatus::Timeout {
         (Condition::Stuck, AlertType::Stuck)
@@ -677,18 +714,17 @@ pub(crate) fn on_check(
     let parsed = parsed_schedule(def)?;
     let grace = grace_ms(def)?;
     let last_run_at = last_run.map(|r| r.started_at);
-    let expectation = schedule::expect(&parsed, last_run_at, stored.created_at, grace);
-    let next_expected_at = if parsed.is_interval() {
-        schedule::next_fire(&parsed, stored.created_at, last_run_at)
-    } else {
-        schedule::next_fire(&parsed, now, None)
-    };
+    let expectation =
+        schedule::expect(&parsed, last_run_at, stored.created_at, grace, last_run.and_then(finished_at_of));
+    let next_expected_at =
+        if parsed.is_interval() { expectation.map(|e| e.due_at) } else { schedule::next_fire(&parsed, now, None) };
     let Some(exp) = expectation else {
         return Ok(CheckOutcome { evaluation: Evaluation { state: next, alerts }, next_expected_at, due_at: None });
     };
     let due_at = Some(exp.due_at);
 
-    // An interval's next run is due a period after the last one started. If
+    // An interval's next run is due a period after the last one started, or
+    // after it finished when it outlasted the period (`interval_due`). If
     // that run is still going, the job is busy, not late; stuck covers one
     // that never ends.
     if parsed.is_interval() && last_run.is_some_and(|r| r.status == RunStatus::Running) {

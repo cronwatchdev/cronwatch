@@ -61,8 +61,8 @@ public final class CronwatchReactiveFilter implements WebFilter, Ordered {
     String context = req.getPath().contextPath().value();
     URI uri = req.getURI();
     String raw = uri.getRawPath() == null ? "/" : uri.getRawPath();
-    String within = raw.startsWith(context) ? raw.substring(context.length()) : raw;
-    if (!path.isEmpty() && !within.equals(path) && !within.startsWith(path + "/")) {
+    // The path as the routes read it, dot segments resolved: /cronwatch/../api/jobs is not ours.
+    if (!path.isEmpty() && !Adapters.under(raw, context + path)) {
       return chain.filter(exchange);
     }
     Request.Builder b =

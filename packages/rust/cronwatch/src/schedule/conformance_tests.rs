@@ -141,8 +141,13 @@ fn conformance_schedule() {
 
     for c in cases(&f, "expectation") {
         let p = parse(text(c, "schedule"), text(c, "timezone")).unwrap();
-        let e =
-            expect(&p, optional(field(c, "lastRunAt")), integer(field(c, "registeredAt")), number(field(c, "graceMs")));
+        let e = expect(
+            &p,
+            optional(field(c, "lastRunAt")),
+            integer(field(c, "registeredAt")),
+            number(field(c, "graceMs")),
+            optional(field(c, "lastFinishedAt")),
+        );
         let got = match e {
             Some(e) => Value::Object(Object::new().with("dueAt", e.due_at).with("deadline", e.deadline)),
             None => Value::Null,
@@ -177,8 +182,26 @@ fn conformance_schedule() {
         failed += usize::from(!same(&what, &Value::Array(out), field(c, "next")));
         count("autumn");
     }
+
+    for c in cases(&f, "firesBetween") {
+        let p = parse(text(c, "schedule"), text(c, "timezone")).unwrap();
+        let got =
+            fires_between(&p, integer(field(c, "from")), integer(field(c, "to")), integer(field(c, "limit")) as usize);
+        let got = match got {
+            Some(fires) => Value::Array(fires.into_iter().map(Value::from).collect()),
+            None => Value::Null,
+        };
+        let what = format!(
+            "firesBetween of {} in {} from {}",
+            text(c, "schedule"),
+            text(c, "timezone"),
+            stringify(field(c, "from"))
+        );
+        failed += usize::from(!same(&what, &got, field(c, "fires")));
+        count("firesBetween");
+    }
     assert_eq!(failed, 0, "{failed} schedule cases differ");
-    known(&f, &["parse", "fires", "nextFire", "expectation", "runCovers", "autumn"]);
+    known(&f, &["parse", "fires", "nextFire", "expectation", "runCovers", "autumn", "firesBetween"]);
     eprintln!("schedule cases: {counts:?}");
 }
 

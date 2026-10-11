@@ -54,6 +54,7 @@ public class ChannelsConformanceTests
                 Url = S(o, "url"),
                 Headers = Fixtures.Object(o, "headers").Select(h => new KeyValuePair<string, string>(h.Key, (string)h.Value!)).ToList(),
                 Secret = Opt(o, "secret"),
+                Clock = clock,
                 Transport = transport,
             }),
             "resend" => new ResendChannel(new ResendOptions
@@ -233,7 +234,7 @@ public class ChannelsConformanceTests
     [Fact]
     public void Every_section_of_channels_json_is_replayed()
     {
-        string[] known = ["generatedBy", "sdkVersion", "alerts", "sends", "failures", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls", "webhookPayloads"];
+        string[] known = ["generatedBy", "sdkVersion", "alerts", "sends", "failures", "providerSends", "providerFailures", "twilioPartial", "textCuts", "urls", "webhookPayloads", "slackLinks"];
         Assert.Equal([], Fixtures.Load("channels").Keys.Where(k => !known.Contains(k, StringComparer.Ordinal)));
         HealthConformanceTests.Known(Fixtures.Object(Fixtures.Load("channels"), "twilioPartial"), "options", "cases");
         HealthConformanceTests.Known(Fixtures.Object(Fixtures.Load("channels"), "textCuts"), "errorBodies", "subjects", "smsSegments", "smsBodies", "discordDescriptions");
@@ -273,7 +274,7 @@ public class ChannelsConformanceTests
 
     /// <summary>
     /// The <c>webhookPayloads</c> section: the webhook's body for every alert, <c>"schema":1</c>
-    /// first, byte for byte, and its signature header.
+    /// first, byte for byte, its signature header, and its timestamp and the signature over it.
     /// </summary>
     [Fact]
     public async Task Webhook_payloads_are_the_sdks()
@@ -290,7 +291,9 @@ public class ChannelsConformanceTests
         List<JsObject> cases = Fixtures.Objects(f, "webhookPayloads");
         foreach (JsObject c in cases)
         {
-            var ch = new WebhookChannel(new WebhookOptions { Url = "https://hooks.example/cw", Secret = S(c, "secret"), Transport = rec });
+            long timestamp = long.Parse(S(c, "timestamp"), System.Globalization.CultureInfo.InvariantCulture);
+            var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(timestamp * 1000 + 999));
+            var ch = new WebhookChannel(new WebhookOptions { Url = "https://hooks.example/cw", Secret = S(c, "secret"), Clock = clock, Transport = rec });
             rec.AnswerWith(200, "");
             await ch.SendAsync(alerts[S(c, "alert")], cx, CancellationToken.None);
             TransportRequest r = Assert.Single(rec.Taken());
@@ -298,10 +301,43 @@ public class ChannelsConformanceTests
             failures.Same(S(c, "alert") + " body", body, c.Get("body"));
             failures.Same(S(c, "alert") + " signature", r.Headers.Single(h => h.Key == "x-cronwatch-signature").Value, c.Get("signature"));
             failures.Same(S(c, "alert") + " Signature", "sha256=" + WebhookChannel.Signature(S(c, "secret"), body), c.Get("signature"));
+            failures.Same(S(c, "alert") + " timestamp", r.Headers.Single(h => h.Key == "x-cronwatch-timestamp").Value, c.Get("timestamp"));
+            failures.Same(S(c, "alert") + " timestamp signature", r.Headers.Single(h => h.Key == "x-cronwatch-timestamp-signature").Value, c.Get("timestampSignature"));
+            failures.Same(
+                S(c, "alert") + " Timestamp signature",
+                "sha256=" + WebhookChannel.Signature(S(c, "secret"), S(c, "timestamp") + "." + body),
+                c.Get("timestampSignature"));
         }
         failures.Check("channels");
-        Assert.Equal(16, cases.Count);
+        Assert.Equal(32, cases.Count);
         Assert.Equal("f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8", WebhookChannel.Signature("key", "The quick brown fox jumps over the lazy dog"));
+    }
+
+    /// <summary>
+    /// The <c>slackLinks</c> section: Slack's "open" link with the characters that would end it
+    /// percent-encoded, as the first block's text.
+    /// </summary>
+    [Fact]
+    public async Task Slack_links_are_the_sdks()
+    {
+        JsObject f = Fixtures.Load("channels");
+        var rec = new Recorder();
+        var cx = new ChannelContext(e => throw new InvalidOperationException("reported: " + e.Message), rec);
+        var failures = new Fixtures.Failures();
+        List<JsObject> cases = Fixtures.Objects(f, "slackLinks");
+        foreach (JsObject c in cases)
+        {
+            string target = S(c, "link");
+            var ch = new SlackChannel(new SlackOptions { WebhookUrl = "https://hooks.slack.example/T/B/secret", Link = _ => target, Transport = rec });
+            rec.AnswerWith(200, "");
+            await ch.SendAsync(Sample(), cx, CancellationToken.None);
+            TransportRequest r = Assert.Single(rec.Taken());
+            var sent = Json.ParseObject(Recorder.Body(r));
+            var block = (JsObject)Fixtures.List(sent, "blocks")[0]!;
+            failures.Same(target, Fixtures.Object(block, "text").Get("text"), c.Get("text"));
+        }
+        failures.Check("channels");
+        Assert.Equal(4, cases.Count);
     }
 
     [Fact]

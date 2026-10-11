@@ -26,6 +26,13 @@
   {% endif %}
 {% endmacro %}
 
+{% if apiTokenProblem %}
+  <p class="error with-icon">{{ 'The JSON API is off: its token (apiToken in config/cronwatch.php, or CRONWATCH_TOKEN) is shorter than {min} characters. Make a longer one, such as the output of {command}.'|t('cronwatch', {
+    min: constant('Cronwatch\\Craft\\Recorder::TOKEN_MIN'),
+    command: tag('code', {text: 'openssl rand -hex 24'}),
+  })|raw }}</p>
+{% endif %}
+
 <p>{{ 'Nothing leaves the site until a channel is set; with none, alerts go to Craft’s log. Each field takes an environment variable ($SLACK_WEBHOOK_URL), so a credential need not be in project config.'|t('cronwatch') }}</p>
 
 {{ forms.autosuggestField({

@@ -9,14 +9,22 @@ namespace Cronwatch.Hangfire;
 /// <see cref="CronwatchHangfire.ScheduleCheck(IRecurringJobManager, string)"/>: a sync and a check,
 /// once per minute across every server sharing the storage, since Hangfire enqueues a recurring job
 /// once per fire. Never retried, never run twice at once, and its runs are never a job. On a server
-/// that does not watch Hangfire, it does nothing.
+/// that does not watch Hangfire it fails, so Hangfire shows a failed check rather than one that
+/// seemed to run.
 /// </summary>
 public static class CronwatchCheckJob
 {
-    /// <summary>Runs the sync and the check. Never throws.</summary>
+    /// <summary>
+    /// Runs the sync and the check, whose own failures go to the client's error handler.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">When this server does not watch Hangfire.</exception>
     [AutomaticRetry(Attempts = 0)]
     [DisableConcurrentExecution(60)]
-    public static Task RunAsync() => CronwatchHangfire.Active is { } integration ? integration.CheckNowAsync() : Task.CompletedTask;
+    public static Task RunAsync() =>
+        CronwatchHangfire.Active is { } integration
+            ? integration.CheckNowAsync()
+            : throw new InvalidOperationException(
+                "cronwatch: the check ran on a Hangfire server that does not watch Hangfire, so nothing was checked; call UseCronwatch (or CronwatchHangfire.Start) on every server that runs it");
 }
 
 /// <summary>Watching Hangfire from its configuration.</summary>

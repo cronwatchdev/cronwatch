@@ -98,25 +98,25 @@ test("drives the Rust crate's dashboard end to end", { skip: enabled ? false : "
     assert.match(body(await client.callTool({ name: "list_jobs", arguments: {} })), /nightly: silenced/);
     const bad = await client.callTool({ name: "silence_job", arguments: { name: "nightly", for: "forever" } });
     assert.equal(bad.isError, true);
-    assert.match(body(bad), /400.*silence duration "forever"/);
+    assert.match(body(bad), /400[\s\S]*silence duration "forever"/);
     assert.equal(body(await client.callTool({ name: "unsilence_job", arguments: { name: "nightly" } })), "nightly alerts are back on.");
     assert.match(body(await client.callTool({ name: "list_jobs", arguments: {} })), /nightly: failing/);
 
     const missing = await client.callTool({ name: "get_job", arguments: { name: "nope" } });
     assert.equal(missing.isError, true);
-    assert.match(body(missing), /404.*No such job/);
+    assert.match(body(missing), /404[\s\S]*No such job/);
 
     assert.equal(body(await client.callTool({ name: "forget_job", arguments: { name: "nightly" } })), "nightly removed.");
     assert.match(body(await client.callTool({ name: "list_jobs", arguments: {} })), /No jobs yet/);
     const gone = await client.callTool({ name: "forget_job", arguments: { name: "nightly" } });
     assert.equal(gone.isError, true);
-    assert.match(body(gone), /404.*No such job/);
+    assert.match(body(gone), /404[\s\S]*No such job/);
     await close();
 
     const denied = await connect(rust.baseUrl, "wrong");
     const refused = await denied.client.callTool({ name: "list_jobs", arguments: {} });
     assert.equal(refused.isError, true);
-    assert.match(body(refused), /401.*Unauthorized/);
+    assert.match(body(refused), /401[\s\S]*Unauthorized/);
     await denied.close();
 
     assert.match(rust.output(), /^alert nightly failed$/m);

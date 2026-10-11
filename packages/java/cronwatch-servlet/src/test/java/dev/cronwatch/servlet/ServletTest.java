@@ -102,7 +102,7 @@ class ServletTest {
                 Set.of("date", "server", "connection"),
                 Golden.MALFORMED_TARGETS,
                 true);
-        assertEquals(Golden.CAPTURES - 2, matched);
+        assertEquals(Golden.CAPTURES - 2 - Golden.OUTSIDE_BASE.size(), matched);
       } finally {
         server.stop();
       }
@@ -136,6 +136,43 @@ class ServletTest {
         assertEquals(404, other.status());
         assertEquals("the app", other.text(), "passed down the chain");
         assertEquals("the app", get(port, "/app/ops/cronx").text(), "not under the path");
+      } finally {
+        server.stop();
+      }
+    }
+  }
+
+  /**
+   * The filter mapped to every path, so it decides for itself what is under {@code /cronwatch}: on
+   * the path with its dot segments resolved, as the routes decide, so a path that leaves the base
+   * by {@code ..}, or only starts with its text, goes down the chain to the app.
+   */
+  @Test
+  void onlyPathsUnderTheBaseAreTheFilters() throws Exception {
+    try (Cronwatch cw = Cronwatch.builder().noCronSecret().noShutdownHook().build()) {
+      cw.run("x", job -> {});
+      Filter passes = (request, response, chain) -> chain.doFilter(request, response);
+      Server server =
+          jetty(
+              "/",
+              "/unused",
+              passes,
+              new CronwatchFilter(cw.routes(RoutesOptions.builder().token("tok").build())));
+      try {
+        int port = port(server);
+        List<Map.Entry<String, String>> auth = List.of(Map.entry("authorization", "Bearer tok"));
+        for (String path : List.of("/cronwatch/../api/jobs", "/cronwatchx", "/cronwatchapi/jobs")) {
+          RawHttp.Answer a = RawHttp.send(port, "GET", path, auth, null);
+          assertEquals(404, a.status(), path);
+          assertEquals("the app", a.text(), path + ": passed down the chain");
+        }
+        for (String path :
+            List.of(
+                "/cronwatch/api/jobs", "/cronwatch/./api/jobs", "/cronwatch/jobs/../api/jobs")) {
+          RawHttp.Answer a = RawHttp.send(port, "GET", path, auth, null);
+          assertEquals(200, a.status(), path);
+          assertTrue(a.text().contains("\"jobs\""), path + ": " + a.text());
+        }
       } finally {
         server.stop();
       }

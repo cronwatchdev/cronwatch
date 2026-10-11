@@ -107,7 +107,7 @@ fn build(name: &str, o: &Object, transport: Arc<dyn Transport>) -> Arc<dyn Chann
                 .as_object()
                 .map(|h| h.iter().map(|(k, v)| (k.to_string(), v.as_str().unwrap_or("").to_string())).collect())
                 .unwrap_or_default();
-            webhook(WebhookOptions { url: s("url"), secret: s("secret"), headers, transport: t })
+            webhook(WebhookOptions { url: s("url"), secret: s("secret"), headers, now, transport: t })
         }
         "resend" => resend(ResendOptions { api_key: s("apiKey"), email, transport: t }),
         "postmark" => postmark(PostmarkOptions {
@@ -292,7 +292,11 @@ async fn conformance_channels() {
     for c in objects(&f, "webhookPayloads") {
         let what = format!("webhook payload {}", text(c, "alert"));
         let secret = text(c, "secret");
-        let o = Object::new().with("url", "https://hooks.example.com/in").with("secret", secret);
+        let timestamp = text(c, "timestamp");
+        let o = Object::new()
+            .with("url", "https://hooks.example.com/in")
+            .with("secret", secret)
+            .with("now", timestamp.parse::<f64>().unwrap() * 1000.0);
         let ch = build("webhook", &o, transport.clone());
         rec.answer_with(200, "");
         if let Err(e) = ch.send(&alerts[text(c, "alert")], &cx).await {
@@ -310,6 +314,54 @@ async fn conformance_channels() {
         }
         if format!("sha256={}", signature(secret, text(c, "body"))) != text(c, "signature") {
             failures.push(format!("{what}: signature() differs"));
+        }
+        for (name, key) in
+            [("x-cronwatch-timestamp", "timestamp"), ("x-cronwatch-timestamp-signature", "timestampSignature")]
+        {
+            let header = got[0].headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+            if header != Some(text(c, key)) {
+                failures.push(format!("{what}: {name} {header:?}, want {}", text(c, key)));
+            }
+        }
+        let signed = format!("{timestamp}.{}", text(c, "body"));
+        if format!("sha256={}", signature(secret, &signed)) != text(c, "timestampSignature") {
+            failures.push(format!("{what}: signature() of the timestamped body differs"));
+        }
+        count += 1;
+    }
+
+    // Slack's "open" link with the characters that would end it: `link` is
+    // what the link function returns, `text` the first block's mrkdwn.
+    for c in objects(&f, "slackLinks") {
+        let target = text(c, "link").to_string();
+        let link: LinkFn = Arc::new(move |_: &Alert| target.clone());
+        let ch = slack(SlackOptions {
+            webhook_url: "https://hooks.slack.example/T/B/secret".into(),
+            link: Some(link),
+            transport: Some(transport.clone()),
+        })
+        .unwrap();
+        rec.answer_with(200, "");
+        if let Err(e) = ch.send(&first, &cx).await {
+            failures.push(format!("slack link {}: {e}", text(c, "link")));
+            continue;
+        }
+        let got = rec.taken();
+        let body = js::parse(&String::from_utf8_lossy(&got[0].body)).unwrap();
+        let mrkdwn = body
+            .as_object()
+            .and_then(|o| o.get("blocks"))
+            .and_then(Value::as_array)
+            .and_then(|b| b.first())
+            .and_then(Value::as_object)
+            .and_then(|b| b.get("text"))
+            .and_then(Value::as_object)
+            .and_then(|t| t.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if mrkdwn != text(c, "text") {
+            failures.push(format!("slack link {}:\n  got  {mrkdwn}\n  want {}", text(c, "link"), text(c, "text")));
         }
         count += 1;
     }
@@ -455,7 +507,7 @@ async fn conformance_channels() {
 
     assert!(failures.is_empty(), "channels.json: {} cases differ:\n{}", failures.len(), failures.join("\n"));
     // Every case of the fixture, so a case added there is not skipped here.
-    let total = ["sends", "providerSends", "webhookPayloads", "failures", "providerFailures"]
+    let total = ["sends", "providerSends", "webhookPayloads", "slackLinks", "failures", "providerFailures"]
         .iter()
         .map(|k| objects(&f, k).len())
         .sum::<usize>()

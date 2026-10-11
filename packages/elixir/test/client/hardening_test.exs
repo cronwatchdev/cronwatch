@@ -7,10 +7,14 @@ defmodule Cronwatch.HardeningTest do
   import ExUnit.CaptureLog
 
   alias Cronwatch.JS.Object
+  alias Cronwatch.Run
   alias Cronwatch.Test.Capture
   alias Cronwatch.Test.Clock
   alias Cronwatch.Test.Flaky
+  alias Cronwatch.Test.PlainStore
+  alias Cronwatch.Test.Stores
   alias Cronwatch.Test.Wrap
+  alias Cronwatch.Test.WrapNoCas
 
   @t0 Clock.t0()
   @min 60_000
@@ -515,6 +519,113 @@ defmodule Cronwatch.HardeningTest do
     refute_received {:event, ^ref, _, _, _}
     Cronwatch.stop(instance: cw)
   end
+
+  defmodule OddChannel do
+    @moduledoc false
+    @behaviour Cronwatch.Channel
+    def name(_), do: "odd"
+    def send(token, _alert, _ctx), do: {:sent, %{token: token}}
+  end
+
+  test "a channel's unexpected answer is described by its shape, never quoted" do
+    %{cw: cw, errors: errors} = make(alerts: [{OddChannel, "sekrit-token"}])
+    catch_error(Cronwatch.run("odd", fn _ -> raise "x" end, instance: cw))
+    assert [message] = messages(errors)
+    assert message =~ "channel odd answered a tuple of 2, not :ok or {:error, reason}"
+    refute message =~ "sekrit"
+  end
+
+  test "a store without compare_and_set_state or update_run_if is reported once, as store" do
+    %{cw: cw, errors: errors} = make(store: WrapNoCas.spec(inner: Wrap.memory(shared_memory())))
+    Cronwatch.run("a", fn _ -> :ok end, instance: cw)
+    Cronwatch.run("a", fn _ -> :ok end, instance: cw)
+    Cronwatch.check!(instance: cw)
+    reported = errors |> Agent.get(& &1) |> Enum.filter(&(elem(&1, 0) == "store"))
+    assert [{"store", e}] = reported, "once per instance"
+
+    assert Cronwatch.Config.describe(e) ==
+             "the store has no compare_and_set_state, so two processes sharing it can overwrite each other's " <>
+               "state or both evaluate the same run; it is safe only while one process at a time uses it"
+
+    %{cw: cw, errors: errors} = make(store: {PlainStore, store: Stores.memory()})
+    Cronwatch.run("a", fn _ -> :ok end, instance: cw)
+
+    assert [message] =
+             errors
+             |> Agent.get(& &1)
+             |> Enum.filter(&(elem(&1, 0) == "store"))
+             |> Enum.map(&Cronwatch.Config.describe(elem(&1, 1)))
+
+    assert message =~ "the store has no update_run_if, so"
+
+    %{cw: cw, errors: errors} = make()
+    Cronwatch.run("a", fn _ -> :ok end, instance: cw)
+    refute "store" in wheres(errors), "the built-in stores have both"
+  end
+
+  test "a run a source reports closes missed only when its start covers the missed fire" do
+    c = Clock.new(Cronwatch.JS.date_utc(2026, 0, 5, 10, 0))
+    %{cw: cw, alerts: alerts} = make(clock_ref: c)
+    job = Cronwatch.job!("imported", schedule: "0 * * * *", timezone: "UTC", grace: "10m", instance: cw)
+    Cronwatch.run(job, fn _ -> :ok end)
+    Clock.advance(c, 75 * @min)
+    assert Enum.map(Cronwatch.check!(instance: cw).alerts, & &1.type) == ["missed"]
+
+    record = fn id, start_min ->
+      started = Cronwatch.JS.date_utc(2026, 0, 5, 10, 0) + start_min * @min
+
+      run = %Run{
+        id: id,
+        job: "imported",
+        status: "ok",
+        started_at: started,
+        finished_at: Clock.now(c),
+        trigger: "source"
+      }
+
+      {:ok, _} = Cronwatch.record_run(%{run | duration_ms: Clock.now(c) - started}, instance: cw)
+    end
+
+    # Started at 10:58, before the minute of slack before 11:00.
+    Clock.advance(c, 13 * @min)
+    record.("s1", 58)
+    assert "missed" in Cronwatch.job_summary!("imported", instance: cw).open
+    assert Capture.types(alerts) == ["missed"]
+
+    # Started at 10:59, inside it: it covers 11:00.
+    Clock.advance(c, @min)
+    record.("s2", 59)
+    assert Cronwatch.job_summary!("imported", instance: cw).open == []
+    assert Capture.types(alerts) == ["missed", "recovered"]
+  end
+
+  test "a live run that started before the missed fire leaves missed open when it finishes" do
+    c = Clock.new(Cronwatch.JS.date_utc(2026, 0, 5, 10, 0))
+    %{cw: cw, alerts: alerts} = make(clock_ref: c)
+    job = Cronwatch.job!("hourly", schedule: "0 * * * *", timezone: "UTC", grace: "10m", timeout: "3h", instance: cw)
+    {:ok, h} = Cronwatch.start(job)
+    Clock.advance(c, 75 * @min)
+    assert Enum.map(Cronwatch.check!(instance: cw).alerts, & &1.type) == ["missed"]
+    Clock.advance(c, 15 * @min)
+    assert Cronwatch.finish(h, "done").status == "ok"
+    assert "missed" in Cronwatch.job_summary!("hourly", instance: cw).open
+    assert Capture.types(alerts) == ["missed"]
+  end
+
+  test "an interval run that outlasts its period is followed by a full period" do
+    c = Clock.new()
+    %{cw: cw} = make(clock_ref: c)
+    job = Cronwatch.job!("long", schedule: "every 1h", grace: "10m", timeout: "3h", instance: cw)
+    started = Clock.now(c)
+    {:ok, h} = Cronwatch.start(job)
+    Clock.advance(c, 90 * @min)
+    Cronwatch.finish(h, "done")
+    Clock.advance(c, @min)
+    assert Cronwatch.check!(instance: cw).alerts == [], "due a period after the finish, not the start"
+    assert Cronwatch.job_summary!("long", instance: cw).next_expected_at == started + 150 * @min
+    Clock.advance(c, 69 * @min + 1)
+    assert Enum.map(Cronwatch.check!(instance: cw).alerts, & &1.type) == ["missed"]
+  end
 end
 
 defmodule Cronwatch.HardeningTimingTest do
@@ -530,10 +641,12 @@ defmodule Cronwatch.HardeningTimingTest do
 
   alias Cronwatch.Test.Capture
   alias Cronwatch.Test.Clock
+  alias Cronwatch.Test.Wrap
 
   setup do
     on_exit(fn ->
-      for k <- [:channel_timeout, :triage_timeout, :retry_budget], do: Application.delete_env(:cronwatch, k)
+      for k <- [:channel_timeout, :triage_timeout, :retry_budget, :check_shutdown, :max_timer],
+          do: Application.delete_env(:cronwatch, k)
     end)
   end
 
@@ -595,5 +708,54 @@ defmodule Cronwatch.HardeningTimingTest do
     put(tried, [])
     Cronwatch.check!(instance: server.cw)
     assert get(tried) == ["a", "b"], "each check has a fresh budget"
+  end
+
+  test "stopping the instance does not wait for ever on a check whose store call hangs" do
+    Application.put_env(:cronwatch, :check_shutdown, 300)
+    store = shared_memory()
+    hang = fn -> Process.sleep(:infinity) end
+    cw = :"cw#{System.unique_integer([:positive])}"
+    {:ok, errors} = Agent.start_link(fn -> [] end)
+
+    {:ok, sup} =
+      Cronwatch.start_link(
+        name: cw,
+        cron_secret: false,
+        store: Wrap.spec(inner: Wrap.memory(store), before: %{list_jobs: hang}),
+        on_error: fn e, where -> Agent.update(errors, &(&1 ++ [{where, e}])) end
+      )
+
+    Process.unlink(sup)
+    check = Task.async(fn -> Cronwatch.check(instance: cw) end)
+    Process.sleep(50)
+    stopping = Task.async(fn -> Supervisor.stop(sup) end)
+    assert Task.await(stopping, 5_000) == :ok
+    assert {:error, e} = Task.await(check)
+    assert Exception.message(e) =~ "the check was stopped: it was still running"
+  end
+
+  test "a timeout too long for one timer is cancelled with its run, and never fires on a later one" do
+    # One timer waits at most 40 ms here, so a 100 ms timeout takes three.
+    Application.put_env(:cronwatch, :max_timer, 40)
+    %{cw: cw} = make()
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    a = :atomics.new(1, [])
+    b = :atomics.new(1, [])
+
+    :ok = Cronwatch.Runs.register(cw, "same", first, %{cancel: a}, 100)
+    Process.sleep(60)
+    # Gone after its first timer was re-armed: the re-armed one must go too.
+    assert Cronwatch.Runs.close(cw, "same")
+    :ok = Cronwatch.Runs.register(cw, "same", second, %{cancel: b}, 60_000)
+    Process.sleep(120)
+    assert :atomics.get(b, 1) == 0, "the earlier run's timeout did not cancel the later one"
+    assert :atomics.get(a, 1) == 0
+
+    # A run still in flight is cancelled at its timeout, however many timers it takes.
+    c = :atomics.new(1, [])
+    third = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Cronwatch.Runs.register(cw, "long", third, %{cancel: c}, 100)
+    eventually(fn -> :atomics.get(c, 1) == 1 end)
   end
 end

@@ -93,7 +93,8 @@ public class ScheduleConformanceTests
                 p,
                 Fixtures.OptInteger(c, "lastRunAt"),
                 Fixtures.Integer(c, "registeredAt"),
-                DurationConformanceTests.Number(c.Get("graceMs")));
+                DurationConformanceTests.Number(c.Get("graceMs")),
+                Fixtures.OptInteger(c, "lastFinishedAt"));
             object? got = e is Expectation x ? new JsObject().Set("dueAt", x.DueAt).Set("deadline", x.Deadline) : null;
             failures.Same(
                 "expectation of " + c.Get("schedule") + " in " + Zone(c) + " after " + Json.Stringify(c.Get("lastRunAt")),
@@ -123,13 +124,26 @@ public class ScheduleConformanceTests
             failures.Same("autumn " + c.Get("schedule") + " in " + Zone(c), output, c.Get("next"));
         }
 
+        var between = Fixtures.Objects(f, "firesBetween");
+        foreach (JsObject c in between)
+        {
+            ParsedSchedule p = Parse(Fixtures.String(c, "schedule")!, Zone(c));
+            List<long>? got = Schedules.FiresBetween(
+                p, Fixtures.Integer(c, "from"), Fixtures.Integer(c, "to"), (int)Fixtures.Integer(c, "limit"));
+            failures.Same(
+                "firesBetween " + c.Get("schedule") + " in " + Zone(c) + " from " + c.Get("from"),
+                got == null ? null : got.ConvertAll(t => (long?)t),
+                c.Get("fires"));
+        }
+
         failures.Check("schedule");
         Assert.Equal(75, parse.Count);
-        Assert.Equal(70, fires.Count);
+        Assert.Equal(87, fires.Count);
         Assert.Equal(4, nextFire.Count);
-        Assert.Equal(575, expectation.Count);
+        Assert.Equal(609, expectation.Count);
         Assert.Equal(13, runCovers.Count);
         Assert.Equal(8, autumn.Count);
-        DurationConformanceTests.Known(f, "parse", "fires", "nextFire", "expectation", "runCovers", "autumn");
+        Assert.Equal(9, between.Count);
+        DurationConformanceTests.Known(f, "parse", "fires", "nextFire", "expectation", "runCovers", "autumn", "firesBetween");
     }
 }

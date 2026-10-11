@@ -17,7 +17,12 @@ public sealed class SlackOptions
     /// </summary>
     public string? WebhookUrl { internal get; init; }
 
-    /// <summary>A link back to the job in your dashboard: <c>alert =&gt; "https://app.example.com/cronwatch/jobs/" + alert.Job</c>. Null or <c>""</c> is no link.</summary>
+    /// <summary>
+    /// A link back to the job in your dashboard:
+    /// <c>alert =&gt; "https://app.example.com/cronwatch/jobs/" + Uri.EscapeDataString(alert.Job)</c>.
+    /// Null or <c>""</c> is no link. Any <c>&lt;</c>, <c>&gt;</c>, or <c>|</c> in it is
+    /// percent-encoded, so it cannot end Slack's link early.
+    /// </summary>
     public Func<Alert, string?>? Link { get; init; }
 
     /// <summary>Sends this channel's requests; by default the client's transport.</summary>
@@ -69,7 +74,7 @@ public sealed class SlackChannel : IChannel
         ArgumentNullException.ThrowIfNull(context);
         string url = ChannelShared.Link(_link, alert);
         string title = (Emoji.TryGetValue(alert.Type.Value, out string? emoji) ? emoji : "undefined")
-            + " *" + Escape(alert.Title) + "*" + (url.Length == 0 ? "" : " (<" + url + "|open>)");
+            + " *" + Escape(alert.Title) + "*" + (url.Length == 0 ? "" : " (<" + LinkTarget(url) + "|open>)");
         string body = Js.Head(CodeBlockSafe(Escape(alert.Message)), 2900);
         var blocks = new List<object?> { Section(title), Section("```" + body + "```") };
         // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
@@ -103,6 +108,13 @@ public sealed class SlackChannel : IChannel
     /// <summary>Slack's three control characters. Escaping &lt; and &gt; also stops <c>&lt;!channel&gt;</c> and links.</summary>
     internal static string Escape(string text) =>
         text.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal).Replace(">", "&gt;", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A link's URL as Slack's <c>&lt;url|text&gt;</c> can hold it: <c>&lt;</c>, <c>&gt;</c>, and
+    /// <c>|</c> percent-encoded, which ends neither the link nor its text.
+    /// </summary>
+    internal static string LinkTarget(string url) =>
+        url.Replace("<", "%3C", StringComparison.Ordinal).Replace(">", "%3E", StringComparison.Ordinal).Replace("|", "%7C", StringComparison.Ordinal);
 
     /// <summary>Breaks up <c>```</c> so text inside a code block cannot close it.</summary>
     internal static string CodeBlockSafe(string text) => text.Replace("```", "`\u200b`\u200b`", StringComparison.Ordinal);

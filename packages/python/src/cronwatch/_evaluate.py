@@ -51,9 +51,11 @@ __all__ = [
     "alert_key",
     "apply_silence",
     "budget_breaches",
+    "catches_up",
     "claim_undelivered",
     "empty_state",
     "failure_count",
+    "finished_at_of",
     "floor_breaches",
     "format_number",
     "grace_ms",
@@ -513,25 +515,59 @@ def format_number(n: float) -> str:
     return f"-{text}" if negative else text
 
 
-def on_run_start(state: JobState) -> JobState:
-    """Called when a run starts. Missed and stuck are about the absence of a
-    run, so a run starting closes them without an alert; the recovered
-    message waits for a successful finish."""
+def finished_at_of(run: Run) -> int | None:
+    """When a run finished, or None while it runs (a run marked timeout has finished)."""
+    finished = run.finished_at
+    if run.status == RunStatus.RUNNING or isinstance(finished, bool) or not isinstance(finished, (int, float)):
+        return None
+    return finished  # type: ignore[return-value]
+
+
+def catches_up(definition: JobDefinition, run: Run, now: int) -> bool:
+    """Whether `run` brings the schedule up to date at `now`, so missed may
+    close for it: judged with it as the job's last run, as on_check judges,
+    the run the schedule wants next is not yet past its deadline. A run that
+    started before the fire missed opened for does not cover that fire,
+    however late it finishes, and neither does a run a source reports only
+    once it is over whose start was before it. Every run starting now covers
+    it. A job with no schedule, or one that no longer parses, has nothing
+    due, so any run does."""
+    if not definition.schedule:
+        return True
+    try:
+        exp = expectation(
+            parse_schedule(definition.schedule, definition.timezone), run.started_at, run.started_at, grace_ms(definition), finished_at_of(run)
+        )
+    except Exception:  # noqa: BLE001
+        return True
+    return exp is None or now <= exp.deadline
+
+
+def on_run_start(definition: JobDefinition, run: Run, state: JobState, now: int) -> JobState:
+    """Called when a run starts, or when a run a source reports is recorded.
+    Missed and stuck are about the absence of a run, so a run starting closes
+    them without an alert; the recovered message waits for a successful
+    finish. Missed closes only when the run catches the schedule up
+    (catches_up), which a run starting now always does."""
     following = _clone_state(state)
-    _close_condition(following, Condition.MISSED)
+    if catches_up(definition, run, now):
+        _close_condition(following, Condition.MISSED)
     _close_condition(following, Condition.STUCK)
     return following
 
 
 def on_run_finish(definition: JobDefinition, run: Run, state: JobState, history: Sequence[Run], now: int) -> Evaluation:
     """Called when a run finishes with status ok, failed, or timeout. `history`
-    is the job's earlier runs, newest first, not including this one."""
+    is the job's earlier runs, newest first, not including this one. Missed
+    closes only when the run catches the schedule up (catches_up): a run that
+    started before the fire missed opened for leaves it open."""
     following = _clone_state(state)
     alerts: list[AlertDraft] = []
 
     if run.status == RunStatus.OK:
         following.consecutive_failures = 0
-        _close_condition(following, Condition.MISSED)
+        if catches_up(definition, run, now):
+            _close_condition(following, Condition.MISSED)
         _close_condition(following, Condition.STUCK)
         _close_condition(following, Condition.FAILED)
 
@@ -569,7 +605,8 @@ def on_run_finish(definition: JobDefinition, run: Run, state: JobState, history:
     # failed or timeout
     # Held at the top: a count at the limit must not pass what the SDK and every store hold exactly.
     following.consecutive_failures = min(following.consecutive_failures + 1, MAX_DURATION_MS)
-    _close_condition(following, Condition.MISSED)
+    if catches_up(definition, run, now):
+        _close_condition(following, Condition.MISSED)
     threshold = max(1, definition.failures_before_alert if definition.failures_before_alert is not None else 1)
     condition = Condition.STUCK if run.status == RunStatus.TIMEOUT else Condition.FAILED
     if following.consecutive_failures >= threshold:
@@ -603,13 +640,14 @@ def on_check(definition: JobDefinition, stored: StoredJob, last_run: Run | None,
     parsed = parse_schedule(definition.schedule, definition.timezone)
     grace = grace_ms(definition)
     last_run_at = last_run.started_at if last_run else None
-    exp = expectation(parsed, last_run_at, stored.created_at, grace)
-    next_expected_at = next_fire(parsed, stored.created_at, last_run_at) if parsed.kind == "interval" else next_fire(parsed, now, None)
+    exp = expectation(parsed, last_run_at, stored.created_at, grace, finished_at_of(last_run) if last_run else None)
+    next_expected_at = exp.due_at if parsed.kind == "interval" and exp is not None else next_fire(parsed, now, None)
     if exp is None:
         return CheckEvaluation(following, alerts, next_expected_at, None)
 
-    # An interval's next run is due a period after the last one started. If
-    # that run is still going, the job is busy, not late; stuck covers one that never ends.
+    # An interval's next run is due a period after the last one started, or
+    # after it finished when it outlasted the period (interval_due). If that
+    # run is still going, the job is busy, not late; stuck covers one that never ends.
     if parsed.kind == "interval" and last_run is not None and last_run.status == RunStatus.RUNNING:
         return CheckEvaluation(following, alerts, next_expected_at, exp.due_at)
 

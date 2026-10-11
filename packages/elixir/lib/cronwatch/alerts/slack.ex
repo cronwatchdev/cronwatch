@@ -11,7 +11,10 @@ defmodule Cronwatch.Alerts.Slack do
       api.slack.com/messaging/webhooks. It is its own credential: errors
       never quote it, and a redirect is refused rather than followed.
     * `:link`: a function of the alert answering a link back to the job in
-      your dashboard.
+      your dashboard, such as `fn alert ->
+      "https://app.example.com/cronwatch/jobs/\#{URI.encode_www_form_component(alert.job)}" end`.
+      Any `<`, `>`, or `|` in it is percent-encoded, so it cannot end
+      Slack's link early.
     * `:transport`: a `Cronwatch.Transport` for the request, else the
       instance's, else `Cronwatch.Transport.HTTP`.
 
@@ -50,7 +53,10 @@ defmodule Cronwatch.Alerts.Slack do
   @impl true
   def send(%__MODULE__{} = o, %Alert{} = alert, ctx) do
     link = Shared.link_for(o.link, alert)
-    head = "#{emoji(alert.type)} *#{escape(alert.title)}*" <> if(link != "", do: " (<#{link}|open>)", else: "")
+
+    head =
+      "#{emoji(alert.type)} *#{escape(alert.title)}*" <> if(link != "", do: " (<#{link_target(link)}|open>)", else: "")
+
     code = Units.concat(["```", Units.head(code_block_safe(escape(alert.message)), 2900), "```"])
     blocks = [section(head), section(code)]
     triage = Shared.triage(alert)
@@ -97,6 +103,11 @@ defmodule Cronwatch.Alerts.Slack do
   # <!channel> and <url|links>.
   defp escape(text),
     do: text |> String.replace("&", "&amp;") |> String.replace("<", "&lt;") |> String.replace(">", "&gt;")
+
+  # A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|`
+  # percent-encoded, which ends neither the link nor its text.
+  defp link_target(url),
+    do: url |> String.replace("<", "%3C") |> String.replace(">", "%3E") |> String.replace("|", "%7C")
 
   # ``` with a zero width space (U+200B) between the ticks.
   @zwsp <<0x200B::utf8>>

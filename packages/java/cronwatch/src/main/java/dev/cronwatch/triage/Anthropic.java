@@ -229,9 +229,9 @@ public final class Anthropic implements Triage {
               + ", duration "
               + duration(run)
               + ", trigger "
-              + run.trigger());
+              + data(run.trigger()));
       if (!run.metrics().isEmpty()) {
-        lines.add("Metrics: " + run.metrics().toJson());
+        lines.add("Metrics: " + data(run.metrics().toJson()));
       }
       if (run.error() != null && !run.error().isEmpty()) {
         lines.add("Error:\n" + data(Js.head(run.error(), 3000)));
@@ -262,7 +262,7 @@ public final class Anthropic implements Triage {
           line.append(", error: ").append(data(Js.head(first, 160)));
         }
         if (!r.metrics().isEmpty()) {
-          line.append(", metrics ").append(r.metrics().toJson());
+          line.append(", metrics ").append(data(r.metrics().toJson()));
         }
         lines.add(line.toString());
       }

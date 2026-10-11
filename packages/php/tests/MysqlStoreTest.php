@@ -210,6 +210,33 @@ final class MysqlStoreTest extends TestCase
     }
 
     #[DataProvider('servers')]
+    public function testInitOverTablesThatAreThereLeavesTheAppsTransactionOpen(string $kind): void
+    {
+        $backend = $this->backend($kind);
+        try {
+            $backend->open()->init();
+            $p = $backend->prefix;
+            $app = self::admin($backend);
+            $app->exec("CREATE TABLE IF NOT EXISTS {$p}orders (id INT PRIMARY KEY)");
+            $app->beginTransaction();
+            $app->exec("INSERT INTO {$p}orders VALUES (1)");
+            // CREATE TABLE IF NOT EXISTS would commit it, table there or not.
+            (new MysqlStore(pdo: $app, prefix: $p))->init();
+            $this->assertTrue($app->inTransaction());
+            $app->rollBack();
+            $this->assertSame(0, (int) $app->query("SELECT COUNT(*) FROM {$p}orders")->fetchColumn());
+            $app->exec("DROP TABLE {$p}orders");
+
+            // A table missing is made, as before.
+            $app->exec("DROP TABLE {$p}state");
+            (new MysqlStore(pdo: $app, prefix: $p))->init();
+            $this->assertSame(1, (int) $app->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$p}state'")->fetchColumn());
+        } finally {
+            $backend->done();
+        }
+    }
+
+    #[DataProvider('servers')]
     public function testConditionalWritesDoNotLeanOnHowTheConnectionCountsRows(string $kind): void
     {
         $backend = $this->backend($kind);

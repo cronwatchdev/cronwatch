@@ -427,3 +427,64 @@ test("a successful answer's body is let go of, not left for the garbage collecto
   await resend({ apiKey: "re_key", from: "a@b.c", to: "x@y.z" }).send(failed());
   assert.equal(cancelled, 4);
 });
+
+test("webhook adds a timestamp and a signature over it and the body, beside the body's own", async (t) => {
+  const calls = stubFetch(t);
+  await webhook({ url: "https://hooks.example.com/in", secret: "s3cret", now: () => T0 + 1999 }).send(failed());
+  const { headers, body } = calls[0]!;
+  const hmac = (text: string) => createHmac("sha256", "s3cret").update(text).digest("hex");
+  assert.equal(headers["x-cronwatch-signature"], `sha256=${hmac(body)}`, "unchanged");
+  assert.equal(headers["x-cronwatch-timestamp"], String(Math.floor((T0 + 1999) / 1000)));
+  assert.equal(headers["x-cronwatch-timestamp-signature"], `sha256=${hmac(`${Math.floor((T0 + 1999) / 1000)}.${body}`)}`);
+  assert.equal(headers["x-cronwatch-timestamp-signature"], `sha256=${await signature("s3cret", `${headers["x-cronwatch-timestamp"]}.${body}`)}`);
+  // Without a secret there is nothing to sign, and no timestamp either.
+  await webhook({ url: "https://hooks.example.com/in" }).send(failed());
+  assert.deepEqual(Object.keys(calls[1]!.headers).filter((name) => name.startsWith("x-cronwatch")), []);
+});
+
+test("webhook headers of the app's own replace the defaults whatever their case, but never the signature", async (t) => {
+  const calls = stubFetch(t);
+  await webhook({
+    url: "https://hooks.example.com/in",
+    secret: "s3cret",
+    now: () => T0,
+    headers: { "Content-Type": "application/cloudevents+json", "USER-AGENT": " mine ", "X-CronWatch-Signature": "forged", Authorization: "Bearer abc" },
+  }).send(failed());
+  const { headers, body } = calls[0]!;
+  assert.deepEqual(Object.keys(headers), ["Content-Type", "USER-AGENT", "Authorization", "x-cronwatch-signature", "x-cronwatch-timestamp", "x-cronwatch-timestamp-signature"]);
+  assert.equal(headers["Content-Type"], "application/cloudevents+json");
+  assert.equal(headers["USER-AGENT"], "mine");
+  assert.equal(headers["x-cronwatch-signature"], `sha256=${createHmac("sha256", "s3cret").update(body).digest("hex")}`);
+});
+
+test("slack percent-encodes <, >, and | in a link, so it cannot end the link or its text early", async (t) => {
+  const calls = stubFetch(t);
+  await slack({ webhookUrl: "https://hooks.slack.example/T/B/x", link: () => "https://app.example/jobs/a|b<c>d?x=<y>" }).send(failed());
+  const title = JSON.parse(calls[0]!.body).blocks[0].text.text as string;
+  assert.ok(title.endsWith(" (<https://app.example/jobs/a%7Cb%3Cc%3Ed?x=%3Cy%3E|open>)"), title);
+});
+
+test("an error body is read only up to its cap, however much a provider sends", async (t) => {
+  let pulled = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const chunk = new TextEncoder().encode("e".repeat(16 * 1024));
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    return new Response(stream, { status: 500 });
+  }) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  for (const channel of [
+    slack({ webhookUrl: "https://hooks.slack.example/T/B/x" }),
+    discord({ webhookUrl: "https://discord.example/api/webhooks/1/x" }),
+    resend({ apiKey: "re_secret", from: "a@example.com", to: "b@example.com" }),
+  ]) {
+    pulled = 0;
+    await assert.rejects(channel.send(failed()), /answered 500: e{200}$/);
+    assert.ok(pulled <= 128 * 1024, `${channel.name} read ${pulled} bytes`);
+  }
+});

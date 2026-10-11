@@ -260,6 +260,116 @@ class CronwatchJobRunrTest {
   }
 
   @Test
+  void anAttemptJobRunrMovesOnFromIsClosedWhenItsStateIsApplied() throws Exception {
+    // An orphan the server's own JobRunr fails, and an attempt scheduled again while its run was
+    // open: JobRunr reports neither end to onProcessingSucceeded or onProcessingFailed.
+    MemoryStore store = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    try (Cronwatch cw = client(store, errors);
+        CronwatchJobRunr w =
+            CronwatchJobRunr.watch(
+                cw, storage, JobRunrOptions.defaults().app("billing").watchJob("report"))) {
+      JobScheduler scheduler =
+          JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+      org.jobrunr.jobs.Job job = storage.getJobById(scheduler.enqueue(() -> Work.report()));
+      org.jobrunr.jobs.states.ProcessingState processing =
+          new org.jobrunr.jobs.states.ProcessingState(java.util.UUID.randomUUID(), "test");
+      w.onProcessing(attempt(job, 1));
+      org.jobrunr.jobs.states.FailedState orphaned =
+          new org.jobrunr.jobs.states.FailedState(
+              "Orphaned job", new IllegalThreadStateException("the server stopped"));
+      w.onStateApplied(attempt(job, 1, orphaned), processing, orphaned);
+      w.onProcessing(attempt(job, 2));
+      org.jobrunr.jobs.states.ScheduledState again =
+          new org.jobrunr.jobs.states.ScheduledState(java.time.Instant.now(), "again");
+      w.onStateApplied(attempt(job, 2, again), processing, again);
+      List<Run> runs = finished(cw, "report");
+      assertEquals(2, runs.size(), runs.toString());
+      assertTrue(runs.get(1).id().endsWith(":1"), runs.get(1).id());
+      assertTrue(
+          runs.get(1).error().startsWith("IllegalThreadStateException: the server stopped"),
+          runs.get(1).error());
+      assertTrue(
+          runs.get(0).error().contains("without JobRunr reporting how"), runs.get(0).error());
+      // Already closed: a later report of either end changes nothing.
+      w.onProcessingSucceeded(attempt(job, 2));
+      assertEquals(2, finished(cw, "report").size());
+      assertNull(Cronwatch.current());
+      assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
+  @Test
+  void theCheckClosesARunItMarkedTimedOutOnceJobRunrHasMovedOn() throws Exception {
+    MemoryStore store = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    java.util.concurrent.atomic.AtomicLong clock =
+        new java.util.concurrent.atomic.AtomicLong(1_767_605_400_000L);
+    try (Cronwatch cw =
+            Cronwatch.builder()
+                .store(store)
+                .alerts(List.of())
+                .clock(clock::get)
+                .noShutdownHook()
+                .onError((where, error) -> errors.add(where + ": " + error.getMessage()))
+                .build();
+        CronwatchJobRunr w =
+            CronwatchJobRunr.watch(
+                cw, storage, JobRunrOptions.defaults().app("billing").watchJob("report"))) {
+      JobScheduler scheduler =
+          JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+      org.jobrunr.jobs.Job job = storage.getJobById(scheduler.enqueue(() -> Work.report()));
+      w.onProcessing(attempt(job, 1));
+      w.checkNow();
+      assertEquals(RunStatus.RUNNING, cw.runs("report", 5).get(0).status(), "within its timeout");
+      clock.addAndGet(Duration.ofHours(3).toMillis());
+      w.checkNow();
+      Run run = cw.runs("report", 5).get(0);
+      assertTrue(
+          run.error() != null && run.error().contains("without JobRunr reporting how"),
+          run.toString());
+      assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
+  @Test
+  void theCheckRunsEveryLiveWatchAndFailsWithNone() throws Exception {
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    JobScheduler scheduler =
+        JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+    scheduler.scheduleRecurrently("often", Duration.ofHours(2), () -> Work.ok());
+    MemoryStore first = new MemoryStore();
+    MemoryStore second = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    try (Cronwatch one = client(first, errors);
+        Cronwatch two = client(second, errors)) {
+      CronwatchJobRunr a = CronwatchJobRunr.watch(one, storage);
+      CronwatchJobRunr b = CronwatchJobRunr.watch(two, storage);
+      try {
+        assertTrue(a.settle(Duration.ofSeconds(10)) && b.settle(Duration.ofSeconds(10)));
+        scheduler.deleteRecurringJob("often");
+        // A second watch no longer replaces the first: the check syncs both.
+        CronwatchJobRunr.runCheck();
+        assertTrue(stored(first, "often").contains("no longer scheduled"), stored(first, "often"));
+        assertTrue(
+            stored(second, "often").contains("no longer scheduled"), stored(second, "often"));
+        a.close();
+        CronwatchJobRunr.runCheck();
+      } finally {
+        a.close();
+        b.close();
+      }
+      IllegalStateException none =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              IllegalStateException.class, CronwatchJobRunr::runCheck);
+      assertEquals(CronwatchJobRunr.NO_WATCH, none.getMessage());
+      assertTrue(errors.isEmpty(), errors.toString());
+    }
+  }
+
+  @Test
   void anExceptionIsTheJobsOwn() {
     IllegalStateException own = new IllegalStateException("x");
     assertEquals(

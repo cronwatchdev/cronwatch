@@ -4,10 +4,14 @@ Every store answers the same methods, the SDK's Store in snake_case:
 ``init`` (optional), ``upsert_job``, ``get_job``, ``list_jobs``,
 ``delete_job``, ``insert_run``, ``update_run``, ``update_run_if``
 (optional: without it the client reads the run, then writes it), ``get_run``,
-``list_runs``, ``last_run``, ``running_runs``, ``get_state``, ``set_state``,
-``compare_and_set_state`` (optional: without it the client falls back to
-``set_state``), ``prune``, and ``close`` (optional). They take and return the
-types in ``cronwatch.types``.
+``list_runs``, ``last_run`` (optional: the client never calls it; the built-in
+stores keep it for callers of their own), ``running_runs``, ``get_state``,
+``set_state``, ``compare_and_set_state`` (optional: without it the client
+falls back to ``set_state``), ``prune``, and ``close`` (optional). They take
+and return the types in ``cronwatch.types``. A store without
+``update_run_if`` or ``compare_and_set_state`` is safe only while one
+process at a time uses it, and the client reports that once, through
+on_error, when it first uses the store.
 """
 
 from __future__ import annotations
@@ -29,7 +33,6 @@ class Store(Protocol):
     def update_run(self, run: Run) -> None: ...
     def get_run(self, run_id: str) -> Run | None: ...
     def list_runs(self, job: str, limit: int) -> list[Run]: ...
-    def last_run(self, job: str) -> Run | None: ...
     def running_runs(self) -> list[Run]: ...
     def get_state(self, job: str) -> JobState | None: ...
     def set_state(self, state: JobState) -> None: ...

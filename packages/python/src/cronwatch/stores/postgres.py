@@ -30,7 +30,7 @@ try:
 except ImportError as error:  # pragma: no cover, the message is tested in a subprocess
     raise ImportError(f'cronwatch.stores.postgres needs psycopg 3.2 or newer: pip install "cronwatch-sdk[postgres]" ({error})') from error
 
-from .. import _pg
+from .. import _fork, _pg
 from .._deprecated import names as _deprecated_names
 from ..types import JobDefinition, JobState, Run, RunStatus, StoredJob
 from . import _sql
@@ -56,6 +56,22 @@ class PostgresStore:
         self._connection: psycopg.Connection[Any] | None = None
         self._lock = threading.RLock()
         self._pid = os.getpid()
+        _fork.track(self)
+
+    def _after_fork(self) -> None:
+        """A forked child (gunicorn, Celery's prefork pool) must not share the
+        parent's socket or wait on its lock: both are replaced, the connection
+        left for the parent, not closed. The pid goes last (see cronwatch._fork)."""
+        self._lock = threading.RLock()
+        self._connection = None
+        self._pid = os.getpid()
+
+    def _own_process(self) -> None:
+        """For a fork the hook did not see: the reset, once, under _fork.lock."""
+        if self._pid != os.getpid():
+            with _fork.lock:
+                if self._pid != os.getpid():
+                    self._after_fork()
 
     # ---------------------------------------------------------------- connections
 
@@ -77,12 +93,7 @@ class PostgresStore:
             with self._pool.connection() as connection:
                 yield connection
             return
-        if self._pid != os.getpid():
-            # A forked child (gunicorn, Celery's prefork pool) must not share
-            # the parent's socket; it is left for the parent, not closed.
-            self._pid = os.getpid()
-            self._lock = threading.RLock()
-            self._connection = None
+        self._own_process()
         with self._lock:
             yield self._open()
 
@@ -178,6 +189,8 @@ class PostgresStore:
         return self._count(self._sql["prune"], [before])
 
     def close(self) -> None:
+        # A child closing the parent's connection would end the parent's session.
+        self._own_process()
         with self._lock:
             if self._connection is not None:
                 self._connection.close()

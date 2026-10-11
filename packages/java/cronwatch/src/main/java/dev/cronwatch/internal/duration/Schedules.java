@@ -80,6 +80,7 @@ public final class Schedules {
     if (CACHE.size() >= CACHE_LIMIT) {
       CACHE.clear();
       CRONS.clear();
+      WALLS.clear();
     }
     CACHE.put(key, parsed);
     return parsed;
@@ -220,12 +221,30 @@ public final class Schedules {
   }
 
   /**
-   * The first fire strictly after {@code from}, or null when the cron never fires again. croner
-   * answers with times in the past when asked from inside the hour that repeats when clocks go
-   * back, so its answers are filtered, and a stretch of nothing but past times is stepped over an
-   * hour at a time.
+   * The first fire strictly after {@code from}, or null when the cron never fires again. On the
+   * night clocks spring forward every slot the pattern names still fires: one whose local time the
+   * jump skips is moved forward by the gap's length (see {@link #springGap} and {@link
+   * #gapFireAfter}), so the fires stay strictly ascending whichever instant they are counted from.
    */
-  private static @Nullable Long fireAfter(Cron cron, long from) {
+  private static @Nullable Long fireAfter(ParsedSchedule parsed, long from) {
+    Cron cron = cronOf(parsed);
+    Long found = croneFireAfter(cron, from);
+    Long start = countFrom(from);
+    if (start == null) {
+      return found;
+    }
+    Long moved = gapFireAfter(parsed, cron, start);
+    return moved != null && (found == null || moved < found) ? moved : found;
+  }
+
+  /**
+   * The first fire strictly after {@code from} as croner counts it, or null when the cron never
+   * fires again. croner answers with times in the past when asked from inside the hour that repeats
+   * when clocks go back, so its answers are filtered, and a stretch of nothing but past times is
+   * stepped over an hour at a time. Asked from inside a spring-forward gap it skips the slots moved
+   * out of it, which {@link #fireAfter} adds back.
+   */
+  private static @Nullable Long croneFireAfter(Cron cron, long from) {
     Long start = countFrom(from);
     if (start == null) {
       return null;
@@ -247,9 +266,97 @@ public final class Schedules {
   }
 
   /**
+   * The window a spring-forward jump moves skipped slots into: from the jump ({@code jumpAt}, the
+   * first instant on the later offset) for the gap's length ({@code gapMs}, the later offset less
+   * the earlier one, so 30 minutes on Lord Howe Island and an hour in most zones). {@code beforeMs}
+   * is the earlier offset.
+   */
+  private record Gap(long jumpAt, long gapMs, long beforeMs) {}
+
+  /** How far back a spring-forward jump is looked for: more than any gap a zone has had. */
+  private static final long JUMP_LOOKBACK_MS = 3 * 3_600_000L;
+
+  /**
+   * {@code springGap}: the window a spring-forward jump moves skipped slots into, when {@code at}
+   * lies in one. Null when {@code at} is not within a gap's length after a jump in the three hours
+   * before it.
+   */
+  private static @Nullable Gap springGap(Cron cron, long at) {
+    Gap jump = springJump(cron, at);
+    return jump != null && at < jump.jumpAt() + jump.gapMs() ? jump : null;
+  }
+
+  /**
+   * The spring-forward jump in the three hours up to {@code at}, found to the minute: the first
+   * minute on the later offset. Null when the offset at {@code at} is not ahead of the offset three
+   * hours before.
+   */
+  private static @Nullable Gap springJump(Cron cron, long at) {
+    // Every zone kept its local mean time, with no clock change, in the year 1.
+    if (at - JUMP_LOOKBACK_MS < Js.FIRST_DATE_MS || at >= Js.LAST_DATE_MS) {
+      return null;
+    }
+    long after = utcOffset(at, cron);
+    long before = utcOffset(at - JUMP_LOOKBACK_MS, cron);
+    if (after <= before) {
+      return null;
+    }
+    long lo = at - JUMP_LOOKBACK_MS;
+    long hi = at;
+    while (hi - lo > 60_000) {
+      long mid = lo + (hi - lo) / 2;
+      if (utcOffset(mid, cron) == after) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    return new Gap(Math.floorDiv(hi, 60_000L) * 60_000L, after - before, before);
+  }
+
+  /** The pattern read in UTC, which stands for wall-clock time in {@link #gapFireAfter}. */
+  private static final Map<ParsedSchedule, Cron> WALLS = new ConcurrentHashMap<>();
+
+  private static Cron wallCron(ParsedSchedule parsed) {
+    Cron wall = WALLS.get(parsed);
+    if (wall == null) {
+      if (WALLS.size() >= CACHE_LIMIT) {
+        WALLS.clear();
+      }
+      wall = Cron.parse(parsed.source(), ZoneOffset.UTC);
+      WALLS.put(parsed, wall);
+    }
+    return wall;
+  }
+
+  /**
+   * The first slot moved out of a spring-forward gap strictly after {@code start}, when {@code
+   * start} lies in that gap's window, else null. A slot whose local time the jump skips fires at
+   * that local time read on the earlier offset, which is the same as moving it forward by the gap's
+   * length: 01:20 on the night London skips 01:00 to 02:00 fires at 02:20 BST (01:20Z). croner
+   * moves them the same way when asked from before the jump, but not from inside it.
+   */
+  private static @Nullable Long gapFireAfter(ParsedSchedule parsed, Cron cron, long start) {
+    Gap gap = springGap(cron, start);
+    if (gap == null) {
+      return null;
+    }
+    // Wall-clock time as if it were UTC: the slots the jump skips run from jumpAt + beforeMs for
+    // gapMs.
+    List<Long> slots = runsAfter(wallCron(parsed), 1, start + gap.beforeMs());
+    if (slots.isEmpty() || slots.get(0) >= gap.jumpAt() + gap.beforeMs() + gap.gapMs()) {
+      return null;
+    }
+    return slots.get(0) - gap.beforeMs();
+  }
+
+  /**
    * {@code firesBetween}: every fire of a cron strictly after {@code from} and at or before {@code
-   * to}, ascending, or null when there are more than {@code limit}. Fires are asked for in batches,
-   * and any that do not move forward are dropped.
+   * to}, ascending, or null when there are more than {@code limit}: the fires {@link #nextFire}
+   * gives one after another. Fires are asked for in batches, and any that do not move forward are
+   * dropped (the hour that repeats when clocks go back). Around a spring-forward gap, where
+   * croner's batch can skip a moved slot or give one out of order, it counts with {@link
+   * #fireAfter} instead.
    */
   public static @Nullable List<Long> firesBetween(
       ParsedSchedule parsed, long from, long to, int limit) {
@@ -262,13 +369,42 @@ public final class Schedules {
     long probe = start;
     long last = start;
     for (int guard = 0; guard < 1000; guard++) {
+      if (springGap(cron, last) != null) {
+        // Counting from inside a gap's window: croner would skip its moved slots.
+        Long t = fireAfter(parsed, last);
+        if (t == null || t > to) {
+          return out;
+        }
+        out.add(t);
+        last = probe = t;
+        if (out.size() > limit) {
+          return null;
+        }
+        continue;
+      }
       List<Long> batch = runsAfter(cron, Math.min(limit + 1 - out.size(), 24), probe);
       if (batch.isEmpty()) {
         return out;
       }
+      boolean stepped = false;
       for (long t : batch) {
         if (t <= last) {
           continue;
+        }
+        if (springGap(cron, t) != null) {
+          // The batch reached a gap's window, where its order is croner's: the next fire is
+          // counted from the last one, and the rest with it.
+          Long next = fireAfter(parsed, last);
+          if (next == null || next > to) {
+            return out;
+          }
+          out.add(next);
+          last = probe = next;
+          if (out.size() > limit) {
+            return null;
+          }
+          stepped = true;
+          break;
         }
         if (t > to) {
           return out;
@@ -278,6 +414,9 @@ public final class Schedules {
         if (out.size() > limit) {
           return null;
         }
+      }
+      if (stepped) {
+        continue;
       }
       long end = batch.get(batch.size() - 1);
       probe = end > probe ? end : probe + 3_600_000L;
@@ -296,31 +435,55 @@ public final class Schedules {
 
   /**
    * {@code nextFire}: the next time the schedule fires strictly after {@code from}; for an
-   * interval, counted from the last run when there is one. Null when a cron never fires again.
+   * interval, counted from the last run's start when there is one (see {@link #intervalDue} for a
+   * run that outlasted its period). Null when a cron never fires again.
    */
   public static @Nullable Long nextFire(
       ParsedSchedule parsed, long from, @Nullable Long lastRunAt) {
     if (parsed.isInterval()) {
       return add(lastRunAt != null ? lastRunAt : from, parsed.everyMs());
     }
-    return fireAfter(cronOf(parsed), from);
+    return fireAfter(parsed, from);
+  }
+
+  /**
+   * {@code intervalDue}: when an interval of {@code everyMs} is next due after a run: a period
+   * after it started, or, when it finished ({@code finishedAt} not null) later than that, a period
+   * after it finished. A run that outlasts its period is not followed by a missed alert the moment
+   * it ends.
+   */
+  public static long intervalDue(double everyMs, long startedAt, @Nullable Long finishedAt) {
+    long due = add(startedAt, everyMs);
+    return finishedAt != null && finishedAt > due ? add(finishedAt, everyMs) : due;
+  }
+
+  /** {@link #expectation(ParsedSchedule, Long, long, double, Long)} with no finish known. */
+  public static @Nullable Expectation expectation(
+      ParsedSchedule parsed, @Nullable Long lastRunAt, long registeredAt, double graceMs) {
+    return expectation(parsed, lastRunAt, registeredAt, graceMs, null);
   }
 
   /**
    * {@code expectation}: when the schedule next wants a run, given the last one. For a cron that is
    * the first fire the last run does not already cover; with no run yet, the first fire at or after
-   * registration. For an interval it is the last run's start (or registration) plus the interval.
-   * Null for a cron that never fires again.
+   * registration. For an interval it is the last run's start (or registration) plus the interval,
+   * or its finish plus the interval when it finished ({@code lastFinishedAt}, null while it runs)
+   * later than that ({@link #intervalDue}). Null for a cron that never fires again.
    */
   public static @Nullable Expectation expectation(
-      ParsedSchedule parsed, @Nullable Long lastRunAt, long registeredAt, double graceMs) {
+      ParsedSchedule parsed,
+      @Nullable Long lastRunAt,
+      long registeredAt,
+      double graceMs,
+      @Nullable Long lastFinishedAt) {
     Long due;
     if (parsed.isInterval()) {
-      due = add(lastRunAt != null ? lastRunAt : registeredAt, parsed.everyMs());
-    } else if (lastRunAt == null) {
       due =
-          fireAfter(
-              cronOf(parsed), registeredAt == Long.MIN_VALUE ? registeredAt : registeredAt - 1);
+          lastRunAt == null
+              ? add(registeredAt, parsed.everyMs())
+              : intervalDue(parsed.everyMs(), lastRunAt, lastFinishedAt);
+    } else if (lastRunAt == null) {
+      due = fireAfter(parsed, registeredAt == Long.MIN_VALUE ? registeredAt : registeredAt - 1);
     } else {
       due = dueAfterRun(parsed, lastRunAt);
     }
@@ -334,14 +497,19 @@ public final class Schedules {
   private static @Nullable Long dueAfterRun(ParsedSchedule parsed, long startedAt) {
     Cron cron = cronOf(parsed);
     // A fire at or before the start is covered by the run itself.
-    Long next = fireAfter(cron, startedAt);
-    if (next == null) {
-      return null;
+    Long next = fireAfter(parsed, startedAt);
+    // Bounded: a gap holds at most a few hours of moved slots.
+    for (int guard = 0; next != null && guard < 100_000; guard++) {
+      Long following = fireAfter(parsed, next);
+      boolean covers =
+          runCovers(startedAt, next, following)
+              || inSpringForwardGap(parsed, cron, startedAt, next);
+      if (!covers) {
+        return next;
+      }
+      next = following;
     }
-    Long following = fireAfter(cron, next);
-    boolean covers =
-        runCovers(startedAt, next, following) || inSpringForwardGap(cron, startedAt, next);
-    return covers ? following : next;
+    return next;
   }
 
   /**
@@ -359,43 +527,29 @@ public final class Schedules {
   }
 
   /**
-   * On the night clocks spring forward, a fire whose local time does not exist (02:30 when 02:00
-   * jumps to 03:00) is moved by croner to the same distance past the jump (03:30), while vixie cron
-   * runs it at the jump itself (03:00). A run that starts at or after the jump, and before the
-   * first fire after it when that fire lies within one gap of it, is taken to cover that fire, so
-   * neither scheduler's run is reported as missed.
+   * On the night clocks spring forward, a slot whose local time does not exist (02:30 when 02:00
+   * jumps to 03:00) fires moved forward by the gap (03:30; see {@link #gapFireAfter}), while vixie
+   * cron runs every skipped job once, at the jump itself (03:00). A run that starts at or after the
+   * jump (less a minute of slack), and before such a moved fire, is taken to cover it, so neither
+   * scheduler's run is reported as missed. Only a moved slot that is not also a slot of its own on
+   * the later offset counts: a cron that fires every 10 minutes moves 02:10 onto its own 03:10,
+   * which was not skipped.
    */
-  private static boolean inSpringForwardGap(Cron cron, long startedAt, long fireAt) {
-    final long lookback = 3 * 3_600_000L;
-    // Every zone kept its local mean time, with no clock change, in the year 1.
-    if (fireAt - lookback < Js.FIRST_DATE_MS) {
+  private static boolean inSpringForwardGap(
+      ParsedSchedule parsed, Cron cron, long startedAt, long fireAt) {
+    Gap gap = springGap(cron, fireAt);
+    if (gap == null || startedAt < gap.jumpAt() - EARLY_SLACK_MS || startedAt >= fireAt) {
       return false;
     }
-    long after = utcOffset(fireAt, cron);
-    long before = utcOffset(fireAt - lookback, cron);
-    long gap = after - before;
-    if (gap <= 0) {
-      return false;
-    }
-    // Find the jump: the first minute in the window with the later offset.
-    long lo = fireAt - lookback;
-    long hi = fireAt;
-    while (hi - lo > 60_000) {
-      long mid = lo + (hi - lo) / 2;
-      if (utcOffset(mid, cron) == after) {
-        hi = mid;
-      } else {
-        lo = mid;
-      }
-    }
-    long jumpAt = Math.floorDiv(hi, 60_000L) * 60_000L;
-    if (fireAt - jumpAt >= gap || startedAt < jumpAt - EARLY_SLACK_MS || startedAt >= fireAt) {
-      return false;
-    }
-    // Only the first fire after the jump can be a moved one; a cron that also fires at the jump
-    // (every 10 minutes, say) was not moved at all.
-    Long first = fireAfter(cron, jumpAt - 1);
-    return first != null && first == fireAt;
+    Cron wall = wallCron(parsed);
+    return wallFires(wall, fireAt + gap.beforeMs())
+        && !wallFires(wall, fireAt + gap.beforeMs() + gap.gapMs());
+  }
+
+  /** Whether the pattern read in UTC fires at exactly {@code at}. */
+  private static boolean wallFires(Cron wall, long at) {
+    List<Long> next = runsAfter(wall, 1, at - 1);
+    return !next.isEmpty() && next.get(0) == at;
   }
 
   /** The milliseconds the zone's wall clock is ahead of UTC at {@code at}. */
