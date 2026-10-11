@@ -114,14 +114,182 @@ func alertKey(a Alert) string {
 	return string(a.Type) + "|" + at + "|" + id
 }
 
-// queueUndelivered adds alerts to the undelivered queue: one with the same
-// key as a queued alert replaces it where it stands, the rest go at the
-// end, and only the newest maxUndelivered stay. It returns how many went.
+// heldTextCap is how much of a held alert's run error and output is kept:
+// 2048 UTF-16 code units of each.
+const heldTextCap = 2048
+
+// heldTextSlack is how far past its cap a held text may run and still be
+// kept whole: longer than any marker, so a text trimmed once (its kept part
+// and its marker) is never trimmed again, and the count in its marker
+// stays true.
+const heldTextSlack = 64
+
+// heldMessageCap is how much of a held alert's message is kept: its first
+// 4096 UTF-16 code units.
+const heldMessageCap = 4096
+
+// heldRun is a run as an alert held in a job's state keeps it (Sending and
+// Undelivered), so the state stays small however much a run logged. Its
+// error keeps its first heldTextCap units and its output its last, each cut
+// so as not to split a surrogate pair, with a line saying how many units
+// were left out: "<head>\n[N more characters trimmed]" and "[N earlier
+// characters trimmed]\n<tail>". A text of at most heldTextCap +
+// heldTextSlack units is kept as it is, and so is every other field. The
+// first send of an alert uses the alert as composed; only a retry reads the
+// held copy.
+func heldRun(run Run) Run {
+	out := run.clone()
+	if run.Error != nil && js.Length16(*run.Error) > heldTextCap+heldTextSlack {
+		out.Error = ptr(keepHead(*run.Error, heldTextCap))
+	}
+	if run.Output != nil && js.Length16(*run.Output) > heldTextCap+heldTextSlack {
+		out.Output = ptr(keepTail(*run.Output))
+	}
+	return out
+}
+
+// keepHead is the first max units of text, one fewer when a surrogate pair
+// would be cut, and how many units went.
+func keepHead(text string, max int) string {
+	end := max
+	if pairStartsAt(text, end-1) {
+		end--
+	}
+	return js.Slice16(text, 0, end) + "\n[" + strconv.Itoa(js.Length16(text)-end) + " more characters trimmed]"
+}
+
+// keepTail is the last heldTextCap units of text, one fewer when a
+// surrogate pair would be cut, and how many units went before them.
+func keepTail(text string) string {
+	n := js.Length16(text)
+	start := n - heldTextCap
+	if pairStartsAt(text, start-1) {
+		start++
+	}
+	return "[" + strconv.Itoa(start) + " earlier characters trimmed]\n" + js.Slice16(text, start, n)
+}
+
+// pairStartsAt is whether a character of two UTF-16 units (a surrogate
+// pair) starts at unit i of text.
+func pairStartsAt(text string, i int) bool {
+	at := 0
+	for _, r := range text {
+		if at == i {
+			return r >= 0x10000
+		}
+		if at > i {
+			return false
+		}
+		if r >= 0x10000 {
+			at += 2
+		} else {
+			at++
+		}
+	}
+	return false
+}
+
+// heldAlert is an alert as it is held in a job's state: its run trimmed
+// (heldRun), and its message, when longer than heldMessageCap +
+// heldTextSlack units, cut to its first heldMessageCap like a run's error
+// ("<head>\n[N more characters trimmed]"). Everything else, the title and
+// owed included, as it is. The first send uses the alert as composed.
+func heldAlert(alert Alert) Alert {
+	out := alert.clone()
+	if alert.Run != nil {
+		r := heldRun(*alert.Run)
+		out.Run = &r
+	}
+	if js.Length16(alert.Message) > heldMessageCap+heldTextSlack {
+		out.Message = keepHead(alert.Message, heldMessageCap)
+	}
+	return out
+}
+
+// channelKeys is each configured channel's key, in the order configured:
+// its name, with "#2", "#3", and so on for the second and later channels of
+// the same name, so two webhooks are "webhook" and "webhook#2". A key
+// already given to an earlier channel (one named "webhook#2" itself, say)
+// is skipped for the next number up, so every key is different. A held
+// alert names the channels that still owe it by these keys.
+func channelKeys(names []string) []string {
+	seen := map[string]int{}
+	taken := map[string]bool{}
+	keys := make([]string, len(names))
+	for i, name := range names {
+		n := seen[name] + 1
+		seen[name] = n
+		key := name
+		if n != 1 {
+			key = name + "#" + strconv.Itoa(n)
+		}
+		for taken[key] {
+			n++
+			key = name + "#" + strconv.Itoa(n)
+		}
+		taken[key] = true
+		keys[i] = key
+	}
+	return keys
+}
+
+// owedChannels is the channels a held alert is still owed by, of those
+// configured now (channelKeys order): those in its owed that are still
+// configured, or every configured one when it has no owed list (an alert
+// held by a release before per-channel delivery, or one never sent). An
+// entry of owed that is not a string is ignored. None left means the alert
+// is done.
+func owedChannels(alert Alert, configured []string) []string {
+	owed, ok := alert.owed.([]any)
+	if !alert.hasOwed || !ok {
+		return append([]string{}, configured...)
+	}
+	out := []string{}
+	for _, key := range configured {
+		if slices.Contains(owed, any(key)) {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// afterSend is an alert after a send to the channels in tried, of which
+// those in failed refused it: false when none is left owing it, else the
+// alert with owed set to those that refused, in configured order.
+func afterSend(alert Alert, tried, failed []string) (Alert, bool) {
+	owed := []any{}
+	for _, key := range tried {
+		if slices.Contains(failed, key) {
+			owed = append(owed, key)
+		}
+	}
+	if len(owed) == 0 {
+		return Alert{}, false
+	}
+	out := alert.clone()
+	out.owed, out.hasOwed = owed, true
+	return out, true
+}
+
+// withoutOwed is an alert without its owed list, as a channel is given it.
+func withoutOwed(alert Alert) Alert {
+	out := alert.clone()
+	out.owed, out.hasOwed = nil, false
+	if out.read != nil && out.read.Has("owed") {
+		out.read.Delete("owed")
+	}
+	return out
+}
+
+// queueUndelivered adds alerts to the undelivered queue, each with its run
+// trimmed (heldAlert) and its owed list as given: one with the same key as
+// a queued alert replaces it where it stands, the rest go at the end, and
+// only the newest maxUndelivered stay. It returns how many went.
 func queueUndelivered(state JobState, alerts []Alert) (JobState, int) {
 	next := cloneState(state)
 	byKey := map[string]Alert{}
 	for _, a := range alerts {
-		byKey[alertKey(a)] = a
+		byKey[alertKey(a)] = heldAlert(a)
 	}
 	queue := []Alert{}
 	known := map[string]bool{}
@@ -134,8 +302,10 @@ func queueUndelivered(state JobState, alerts []Alert) (JobState, int) {
 		known[key] = true
 	}
 	for _, a := range alerts {
-		if !known[alertKey(a)] {
-			queue = append(queue, a.clone())
+		if key := alertKey(a); !known[key] {
+			// Once each, as the SDK's map of them keeps one per key.
+			known[key] = true
+			queue = append(queue, byKey[key])
 		}
 	}
 	dropped := max(0, len(queue)-maxUndelivered)
@@ -148,7 +318,10 @@ func queueUndelivered(state JobState, alerts []Alert) (JobState, int) {
 // stops part way does not lose them: into Sending, each with its lease
 // ending at until, when this process sends them, or (deferred, the
 // client's DeliverAtCheck) straight into the undelivered queue for a check
-// elsewhere. It returns how many alerts past maxUndelivered went.
+// elsewhere. Either way the copy held has its run trimmed (heldAlert) and
+// no owed list, so every configured channel owes it; the first send uses
+// the alerts as composed. It returns how many alerts past maxUndelivered
+// went.
 func holdAlerts(state JobState, alerts []Alert, until int64, deferred bool) (JobState, int) {
 	if len(alerts) == 0 {
 		return state, 0
@@ -159,7 +332,7 @@ func holdAlerts(state JobState, alerts []Alert, until int64, deferred bool) (Job
 	next := cloneState(state)
 	list := next.Sending
 	for _, a := range alerts {
-		list = append(list, SendingAlert{Until: until, Alert: a.clone()})
+		list = append(list, SendingAlert{Until: until, Alert: heldAlert(a)})
 	}
 	dropped := max(0, len(list)-maxUndelivered)
 	next.Sending = list[dropped:]
@@ -169,8 +342,9 @@ func holdAlerts(state JobState, alerts []Alert, until int64, deferred bool) (Job
 // releaseSending takes the alerts in Sending whose lease ran out by now
 // (the process sending them stopped before it recorded how the send went)
 // to the undelivered queue, where the retry sends them (with triage, which
-// is never stored with them there) or drops them as stale. An entry with no
-// alert is dropped; one with no number for until counts as run out.
+// is never stored with them there) or drops them as stale, owed by the
+// channels its owed names. An entry with no alert is dropped; one with no
+// number for until counts as run out.
 func releaseSending(state JobState, now int64) (JobState, int) {
 	var held []SendingAlert
 	var released []Alert
@@ -193,12 +367,14 @@ func releaseSending(state JobState, now int64) (JobState, int) {
 	return queueUndelivered(next, released)
 }
 
-// recordSent is how a send went. Delivered and stale alerts leave the
-// queue; failed ones replace their queued copy, so a triage made on this
-// attempt is kept, or join the queue. Every one of them leaves Sending.
-// LastAlertAt moves only on a delivery. It returns how many alerts past
-// maxUndelivered went.
-func recordSent(state JobState, delivered, failed, stale []Alert, now int64) (JobState, int) {
+// recordSent is how a send went. Delivered alerts (no channel owes them any
+// more) and stale ones leave the queue; failed ones (some channel still
+// owes them, named by their owed) replace their queued copy, so a triage
+// made on this attempt and the shrunken owed are kept, or join the queue.
+// Every one of them leaves Sending. LastAlertAt moves to now when reached
+// (some channel accepted an alert on this attempt). It returns how many
+// alerts past maxUndelivered went.
+func recordSent(state JobState, delivered, failed, stale []Alert, now int64, reached bool) (JobState, int) {
 	next := cloneState(state)
 	done := map[string]bool{}
 	sent := map[string]bool{}
@@ -225,7 +401,7 @@ func recordSent(state JobState, delivered, failed, stale []Alert, now int64) (Jo
 		}
 	}
 	next.Sending = held
-	if len(delivered) > 0 {
+	if reached {
 		next.LastAlertAt = ptr(now)
 	}
 	return queueUndelivered(next, failed)

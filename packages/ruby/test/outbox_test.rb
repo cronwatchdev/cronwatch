@@ -189,6 +189,30 @@ class OutboxTest < Minitest::Test
     assert_equal [[:failed, "Look at the disk."]], state.undelivered.map { |a| [a.type, a.triage] }
   end
 
+  # A retry goes only to the channel that refused, which is never shown the
+  # owed list; the check returns the alert it reached, without it either.
+  def test_a_retry_reaches_only_the_channel_that_refused_and_no_channel_sees_owed
+    clock = Clock.new
+    seen = []
+    down = true
+    flaky = Cronwatch::Alerts::Custom.new("flaky") do |alert|
+      seen << ["flaky", alert.to_h.key?("owed")]
+      raise "down" if down
+    end
+    steady = Cronwatch::Alerts::Custom.new("steady") { |alert| seen << ["steady", alert.to_h.key?("owed")] }
+    cw = Cronwatch.new(now: clock.to_proc, alerts: [flaky, steady], cron_secret: nil, on_error: ->(_e, _where) {})
+    assert_raises(RuntimeError) { cw.run("j") { raise "x" } }
+    assert_equal [["flaky"]], cw.store.get_state("j").undelivered.map(&:owed)
+    down = false
+    clock.advance(60_000)
+    retried = cw.check.alerts
+    assert_equal [[:failed, false]], retried.map { |alert| [alert.type, alert.owed?] }
+    # The first send went to both at once, in either order; the retry to flaky alone.
+    assert_equal [["flaky", false], ["steady", false]], seen.first(2).sort
+    assert_equal [["flaky", false]], seen.drop(2)
+    assert_empty cw.store.get_state("j").undelivered
+  end
+
   def test_a_process_that_queues_its_alerts_for_a_check_elsewhere_writes_them_with_the_state_that_opens_the_condition
     clock = Clock.new
     counting = Counting.new

@@ -77,6 +77,7 @@ type FetchHandler = (request: Request) => Promise<Response>
 type HandlerFn<T> = (job: JobContext, request: Request) => T | Promise<T>
 interface HandlerOptions
   secret?: string | null
+type HeldAlert = Alert & { owed?: Array<string> | undefined; }
 interface JobContext
   readonly name: string
   readonly runId: string
@@ -126,7 +127,7 @@ interface JobState
   silencedUntil: number | null
   lastAlertAt: number | null
   pendingRecovery?: Condition[]
-  undelivered?: Alert[]
+  undelivered?: HeldAlert[]
   sending?: SendingAlert[]
   underFloor?: string[]
   pendingRuns?: string[]
@@ -184,7 +185,7 @@ type RunOutcome = { status?: 'ok' | undefined; result?: unknown; } | { error: un
 type RunStatus = 'failed' | 'timeout' | 'running' | 'ok'
 interface SendingAlert
   until: number
-  alert: Alert
+  alert: HeldAlert
 interface Source
   name: string
   sync(host: SourceHost): Promise<void | Array<Alert>>

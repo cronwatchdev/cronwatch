@@ -512,7 +512,9 @@ class ClientTest < Minitest::Test
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2
     assert_equal [:failed], good.types, "the other channel has it"
     assert_equal ["alert channel hung"], errors
-    assert_equal [], cw.store.get_state("h").undelivered, "one channel took it: delivered"
+    state = cw.store.get_state("h")
+    assert_equal [["hung"]], state.undelivered.map(&:owed), "kept for the hung channel alone, which a later check retries"
+    refute_nil state.last_alert_at, "one channel took it"
   ensure
     gate&.push(nil)
   end

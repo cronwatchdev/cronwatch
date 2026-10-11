@@ -4,8 +4,11 @@ package cronwatch
 // normalization, silence, and which queued alerts a retry drops.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"cronwatch.dev/go/internal/js"
@@ -138,8 +141,14 @@ func TestConformanceDelivery(t *testing.T) {
 		count++
 	}
 	for i, c := range objects(f, "recordSent") {
-		s, dropped := recordSent(fixtureState(t, field(c, "state")), fixtureAlerts(t, field(c, "delivered")), fixtureAlerts(t, field(c, "failed")),
-			fixtureAlerts(t, field(c, "stale")), caseNow(c))
+		delivered := fixtureAlerts(t, field(c, "delivered"))
+		// reached, when not given, is the SDK's default: some alert delivered.
+		reached := len(delivered) > 0
+		if r, ok := field(c, "reached").(bool); ok {
+			reached = r
+		}
+		s, dropped := recordSent(fixtureState(t, field(c, "state")), delivered, fixtureAlerts(t, field(c, "failed")),
+			fixtureAlerts(t, field(c, "stale")), caseNow(c), reached)
 		sameState(t, fmt.Sprintf("recordSent %d", i), s, dropped, field(c, "result"))
 		count++
 	}
@@ -177,9 +186,154 @@ func TestConformanceDelivery(t *testing.T) {
 		sameStateKeys(fmt.Sprintf("releaseRun %d", i), s, field(c, "result"))
 		count++
 	}
+	count += heldCases(t, f)
 	if count < 48 {
 		t.Errorf("only %d delivery cases", count)
 	}
+	t.Logf("%d delivery cases", count)
+}
+
+// expand is the fixture's recipe for long text: a string, or
+// { parts: [[piece, times], ...] } joined.
+func expand(spec any) string {
+	if s, ok := spec.(string); ok {
+		return s
+	}
+	var b strings.Builder
+	parts, _ := field(spec.(*js.Object), "parts").([]any)
+	for _, p := range parts {
+		pair := p.([]any)
+		b.WriteString(strings.Repeat(pair[0].(string), int(pair[1].(float64))))
+	}
+	return b.String()
+}
+
+// digest is the fixture's form of a text: itself up to 400 UTF-16 code
+// units, else its length and the SHA-256 of its UTF-8.
+func digest(s string) any {
+	if js.Length16(s) <= 400 {
+		return js.NewObject("text", s)
+	}
+	sum := sha256.Sum256([]byte(s))
+	return js.NewObject("length", js.Length16(s), "sha256", hex.EncodeToString(sum[:]))
+}
+
+// heldDigest is a held run as the fixture writes it: its error and output
+// as digest writes text, or {value: null} for none.
+func heldDigest(run any) any {
+	o := run.(*js.Object).Clone()
+	for _, k := range []string{"error", "output"} {
+		v, _ := o.Get(k)
+		if text, ok := v.(string); ok {
+			o.Set(k, digest(text))
+		} else {
+			o.Set(k, js.NewObject("value", v))
+		}
+	}
+	return o
+}
+
+// textSpec is a fixture's text spec as the value it stands for: null, a
+// string, a {parts} recipe, or {value} for what is not a string.
+func textSpec(spec any) (any, bool) {
+	switch v := spec.(type) {
+	case nil:
+		return nil, true
+	case string:
+		return v, true
+	case *js.Object:
+		if v.Has("parts") {
+			return expand(v), true
+		}
+		x, _ := v.Get("value")
+		return x, false
+	}
+	return spec, false
+}
+
+func strings16(v any) []string {
+	out := []string{}
+	list, _ := v.([]any)
+	for _, s := range list {
+		out = append(out, s.(string))
+	}
+	return out
+}
+
+// heldCases are the held copies' trims and the per-channel bookkeeping.
+func heldCases(t *testing.T, f *js.Object) int {
+	t.Helper()
+	if int(field(f, "heldTextCap").(float64)) != heldTextCap || int(field(f, "heldTextSlack").(float64)) != heldTextSlack ||
+		int(field(f, "heldMessageCap").(float64)) != heldMessageCap {
+		t.Fatalf("held constants: %v %v %v", field(f, "heldTextCap"), field(f, "heldTextSlack"), field(f, "heldMessageCap"))
+	}
+	count := 0
+	base := func(c *js.Object) *js.Object {
+		// The fixture's run, error and output aside, is its result's.
+		return field(c, "result").(*js.Object).Clone()
+	}
+	for i, c := range objects(f, "heldRun") {
+		errorValue, errorText := textSpec(field(c, "error"))
+		outputValue, outputText := textSpec(field(c, "output"))
+		if (!errorText && errorValue != nil) || (!outputText && outputValue != nil) {
+			// A foreign row's error or output that is not a string: a Run
+			// holds only strings, so it is read as null, as it always was.
+			continue
+		}
+		o := base(c)
+		o.Set("error", errorValue)
+		o.Set("output", outputValue)
+		run := fixtureRun(t, o)
+		sameJSON(t, fmt.Sprintf("heldRun %d", i), heldDigest(heldRun(*run).JSValue()), field(c, "result"))
+		count++
+	}
+	for i, c := range objects(f, "heldAlert") {
+		in := field(c, "alert").(*js.Object).Clone()
+		if m, ok := in.Get("message"); ok {
+			text, _ := textSpec(m)
+			in.Set("message", text)
+		}
+		a, err := alertFrom(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := heldAlert(a).JSValue().(*js.Object)
+		if r, ok := got.Get("run"); ok {
+			if _, isObject := r.(*js.Object); isObject {
+				got.Set("run", heldDigest(r))
+			}
+		}
+		if m, ok := field(got, "message").(string); ok {
+			got.Set("message", digest(m))
+		}
+		sameJSON(t, fmt.Sprintf("heldAlert %d", i), sorted(got), sorted(field(c, "result")))
+		count++
+	}
+	for i, c := range objects(f, "channelKeys") {
+		sameJSON(t, fmt.Sprintf("channelKeys %d", i), channelKeys(strings16(field(c, "names"))), field(c, "keys"))
+		count++
+	}
+	for i, c := range objects(f, "owedChannels") {
+		a := fixtureAlerts(t, []any{field(c, "alert")})[0]
+		sameJSON(t, fmt.Sprintf("owedChannels %d", i), owedChannels(a, strings16(field(c, "configured"))), field(c, "owed"))
+		count++
+	}
+	for i, c := range objects(f, "afterSend") {
+		a := fixtureAlerts(t, []any{field(c, "alert")})[0]
+		left, owes := afterSend(a, strings16(field(c, "tried")), strings16(field(c, "failed")))
+		var got any
+		if owes {
+			got = sorted(left.JSValue())
+		}
+		sameJSON(t, fmt.Sprintf("afterSend %d", i), got, sorted(field(c, "result")))
+		count++
+	}
+	for i, c := range objects(f, "withoutOwed") {
+		a := fixtureAlerts(t, []any{field(c, "alert")})[0]
+		sameJSON(t, fmt.Sprintf("withoutOwed %d", i), sorted(withoutOwed(a).JSValue()), sorted(field(c, "result")))
+		count++
+	}
+	return count
 }
 
 func caseNow(c *js.Object) int64 { return int64(field(c, "now").(float64)) }

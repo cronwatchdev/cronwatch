@@ -146,15 +146,124 @@ module Cronwatch
       "#{alert.type}|#{at.is_a?(Numeric) ? JS.number(at) : at}|#{run.id if run.is_a?(Run)}"
     end
 
-    # `alerts` added to the undelivered queue: one with the same key as a
+    # How much of a held alert's run error and output is kept: 2048 UTF-16 units of each.
+    HELD_TEXT_CAP = 2048
+
+    # How far past HELD_TEXT_CAP a text may run and still be kept whole:
+    # longer than any marker, so a text trimmed once (its kept part and its
+    # marker) is never trimmed again, and the count in its marker stays true.
+    HELD_TEXT_SLACK = 64
+
+    # How much of a held alert's message is kept: its first 4096 UTF-16 units.
+    HELD_MESSAGE_CAP = 4096
+
+    # A run as an alert held in a job's state keeps it (`sending` and
+    # `undelivered`), so the state stays small however much a run logged.
+    # Its error keeps its first HELD_TEXT_CAP UTF-16 units and its output its
+    # last, each cut so as not to split a surrogate pair, with a line saying
+    # how many units were left out: "<head>\n[N more characters trimmed]" and
+    # "[N earlier characters trimmed]\n<tail>". A text of at most
+    # HELD_TEXT_CAP + HELD_TEXT_SLACK units, or that is not a String, is kept
+    # as it is, and so is every other field. The first send of an alert uses
+    # the alert as composed; only a retry reads the held copy.
+    def held_run(run)
+      error = long?(run.error, HELD_TEXT_CAP) ? keep_head(run.error, HELD_TEXT_CAP) : run.error
+      output = long?(run.output, HELD_TEXT_CAP) ? keep_tail(run.output) : run.output
+      return run if error.equal?(run.error) && output.equal?(run.output)
+
+      run.dup.tap do |held|
+        held.error = error
+        held.output = output
+      end
+    end
+
+    # An alert as it is held in state: its run trimmed (held_run), and its
+    # message, when longer than HELD_MESSAGE_CAP + HELD_TEXT_SLACK units, cut
+    # to its first HELD_MESSAGE_CAP like a run's error. Everything else, the
+    # title and `owed` included, as it is. The first send uses the alert as
+    # composed.
+    def held_alert(alert)
+      run = alert.run.is_a?(Run) ? held_run(alert.run) : alert.run
+      message = long?(alert.message, HELD_MESSAGE_CAP) ? keep_head(alert.message, HELD_MESSAGE_CAP) : alert.message
+      return alert if run.equal?(alert.run) && message.equal?(alert.message)
+
+      alert.dup.tap do |held|
+        held.run = run
+        held.message = message
+      end
+    end
+
+    def long?(text, cap)
+      text.is_a?(String) && JS.length16(text) > cap + HELD_TEXT_SLACK
+    end
+
+    # The first `cap` units, one fewer when the cut would split a pair.
+    def keep_head(text, cap)
+      head = JS.head16(text, cap)
+      "#{head}\n[#{JS.length16(text) - JS.length16(head)} more characters trimmed]"
+    end
+
+    # The last HELD_TEXT_CAP units, one fewer when the cut would split a pair.
+    def keep_tail(text)
+      tail = JS.tail16(text, HELD_TEXT_CAP)
+      "[#{JS.length16(text) - JS.length16(tail)} earlier characters trimmed]\n#{tail}"
+    end
+
+    # Each configured channel's key, in the order configured: its name, with
+    # "#2", "#3", and so on for the second and later channels of the same
+    # name, so two webhooks are "webhook" and "webhook#2". A key already
+    # given to an earlier channel (a channel named "webhook#2" itself, say)
+    # is skipped for the next number up, so every key is different. A held
+    # alert names the channels that still owe it by these keys (Alert#owed).
+    def channel_keys(names)
+      seen = Hash.new(0)
+      taken = Set.new
+      names.map do |name|
+        n = seen[name] + 1
+        seen[name] = n
+        key = n == 1 ? name : "#{name}##{n}"
+        key = "#{name}##{n += 1}" while taken.include?(key)
+        taken << key
+        key
+      end
+    end
+
+    # The channels a held alert is still owed by, of those configured now
+    # (`configured`, channel_keys order): those in its `owed` that are still
+    # configured, or every configured one when it has no `owed` list (an
+    # alert held by a release before per-channel delivery, or one never
+    # sent). An entry of `owed` that is not a String is ignored. None left
+    # means the alert is done.
+    def owed_channels(alert, configured)
+      owed = alert.owed
+      return configured.dup unless owed.is_a?(Array)
+
+      configured.select { |key| owed.include?(key) }
+    end
+
+    # An alert after a send to the channels in `tried`, of which those in
+    # `failed` refused it: nil when none is left owing it, else the alert
+    # with `owed` set to those that refused, in configured order.
+    def after_send(alert, tried, failed)
+      owed = tried.select { |key| failed.include?(key) }
+      owed.empty? ? nil : alert.with_owed(owed)
+    end
+
+    # An alert without its `owed` list, as a channel is given it.
+    def without_owed(alert)
+      alert.owed? ? alert.with_owed(nil) : alert
+    end
+
+    # `alerts` added to the undelivered queue, each with its run trimmed
+    # (held_alert) and its `owed` list as given: one with the same key as a
     # queued alert replaces it where it stands, the rest go at the end, and
     # only the newest MAX_UNDELIVERED stay. `dropped` counts those let go.
     def queue_undelivered(state, alerts)
       following = clone_state(state)
-      by_key = alerts.to_h { |alert| [alert_key(alert), alert] }
+      by_key = alerts.to_h { |alert| [alert_key(alert), held_alert(alert)] }
       queue = following.undelivered.map { |alert| by_key.fetch(alert_key(alert), alert) }
       known = queue.to_set { |alert| alert_key(alert) }
-      queue.concat(alerts.reject { |alert| known.include?(alert_key(alert)) })
+      queue.concat(by_key.values.reject { |alert| known.include?(alert_key(alert)) })
       following.undelivered = queue.last(MAX_UNDELIVERED)
       Held.new(state: following, dropped: [0, queue.length - MAX_UNDELIVERED].max)
     end
@@ -163,14 +272,16 @@ module Cronwatch
     # their condition, before any is sent, so a process that stops part way
     # does not lose them: into `sending`, each with its lease ending at
     # `until_at`, when this process sends them, or (deliver: :check) straight
-    # into the undelivered queue for a check elsewhere. `dropped` counts
-    # alerts let go past MAX_UNDELIVERED.
+    # into the undelivered queue for a check elsewhere. Either way the copy
+    # held has its run trimmed (held_alert) and no `owed` list, so every
+    # configured channel owes it; the first send uses the alerts as composed.
+    # `dropped` counts alerts let go past MAX_UNDELIVERED.
     def hold_alerts(state, alerts, until_at, deferred)
       return Held.new(state: state, dropped: 0) if alerts.empty?
       return queue_undelivered(state, alerts) if deferred
 
       following = clone_state(state)
-      entries = (following.sending || []) + alerts.map { |alert| { "until" => until_at, "alert" => alert } }
+      entries = (following.sending || []) + alerts.map { |alert| { "until" => until_at, "alert" => held_alert(alert) } }
       following.sending = entries.last(MAX_UNDELIVERED)
       Held.new(state: following, dropped: [0, entries.length - MAX_UNDELIVERED].max)
     end
@@ -178,9 +289,9 @@ module Cronwatch
     # Alerts in `sending` whose lease ran out by `now`: the process sending
     # them stopped before it recorded how the send went. They go to the
     # undelivered queue, where the retry sends them (with triage, which is
-    # never stored with them here) or drops them as stale. An entry that is
-    # not a Hash with an alert is dropped; one without a numeric `until`
-    # counts as run out.
+    # never stored with them here) or drops them as stale, owed by the
+    # channels its `owed` names. An entry that is not a Hash with an alert is
+    # dropped; one without a numeric `until` counts as run out.
     def release_sending(state, now)
       sending = state.sending.is_a?(Array) ? state.sending : []
       lapsed, held = sending.partition { |entry| !(entry.is_a?(Hash) && entry["until"].is_a?(Numeric) && entry["until"] > now) }
@@ -191,12 +302,15 @@ module Cronwatch
       queue_undelivered(kept, lapsed.filter_map { |entry| sending_alert(entry) })
     end
 
-    # How a send went. Delivered and stale alerts leave the queue; failed
-    # ones replace their queued copy, so a triage made on this attempt is
-    # kept, or join the queue. Every one of them leaves `sending`.
-    # last_alert_at moves only on a delivery. `dropped` counts alerts let go
-    # past MAX_UNDELIVERED.
-    def record_sent(state, delivered, failed, stale, now)
+    # How a send went. Delivered alerts (no channel owes them any more) and
+    # stale ones leave the queue; failed ones (some channel still owes them,
+    # named by their `owed`) replace their queued copy, so a triage made on
+    # this attempt and the shrunken `owed` are kept, or join the queue. Every
+    # one of them leaves `sending`. last_alert_at moves to `now` when
+    # `reached` (some channel accepted an alert on this attempt; by default,
+    # when any was delivered). `dropped` counts alerts let go past
+    # MAX_UNDELIVERED.
+    def record_sent(state, delivered, failed, stale, now, reached = delivered.any?)
       following = clone_state(state)
       done = (delivered + stale).to_set { |alert| alert_key(alert) }
       following.undelivered = following.undelivered.reject { |alert| done.include?(alert_key(alert)) }
@@ -206,7 +320,7 @@ module Cronwatch
         alert && sent.include?(alert_key(alert))
       end
       following.sending = held.empty? ? nil : held
-      following.last_alert_at = now if delivered.any?
+      following.last_alert_at = now if reached
       queue_undelivered(following, failed)
     end
 

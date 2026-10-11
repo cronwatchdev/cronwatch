@@ -73,9 +73,9 @@ mod tests {
     #[test]
     fn client_json_environment_and_secrets() {
         let f = fixture("client");
-        // Every section is replayed: runIds and unknownFields by
+        // Every section is replayed: runIds, unknownFields, and outbox by
         // tests/client_fixture, these two here.
-        let known = ["generatedBy", "sdkVersion", "runIds", "unknownFields", "environment", "secrets"];
+        let known = ["generatedBy", "sdkVersion", "runIds", "unknownFields", "outbox", "environment", "secrets"];
         for key in f.keys() {
             assert!(known.contains(&key), "client.json has {key}, not replayed");
         }

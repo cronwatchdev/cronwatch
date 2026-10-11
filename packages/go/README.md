@@ -121,7 +121,7 @@ Retries follow one rule everywhere: each attempt is a run, failing attempts open
 
 ## Alerts
 
-Alerts go to the console until you give channels. `cronwatch.dev/go/alerts` has the SDK's, on `net/http` alone: Slack, Discord, a signed webhook, email through Resend, Postmark, SendGrid, Mailgun, or SES, SMS through Twilio, and Sentry, Honeybadger, Datadog, Rollbar, Bugsnag, and New Relic.
+Alerts go to the console until you give channels. `cronwatch.dev/go/alerts` has the SDK's, on `net/http` alone: Slack, Discord, a signed webhook, email through Resend, Postmark, SendGrid, Mailgun, or SES, SMS through Twilio, and Sentry, Honeybadger, Datadog, Rollbar, Bugsnag, and New Relic. Each alert goes to every channel at once; one a channel refuses is kept in the job's state and sent again at each check to the channels that refused it, and no others, until they take it (with its run's error and output trimmed to their first and last 2048 characters).
 
 ```go
 slack, err := alerts.Slack(alerts.SlackOptions{WebhookURL: os.Getenv("SLACK_WEBHOOK_URL")})

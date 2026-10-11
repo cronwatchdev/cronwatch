@@ -34,7 +34,9 @@ from ._evaluate import (
     MAX_UNDELIVERED,
     SEND_LEASE_MS,
     Evaluation,
+    after_send,
     apply_silence,
+    channel_keys,
     claim_undelivered,
     empty_state,
     has_full_baseline,
@@ -45,6 +47,7 @@ from ._evaluate import (
     on_check,
     on_run_finish,
     on_run_start,
+    owed_channels,
     record_sent,
     release_run,
     release_sending,
@@ -54,6 +57,7 @@ from ._evaluate import (
     summarize,
     timeout_ms,
     unevaluable_summary,
+    without_owed,
 )
 from ._format import compose_alert
 from ._job import AbortSignal, JobContext, RunRecorder, _current
@@ -772,8 +776,9 @@ class Cronwatch:
 
     def check(self) -> CheckResult:
         """Look for missed and stuck runs across every job, send alerts, retry
-        alerts no channel accepted, and prune old runs. Call it from start_checking(), a
-        scheduled task, or by hand. Concurrent calls share one check."""
+        alerts to the channels that refused them, and prune old runs. Call it
+        from start_checking(), a scheduled task, or by hand. Concurrent calls
+        share one check."""
         self._after_fork_check()
         with self._check_lock:
             flight = self._checking
@@ -1749,22 +1754,31 @@ class Cronwatch:
             return alerts
         delivered: list[Alert] = []
         failed: list[Alert] = []
+        reached = False
         for alert in alerts:
             if self.triage is not None and alert.type != AlertType.RECOVERED:
                 self._add_triage(alert, self._triage_timeout_ms)
-            (delivered if self._deliver(alert) else failed).append(alert)
-        self._record_delivery(name, delivered, failed, [], at)
+            # The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+            left, took = self._deliver(alert)
+            reached = reached or took
+            if left is None:
+                delivered.append(alert)
+            else:
+                failed.append(left)
+        self._record_delivery(name, delivered, failed, [], at, reached)
         return alerts
 
     def _retry_undelivered(self, name: str, state: JobState, at: int, budget: list[float]) -> list[Alert]:
-        """Send the alerts that no channel accepted last time, once each, oldest
-        first. They are claimed first (claim_undelivered): moved into
-        `sending` with a lease, in one conditional write, so when several
-        processes check at once only the one whose write lands sends them. An
-        alert that no longer describes the job (stale_alert) is dropped
-        instead. Retries across a check share RETRY_BUDGET_MS of wall-clock
-        time; claimed alerts it has no time left for go back to the queue for
-        the next check."""
+        """Send the alerts some channel refused last time, once each, oldest
+        first, to the channels that still owe them (their `owed`) and no
+        others, from the copy held in state, its run trimmed (held_run). They
+        are claimed first (claim_undelivered): moved into `sending` with a
+        lease, in one conditional write, so when several processes check at
+        once only the one whose write lands sends them. An alert that no
+        longer describes the job (stale_alert) is dropped instead. Retries
+        across a check share RETRY_BUDGET_MS of wall-clock time; claimed
+        alerts it has no time left for go back to the queue for the next
+        check. Returns the alerts some channel took on this attempt."""
         if not state.undelivered or self._defer_delivery:
             return []
 
@@ -1781,6 +1795,7 @@ class Cronwatch:
             return []
         delivered: list[Alert] = []
         failed: list[Alert] = []
+        sent: list[Alert] = []
         for alert in claimed:
             left = self._retry_budget_ms - budget[0]
             if left <= 0:
@@ -1792,20 +1807,28 @@ class Cronwatch:
             # triaged. One that was tried (triage: null) is not tried again.
             if self.triage is not None and alert.type != AlertType.RECOVERED and not alert.triage_tried:
                 self._add_triage(alert, min(self._triage_timeout_ms, left))
-            (delivered if self._deliver(alert) else failed).append(alert)
+            left_owing, took = self._deliver(alert)
+            if took:
+                sent.append(without_owed(alert))
+            if left_owing is None:
+                delivered.append(alert)
+            else:
+                failed.append(left_owing)
             budget[0] += max(0.0, (time.monotonic() - started) * 1000)
-        self._record_delivery(name, delivered, failed, [], at)
-        return delivered
+        self._record_delivery(name, delivered, failed, [], at, bool(sent))
+        return sent
 
-    def _record_delivery(self, name: str, delivered: list[Alert], failed: list[Alert], dropped: list[Alert], at: int) -> None:
+    def _record_delivery(self, name: str, delivered: list[Alert], failed: list[Alert], dropped: list[Alert], at: int, reached: bool) -> None:
         """Mark delivered alerts done, drop stale ones, and keep failed ones for
         the next check, taking them all out of `sending` (record_sent). A
         failed alert replaces its stored copy, so a triage made on this attempt
-        is kept. last_alert_at moves only on a delivery. When this write fails,
-        alerts still in `sending` are retried once their lease runs out."""
+        and the channels that still owe it are kept. last_alert_at moves when
+        `reached`, some channel accepted an alert on this attempt. When this
+        write fails, alerts still in `sending` are retried once their lease
+        runs out."""
 
         def change(previous: JobState) -> tuple[JobState, int]:
-            sent = record_sent(normalize_state(previous, name), delivered, failed, dropped, at)
+            sent = record_sent(normalize_state(previous, name), delivered, failed, dropped, at, reached)
             return sent.state, sent.dropped
 
         try:
@@ -1814,18 +1837,32 @@ class Cronwatch:
         except Exception as error:
             self._report(error, f"recording alert delivery for {name}")
 
-    def _deliver(self, alert: Alert) -> bool:
-        """Send to every channel at once, each in a thread of its own with its own
-        timeout. True when at least one accepted it, or there are none. A
+    def _deliver(self, alert: Alert) -> tuple[Alert | None, bool]:
+        """Send to every channel that still owes the alert (owed_channels: all
+        of them for an alert not sent before), at once, each in a thread of
+        its own with its own timeout, each failure reported under its
+        channel's name. Returns (left, reached): `left` is the alert with
+        `owed` cut to the channels that refused it, or None when none did (or
+        none is left to owe it); `reached` is whether any channel accepted it.
+        With no channels at all it counts as delivered, as it always has. A
         channel that times out is left to finish on its own, and nothing more
-        is sent to it until it has: meanwhile its alerts count as not delivered
-        there, to be retried by a later check. So a hung channel holds one
-        thread, not one per alert."""
+        is sent to it until it has: meanwhile its alerts count as refused
+        there, to be retried to it by a later check. So a hung channel holds
+        one thread, not one per alert."""
         if not self.alerts:
-            return True
+            return None, True
+        keys = channel_keys([_channel_name(channel) for channel in self.alerts])
+        owed = owed_channels(alert, keys)
+        if not owed:
+            return None, False
+        plain = without_owed(alert)
         outcomes: list[Any] = [None] * len(self.alerts)
         threads: list[threading.Thread | None] = []
         for i, channel in enumerate(self.alerts):
+            if keys[i] not in owed:
+                outcomes[i] = True
+                threads.append(None)
+                continue
             with self._sending_lock:
                 abandoned = self._abandoned.get(i)
                 busy = abandoned is not None and abandoned.is_alive()
@@ -1838,7 +1875,7 @@ class Cronwatch:
                 try:
                     name = _channel_name(channel)
                     context = ChannelContext(lambda error: self._report(error, f"alert channel {name}"))
-                    _send_to(channel, alert, context)
+                    _send_to(channel, plain, context)
                     outcomes[i] = True
                 except BaseException as error:  # a channel's failure is reported, never raised
                     outcomes[i] = error
@@ -1859,10 +1896,12 @@ class Cronwatch:
                 results.append(ChannelTimeout(f"timed out after {_js.number(self._channel_timeout_ms)}ms"))
             else:
                 results.append(outcomes[i])
+        failed: list[str] = []
         for i, result in enumerate(results):
-            if result is not True:
+            if keys[i] in owed and result is not True:
+                failed.append(keys[i])
                 self._report(result if isinstance(result, BaseException) else RuntimeError(str(result)), f"alert channel {_channel_name(self.alerts[i])}")
-        return any(result is True for result in results)
+        return after_send(alert, owed, failed), len(failed) < len(owed)
 
     def _add_triage(self, alert: Alert, timeout: float) -> None:
         """Sets the alert's triage to the diagnosis, or to None (JSON null) when

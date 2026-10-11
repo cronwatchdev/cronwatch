@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Cronwatch.Internal;
 
 namespace Cronwatch;
@@ -38,6 +39,16 @@ public sealed record Alert
 
     /// <summary>When it was raised.</summary>
     public required long At { get; init; }
+
+    /// <summary>
+    /// On an alert a job's state holds (<see cref="JobState.Undelivered"/>,
+    /// <see cref="JobState.Sending"/>): the keys of the channels that have not yet accepted it,
+    /// in the order configured, each a channel's name with <c>#2</c>, <c>#3</c>, and so on for
+    /// the second and later channels of the same name. Null when every configured channel owes
+    /// it: an alert not sent yet, or held by a release before per-channel delivery. A channel
+    /// given the alert never sees it.
+    /// </summary>
+    public ValueList<string>? Owed { get; internal init; }
 
     /// <summary>Keys of the stored alert this release does not know, as JSON, written back after its own.</summary>
     internal string? Unknown { get; init; }
@@ -135,9 +146,29 @@ public sealed record Alert
             At = Values.Integer(o, "at"),
             Unknown = Values.Unknown(o, Keys),
             RunUnknown = runUnknown,
+            Owed = o.Get("owed") is List<object?> owed ? ValueList<string>.Of(owed.OfType<string>()) : null,
             Read = o.Copy(),
             Damaged = damaged,
         };
+    }
+
+    /// <summary>A copy with <c>owed</c> set to <paramref name="owed"/>, or taken out when null, every other key where it stands.</summary>
+    internal Alert WithOwed(IReadOnlyList<string>? owed)
+    {
+        JsObject v = ToValue();
+        if (owed == null)
+        {
+            if (!v.Has("owed"))
+            {
+                return this;
+            }
+            v.Remove("owed");
+        }
+        else
+        {
+            v.Set("owed", owed.Select(k => (object?)k).ToList());
+        }
+        return FromValue(v);
     }
 }
 

@@ -12,6 +12,7 @@ import type {
   AlertDraft,
   BudgetBreach,
   Condition,
+  HeldAlert,
   JobDefinition,
   JobHealth,
   JobState,
@@ -149,22 +150,141 @@ export function alertKey(alert: Pick<Alert, "type" | "at" | "run">): string {
   return `${alert.type}|${alert.at}|${alert.run?.id ?? ""}`;
 }
 
+/** How much of a held alert's run error and output is kept: 2048 UTF-16 units of each. */
+export const HELD_TEXT_CAP = 2048;
+
+/**
+ * How far past HELD_TEXT_CAP a text may run and still be kept whole: longer
+ * than any marker, so a text trimmed once (its kept part and its marker) is
+ * never trimmed again, and the count in its marker stays true.
+ */
+export const HELD_TEXT_SLACK = 64;
+
+/**
+ * A run as an alert held in a job's state keeps it (`sending` and
+ * `undelivered`), so the state stays small however much a run logged. Its
+ * error keeps its first HELD_TEXT_CAP units and its output its last, each
+ * cut so as not to split a surrogate pair, with a line saying how many
+ * units were left out: "<head>\n[N more characters trimmed]" and
+ * "[N earlier characters trimmed]\n<tail>". A text of at most
+ * HELD_TEXT_CAP + HELD_TEXT_SLACK units, or that is not a string, is kept
+ * as it is, and so is every other field. The first send of an alert uses
+ * the alert as composed; only a retry reads the held copy.
+ */
+export function heldRun(run: Run): Run {
+  const error = typeof run.error === "string" && run.error.length > HELD_TEXT_CAP + HELD_TEXT_SLACK ? keepHead(run.error) : run.error;
+  const output = typeof run.output === "string" && run.output.length > HELD_TEXT_CAP + HELD_TEXT_SLACK ? keepTail(run.output) : run.output;
+  return error === run.error && output === run.output ? run : { ...run, error, output };
+}
+
+/** How much of a held alert's message is kept: its first 4096 UTF-16 units. */
+export const HELD_MESSAGE_CAP = 4096;
+
+function keepHead(text: string, cap = HELD_TEXT_CAP): string {
+  let end = cap;
+  if (isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;
+  return `${text.slice(0, end)}\n[${text.length - end} more characters trimmed]`;
+}
+
+function keepTail(text: string): string {
+  let start = text.length - HELD_TEXT_CAP;
+  if (isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) start += 1;
+  return `[${start} earlier characters trimmed]\n${text.slice(start)}`;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/**
+ * An alert as it is held in state: its run trimmed (heldRun), and its
+ * message, when longer than HELD_MESSAGE_CAP + HELD_TEXT_SLACK units, cut to
+ * its first HELD_MESSAGE_CAP like a run's error ("<head>\n[N more characters
+ * trimmed]"). Everything else, the title included, as it is. The first send
+ * uses the alert as composed.
+ */
+export function heldAlert<T extends HeldAlert>(alert: T): T {
+  const run: unknown = alert.run;
+  const trimmedRun = isObject(run) ? heldRun(run as unknown as Run) : run;
+  const message: unknown = alert.message;
+  const trimmedMessage = typeof message === "string" && message.length > HELD_MESSAGE_CAP + HELD_TEXT_SLACK ? keepHead(message, HELD_MESSAGE_CAP) : message;
+  if (trimmedRun === run && trimmedMessage === message) return alert;
+  return { ...alert, run: trimmedRun, message: trimmedMessage } as T;
+}
+
+/**
+ * Each configured channel's key, in the order configured: its name, with
+ * "#2", "#3", and so on for the second and later channels of the same name,
+ * so two webhooks are "webhook" and "webhook#2". A key already given to an
+ * earlier channel (a channel named "webhook#2" itself, say) is skipped for
+ * the next number up, so every key is different. A held alert names the
+ * channels that still owe it by these keys (HeldAlert.owed).
+ */
+export function channelKeys(names: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  const taken = new Set<string>();
+  return names.map((name) => {
+    let n = (seen.get(name) ?? 0) + 1;
+    seen.set(name, n);
+    let key = n === 1 ? name : `${name}#${n}`;
+    while (taken.has(key)) key = `${name}#${++n}`;
+    taken.add(key);
+    return key;
+  });
+}
+
+/**
+ * The channels a held alert is still owed by, of those configured now
+ * (`configured`, channelKeys order): those in its `owed` that are still
+ * configured, or every configured one when it has no `owed` list (an alert
+ * held by a release before per-channel delivery, or one never sent). An
+ * entry of `owed` that is not a string is ignored. None left means the
+ * alert is done.
+ */
+export function owedChannels(alert: HeldAlert, configured: readonly string[]): string[] {
+  const owed: unknown = alert.owed;
+  if (!Array.isArray(owed)) return [...configured];
+  return configured.filter((key) => owed.includes(key));
+}
+
+/**
+ * An alert after a send to the channels in `tried`, of which those in
+ * `failed` refused it: null when none is left owing it, else the alert
+ * with `owed` set to those that refused, in configured order.
+ */
+export function afterSend<T extends HeldAlert>(alert: T, tried: readonly string[], failed: readonly string[]): T | null {
+  const owed = tried.filter((key) => failed.includes(key));
+  return owed.length === 0 ? null : { ...alert, owed };
+}
+
+/** An alert without its `owed` list, as a channel is given it. */
+export function withoutOwed(alert: HeldAlert): Alert {
+  if (!("owed" in alert)) return alert;
+  const { owed: _owed, ...rest } = alert;
+  return rest as Alert;
+}
+
 /** Keeps the newest `max` of `list`, and says how many went. */
 function newest<T>(list: T[], max: number): { kept: T[]; dropped: number } {
   return { kept: list.slice(-max), dropped: Math.max(0, list.length - max) };
 }
 
 /**
- * `alerts` added to the undelivered queue: one with the same key as a queued
- * alert replaces it where it stands, the rest go at the end, and only the
- * newest MAX_UNDELIVERED stay. `dropped` counts those let go.
+ * `alerts` added to the undelivered queue, each with its run trimmed
+ * (heldAlert) and its `owed` list as given: one with the same key as a
+ * queued alert replaces it where it stands, the rest go at the end, and only
+ * the newest MAX_UNDELIVERED stay. `dropped` counts those let go.
  */
-export function queueUndelivered(state: JobState, alerts: Alert[]): { state: JobState; dropped: number } {
+export function queueUndelivered(state: JobState, alerts: HeldAlert[]): { state: JobState; dropped: number } {
   const next = cloneState(state);
-  const byKey = new Map(alerts.map((alert) => [alertKey(alert), alert]));
+  const byKey = new Map(alerts.map((alert) => [alertKey(alert), heldAlert(alert)]));
   const queue = next.undelivered!.map((alert) => byKey.get(alertKey(alert)) ?? alert);
   const known = new Set(queue.map(alertKey));
-  queue.push(...alerts.filter((alert) => !known.has(alertKey(alert))));
+  queue.push(...[...byKey.values()].filter((alert) => !known.has(alertKey(alert))));
   const { kept, dropped } = newest(queue, MAX_UNDELIVERED);
   next.undelivered = kept;
   return { state: next, dropped };
@@ -175,14 +295,16 @@ export function queueUndelivered(state: JobState, alerts: Alert[]): { state: Job
  * their condition, before any is sent, so a process that stops part way does
  * not lose them: into `sending`, each with its lease ending at `until`, when
  * this process sends them, or (deliver: "check") straight into the
- * undelivered queue for a check elsewhere. `dropped` counts alerts let go
- * past MAX_UNDELIVERED.
+ * undelivered queue for a check elsewhere. Either way the copy held has its
+ * run trimmed (heldAlert) and no `owed` list, so every configured channel
+ * owes it; the first send uses the alerts as composed. `dropped` counts
+ * alerts let go past MAX_UNDELIVERED.
  */
 export function holdAlerts(state: JobState, alerts: Alert[], until: number, deferred: boolean): { state: JobState; dropped: number } {
   if (alerts.length === 0) return { state, dropped: 0 };
   if (deferred) return queueUndelivered(state, alerts);
   const next = cloneState(state);
-  const { kept, dropped } = newest([...(next.sending ?? []), ...alerts.map((alert) => ({ until, alert }))], MAX_UNDELIVERED);
+  const { kept, dropped } = newest([...(next.sending ?? []), ...alerts.map((alert) => ({ until, alert: heldAlert(alert) }))], MAX_UNDELIVERED);
   next.sending = kept;
   return { state: next, dropped };
 }
@@ -191,8 +313,9 @@ export function holdAlerts(state: JobState, alerts: Alert[], until: number, defe
  * Alerts in `sending` whose lease ran out by `now`: the process sending them
  * stopped before it recorded how the send went. They go to the undelivered
  * queue, where the retry sends them (with triage, which is never stored with
- * them here) or drops them as stale. An entry that is not an object with an
- * alert is dropped; one without a numeric `until` counts as run out.
+ * them here) or drops them as stale, owed by the channels its `owed` names.
+ * An entry that is not an object with an alert is dropped; one without a
+ * numeric `until` counts as run out.
  */
 export function releaseSending(state: JobState, now: number): { state: JobState; dropped: number } {
   const sending = state.sending ?? [];
@@ -206,13 +329,23 @@ export function releaseSending(state: JobState, now: number): { state: JobState;
 }
 
 /**
- * How a send went. Delivered and stale (`dropped`) alerts leave the queue;
- * failed ones replace their queued copy, so a triage made on this attempt is
- * kept, or join the queue. Every one of them leaves `sending`. lastAlertAt
- * moves only on a delivery. `dropped` in the result counts alerts let go
+ * How a send went. Delivered alerts (no channel owes them any more) and
+ * stale ones (`dropped`) leave the queue; failed ones (some channel still
+ * owes them, named by their `owed`) replace their queued copy, so a triage
+ * made on this attempt and the shrunken `owed` are kept, or join the queue.
+ * Every one of them leaves `sending`. lastAlertAt moves to `now` when
+ * `reached` (some channel accepted an alert on this attempt; by default,
+ * when any was delivered). `dropped` in the result counts alerts let go
  * past MAX_UNDELIVERED.
  */
-export function recordSent(state: JobState, delivered: Alert[], failed: Alert[], stale: Alert[], now: number): { state: JobState; dropped: number } {
+export function recordSent(
+  state: JobState,
+  delivered: HeldAlert[],
+  failed: HeldAlert[],
+  stale: HeldAlert[],
+  now: number,
+  reached: boolean = delivered.length > 0,
+): { state: JobState; dropped: number } {
   const next = cloneState(state);
   const done = new Set([...delivered, ...stale].map(alertKey));
   next.undelivered = next.undelivered!.filter((alert) => !done.has(alertKey(alert)));
@@ -220,7 +353,7 @@ export function recordSent(state: JobState, delivered: Alert[], failed: Alert[],
   const held = (next.sending ?? []).filter((entry) => !(typeof entry?.alert === "object" && entry.alert !== null && sent.has(alertKey(entry.alert))));
   if (held.length > 0) next.sending = held;
   else delete next.sending;
-  if (delivered.length > 0) next.lastAlertAt = now;
+  if (reached) next.lastAlertAt = now;
   return queueUndelivered(next, failed);
 }
 
@@ -233,7 +366,7 @@ export function recordSent(state: JobState, delivered: Alert[], failed: Alert[],
  * (staleAlert) leave the queue. While the job is silenced only recoveries
  * are claimed. The process whose write lands sends `claimed`.
  */
-export function claimUndelivered(state: JobState, now: number, until: number): { state: JobState; claimed: Alert[]; stale: Alert[] } {
+export function claimUndelivered(state: JobState, now: number, until: number): { state: JobState; claimed: HeldAlert[]; stale: HeldAlert[] } {
   const next = cloneState(state);
   const queue = next.undelivered!;
   const stale = queue.filter((alert) => staleAlert(alert, next));

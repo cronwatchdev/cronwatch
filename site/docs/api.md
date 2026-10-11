@@ -90,7 +90,7 @@ A second `finish()` on a handle, or on a run another process has finished, recor
 | Method | |
 |---|---|
 | `run(name, options?, fn)` | run without keeping a handle; declares the job on first use |
-| `check()` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune. Returns `{ checkedAt, jobs, alerts, pruned }`. Concurrent calls share one check. A job that cannot be evaluated is reported to `onError` and listed as `failing`; the rest are checked as usual |
+| `check()` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune. Returns `{ checkedAt, jobs, alerts, pruned }`. Concurrent calls share one check. A job that cannot be evaluated is reported to `onError` and listed as `failing`; the rest are checked as usual |
 | `startChecking(every = "1m")`, `stop()` | check on an interval, starting about a second after `startChecking()`. The interval is held between 5 seconds and about 24.8 days (the longest delay a timer keeps), so a shorter one checks every 5 seconds and a longer one about every 24.8 days. With `deliver: "check"`, it warns once on the console that these checks send nothing and another process must. (A job's `start()` opens a run; this starts the checks.) |
 | `routes(options?)` | the [dashboard and API](/docs/dashboard/) handlers; see [below](#routes) |
 | `jobs()` | every job's summary, without alerting |

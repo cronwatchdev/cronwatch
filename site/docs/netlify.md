@@ -75,7 +75,7 @@ export const config: Config = {
 };
 ```
 
-The check has the same 30 seconds. Sending alerts and retrying queued ones usually takes a second or two, but [triage](/docs/triage/) waits on a model for each alert, and one check spends up to 20 seconds retrying alerts no channel accepted. Leave triage off in the client this function uses, or run the check from somewhere without the limit (another host's cron calling `/cronwatch/api/check` with `CRON_SECRET` as the bearer).
+The check has the same 30 seconds. Sending alerts and retrying queued ones usually takes a second or two, but [triage](/docs/triage/) waits on a model for each alert, and one check spends up to 20 seconds retrying alerts a channel has not yet accepted. Leave triage off in the client this function uses, or run the check from somewhere without the limit (another host's cron calling `/cronwatch/api/check` with `CRON_SECRET` as the bearer).
 
 ## The dashboard
 

@@ -88,6 +88,149 @@ defmodule Cronwatch.Evaluate do
   @spec alert_key(Alert.t()) :: String.t()
   def alert_key(%Alert{} = a), do: "#{a.type}|#{JS.format_number(a.at)}|#{if a.run, do: a.run.id, else: ""}"
 
+  @held_text_cap 2048
+  @held_text_slack 64
+  @held_message_cap 4096
+
+  @doc "How much of a held alert's run error and output is kept: 2048 UTF-16 units of each."
+  @spec held_text_cap() :: pos_integer()
+  def held_text_cap, do: @held_text_cap
+
+  @doc """
+  How far past its cap a held text may run and still be kept whole: longer
+  than any marker, so a text trimmed once is never trimmed again, and the
+  count in its marker stays true.
+  """
+  @spec held_text_slack() :: pos_integer()
+  def held_text_slack, do: @held_text_slack
+
+  @doc "How much of a held alert's message is kept: its first 4096 UTF-16 units."
+  @spec held_message_cap() :: pos_integer()
+  def held_message_cap, do: @held_message_cap
+
+  @doc """
+  A run as an alert held in a job's state keeps it (`sending` and
+  `undelivered`), so the state stays small however much a run logged. Its
+  error keeps its first #{@held_text_cap} UTF-16 units and its output its
+  last, each cut so as not to split a surrogate pair, with a line saying how
+  many units were left out: `"<head>\\n[N more characters trimmed]"` and
+  `"[N earlier characters trimmed]\\n<tail>"`. A text of at most
+  #{@held_text_cap + @held_text_slack} units, or that is not a string, is
+  kept as it is, and so is every other field. The first send of an alert
+  uses the alert as composed; only a retry reads the held copy.
+  """
+  @spec held_run(Run.t()) :: Run.t()
+  def held_run(%Run{} = run) do
+    error = if long?(run.error, @held_text_cap), do: keep_head(run.error, @held_text_cap), else: run.error
+    output = if long?(run.output, @held_text_cap), do: keep_tail(run.output), else: run.output
+    %{run | error: error, output: output}
+  end
+
+  @doc """
+  An alert as it is held in state: its run trimmed (`held_run/1`), and its
+  message, when longer than #{@held_message_cap + @held_text_slack} units,
+  cut to its first #{@held_message_cap} as a run's error is. Everything
+  else, the title and `owed` included, as it is.
+  """
+  @spec held_alert(Alert.t()) :: Alert.t()
+  def held_alert(%Alert{} = a) do
+    run = if match?(%Run{}, a.run), do: held_run(a.run), else: a.run
+    message = if long?(a.message, @held_message_cap), do: keep_head(a.message, @held_message_cap), else: a.message
+    if run == a.run and message == a.message, do: a, else: %{a | run: run, message: message}
+  end
+
+  defp long?(text, cap), do: is_binary(text) and JS.len16(text) > cap + @held_text_slack
+
+  defp keep_head(text, cap) do
+    u = JS.units(text)
+    total = div(byte_size(u), 2)
+    end_at = if high_surrogate?(unit_at(u, cap - 1)), do: cap - 1, else: cap
+    JS.from_units(binary_part(u, 0, 2 * end_at)) <> "\n[#{total - end_at} more characters trimmed]"
+  end
+
+  defp keep_tail(text) do
+    u = JS.units(text)
+    total = div(byte_size(u), 2)
+    start = total - @held_text_cap
+
+    start =
+      if low_surrogate?(unit_at(u, start)) and high_surrogate?(unit_at(u, start - 1)), do: start + 1, else: start
+
+    "[#{start} earlier characters trimmed]\n" <> JS.from_units(binary_part(u, 2 * start, 2 * (total - start)))
+  end
+
+  defp unit_at(u, i), do: :binary.decode_unsigned(binary_part(u, 2 * i, 2))
+  defp high_surrogate?(code), do: code in 0xD800..0xDBFF
+  defp low_surrogate?(code), do: code in 0xDC00..0xDFFF
+
+  @doc """
+  Each configured channel's key, in the order configured: its name, with
+  `"#2"`, `"#3"`, and so on for the second and later channels of the same
+  name, so two webhooks are `"webhook"` and `"webhook#2"`. A key already
+  given to an earlier channel is skipped for the next number up, so every
+  key is different. A held alert names the channels that still owe it by
+  these keys (its `owed`).
+  """
+  @spec channel_keys([String.t()]) :: [String.t()]
+  def channel_keys(names) do
+    {keys, _} =
+      Enum.map_reduce(names, {%{}, MapSet.new()}, fn name, {seen, taken} ->
+        n = Map.get(seen, name, 0) + 1
+        key = free_key(name, n, if(n == 1, do: name, else: "#{name}##{n}"), taken)
+        {key, {Map.put(seen, name, n), MapSet.put(taken, key)}}
+      end)
+
+    keys
+  end
+
+  defp free_key(name, n, key, taken) do
+    if MapSet.member?(taken, key), do: free_key(name, n + 1, "#{name}##{n + 1}", taken), else: key
+  end
+
+  @doc """
+  The channels a held alert is still owed by, of those configured now
+  (`configured`, `channel_keys/1` order): those in its `owed` that are still
+  configured, or every configured one when it has no `owed` list (an alert
+  never sent, or held by a release before per-channel delivery). None left
+  means the alert is done.
+  """
+  @spec owed_channels(Alert.t(), [String.t()]) :: [String.t()]
+  def owed_channels(%Alert{} = a, configured) do
+    case List.keyfind(a.extra || [], "owed", 0) do
+      {_, owed} when is_list(owed) -> Enum.filter(configured, &(&1 in owed))
+      _ -> configured
+    end
+  end
+
+  @doc """
+  An alert after a send to the channels in `tried`, of which those in
+  `failed` refused it: nil when none is left owing it, else the alert with
+  `owed` set to those that refused, in configured order.
+  """
+  @spec after_send(Alert.t(), [String.t()], [String.t()]) :: Alert.t() | nil
+  def after_send(%Alert{} = a, tried, failed) do
+    case Enum.filter(tried, &(&1 in failed)) do
+      [] ->
+        nil
+
+      owed ->
+        extra = a.extra || []
+
+        extra =
+          if List.keymember?(extra, "owed", 0),
+            do: List.keyreplace(extra, "owed", 0, {"owed", owed}),
+            else: extra ++ [{"owed", owed}]
+
+        %{a | extra: extra}
+    end
+  end
+
+  @doc "An alert without its `owed` list, as a channel is given it."
+  @spec without_owed(Alert.t()) :: Alert.t()
+  def without_owed(%Alert{} = a) do
+    if List.keymember?(a.extra || [], "owed", 0), do: %{a | extra: List.keydelete(a.extra, "owed", 0)}, else: a
+  end
+
   # The newest `max` of `list`, and how many went.
   defp newest(list, max) do
     n = length(list)
@@ -95,17 +238,21 @@ defmodule Cronwatch.Evaluate do
   end
 
   @doc """
-  `alerts` added to the undelivered queue: one with the same key as a queued
-  alert replaces it where it stands, the rest go at the end, and only the
-  newest #{@max_undelivered} stay. Answers the state and how many were let go.
+  `alerts` added to the undelivered queue, each with its run trimmed
+  (`held_alert/1`) and its `owed` list as given: one with the same key as a
+  queued alert replaces it where it stands, the rest go at the end (one per
+  key, the last given), and only the newest #{@max_undelivered} stay.
+  Answers the state and how many were let go.
   """
   @spec queue_undelivered(JobState.t(), [Alert.t()]) :: {JobState.t(), non_neg_integer()}
   def queue_undelivered(%JobState{} = state, alerts) do
     next = clone(state)
-    by_key = Map.new(alerts, &{alert_key(&1), &1})
+    held = Enum.map(alerts, &held_alert/1)
+    by_key = Map.new(held, &{alert_key(&1), &1})
     queue = Enum.map(next.undelivered, &Map.get(by_key, alert_key(&1), &1))
     known = MapSet.new(queue, &alert_key/1)
-    queue = queue ++ Enum.reject(alerts, &MapSet.member?(known, alert_key(&1)))
+    order = held |> Enum.map(&alert_key/1) |> Enum.uniq()
+    queue = queue ++ for(key <- order, not MapSet.member?(known, key), do: Map.fetch!(by_key, key))
     {kept, dropped} = newest(queue, @max_undelivered)
     {%{next | undelivered: kept}, dropped}
   end
@@ -115,8 +262,10 @@ defmodule Cronwatch.Evaluate do
   their condition, before any is sent, so a process that stops part way does
   not lose them: into `sending`, each with its lease ending at `until`, when
   this process sends them, or (`deliver: :check`) straight into the
-  undelivered queue for a check elsewhere. Answers the state and how many
-  alerts were let go past #{@max_undelivered}.
+  undelivered queue for a check elsewhere. Either way the copy held has its
+  run trimmed (`held_alert/1`) and no `owed` list, so every configured
+  channel owes it; the first send uses the alerts as composed. Answers the
+  state and how many alerts were let go past #{@max_undelivered}.
   """
   @spec hold_alerts(JobState.t(), [Alert.t()], integer(), boolean()) :: {JobState.t(), non_neg_integer()}
   def hold_alerts(state, [], _until, _deferred), do: {state, 0}
@@ -124,7 +273,10 @@ defmodule Cronwatch.Evaluate do
 
   def hold_alerts(%JobState{} = state, alerts, until, false) do
     next = clone(state)
-    {kept, dropped} = newest((next.sending || []) ++ Enum.map(alerts, &JobState.sending(&1, until)), @max_undelivered)
+
+    {kept, dropped} =
+      newest((next.sending || []) ++ Enum.map(alerts, &JobState.sending(held_alert(&1), until)), @max_undelivered)
+
     {%{next | sending: kept}, dropped}
   end
 
@@ -132,7 +284,8 @@ defmodule Cronwatch.Evaluate do
   Alerts in `sending` whose lease ran out by `now`: the process sending them
   stopped before it recorded how the send went. They go to the undelivered
   queue, where the retry sends them (with triage, which is never stored with
-  them here) or drops them as stale. An entry that holds no alert is
+  them here) or drops them as stale, owed by the channels its `owed` names.
+  An entry that holds no alert is
   dropped; one without a numeric `until` counts as run out.
   """
   @spec release_sending(JobState.t(), integer()) :: {JobState.t(), non_neg_integer()}
@@ -147,15 +300,19 @@ defmodule Cronwatch.Evaluate do
   end
 
   @doc """
-  How a send went. Delivered and stale alerts leave the queue; failed ones
-  replace their queued copy, so a triage made on this attempt is kept, or
-  join the queue. Every one of them leaves `sending`. `last_alert_at` moves
-  only on a delivery. Answers the state and how many alerts were let go past
+  How a send went. Delivered alerts (no channel owes them any more) and
+  stale ones leave the queue; failed ones (some channel still owes them,
+  named by their `owed`) replace their queued copy, so a triage made on this
+  attempt and the shrunken `owed` are kept, or join the queue. Every one of
+  them leaves `sending`. `last_alert_at` moves to `now` when `reached`
+  (some channel accepted an alert on this attempt; by default, when any was
+  delivered). Answers the state and how many alerts were let go past
   #{@max_undelivered}.
   """
-  @spec record_sent(JobState.t(), [Alert.t()], [Alert.t()], [Alert.t()], integer()) ::
+  @spec record_sent(JobState.t(), [Alert.t()], [Alert.t()], [Alert.t()], integer(), boolean() | nil) ::
           {JobState.t(), non_neg_integer()}
-  def record_sent(%JobState{} = state, delivered, failed, stale, now) do
+  def record_sent(%JobState{} = state, delivered, failed, stale, now, reached \\ nil) do
+    reached = if reached == nil, do: delivered != [], else: reached
     next = clone(state)
     done = MapSet.new(delivered ++ stale, &alert_key/1)
     sent = MapSet.new(delivered ++ failed ++ stale, &alert_key/1)
@@ -170,7 +327,7 @@ defmodule Cronwatch.Evaluate do
       next
       | undelivered: Enum.reject(next.undelivered, &MapSet.member?(done, alert_key(&1))),
         sending: if(held == [], do: nil, else: held),
-        last_alert_at: if(delivered != [], do: now, else: next.last_alert_at)
+        last_alert_at: if(reached, do: now, else: next.last_alert_at)
     }
 
     queue_undelivered(next, failed)

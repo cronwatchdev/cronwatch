@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.cronwatch.Alert;
 import dev.cronwatch.Fixtures;
 import dev.cronwatch.JobState;
+import dev.cronwatch.Metrics;
 import dev.cronwatch.Run;
+import dev.cronwatch.RunStatus;
 import dev.cronwatch.StoredJob;
 import dev.cronwatch.internal.duration.Durations;
 import dev.cronwatch.internal.evaluate.Evaluate.AlertDraft;
@@ -15,6 +17,7 @@ import dev.cronwatch.json.JsObject;
 import dev.cronwatch.json.Json;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
@@ -314,6 +317,32 @@ class HealthConformanceTest {
     return out;
   }
 
+  /** A text spec of the fixture: null, a string or recipe, or {@code {value: x}}. */
+  private static @Nullable Object text(@Nullable Object spec) {
+    if (spec instanceof JsObject o && o.has("value")) {
+      return o.get("value");
+    }
+    return spec == null ? null : Fixtures.expand(spec);
+  }
+
+  /** A run's JSON with its error and output as {@code digest()} writes text. */
+  private static JsObject digestRun(JsObject run) {
+    JsObject out = run.copy();
+    for (String key : List.of("error", "output")) {
+      Object v = out.get(key);
+      out.set(key, v instanceof String t ? Fixtures.digest(t) : new JsObject().set("value", v));
+    }
+    return out;
+  }
+
+  private static List<String> strings(@Nullable Object v) {
+    List<String> out = new ArrayList<>();
+    for (Object x : (List<?>) Objects.requireNonNull(v)) {
+      out.add((String) x);
+    }
+    return out;
+  }
+
   private static JsObject queued(Evaluate.Queued q) {
     return new JsObject().set("state", q.state().toValue()).set("dropped", q.dropped());
   }
@@ -336,7 +365,16 @@ class HealthConformanceTest {
             "recordSent",
             "claimUndelivered",
             "holdRun",
-            "releaseRun"),
+            "releaseRun",
+            "heldTextCap",
+            "heldMessageCap",
+            "heldTextSlack",
+            "heldRun",
+            "heldAlert",
+            "channelKeys",
+            "owedChannels",
+            "afterSend",
+            "withoutOwed"),
         d.keys());
     Fixtures.Failures fails = new Fixtures.Failures();
     fails.same("maxUndelivered", Evaluate.MAX_UNDELIVERED, d.get("maxUndelivered"));
@@ -406,7 +444,10 @@ class HealthConformanceTest {
                       alerts(c.get("delivered")),
                       alerts(c.get("failed")),
                       alerts(c.get("stale")),
-                      Fixtures.integer(c, "now")))),
+                      Fixtures.integer(c, "now"),
+                      c.has("reached")
+                          ? Boolean.TRUE.equals(c.get("reached"))
+                          : !alerts(c.get("delivered")).isEmpty()))),
           canon(c.get("result")));
     }
     i = 0;
@@ -448,7 +489,91 @@ class HealthConformanceTest {
           canon(Evaluate.releaseRun(state(c.get("state")), Fixtures.string(c, "runId")).toValue()),
           canon(c.get("result")));
     }
-    assertTrue(cases == 56, "delivery cases: " + cases);
+    fails.same("heldTextCap", Evaluate.HELD_TEXT_CAP, d.get("heldTextCap"));
+    fails.same("heldTextSlack", Evaluate.HELD_TEXT_SLACK, d.get("heldTextSlack"));
+    fails.same("heldMessageCap", Evaluate.HELD_MESSAGE_CAP, d.get("heldMessageCap"));
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "heldRun")) {
+      cases++;
+      Object error = text(c.get("error"));
+      Object output = text(c.get("output"));
+      // A run's error and output are strings or null here (DESIGN.md): another writer's value of
+      // another type reads as null, which is kept as it is.
+      Run run =
+          new Run(
+              "rl",
+              "j",
+              RunStatus.FAILED,
+              1767605400000L,
+              1767605401500L,
+              1500L,
+              error instanceof String e ? e : null,
+              output instanceof String o ? o : null,
+              Metrics.empty(),
+              "run");
+      JsObject want = (JsObject) Objects.requireNonNull(c.get("result"));
+      if (!(error == null || error instanceof String)) {
+        want = want.copy().set("error", new JsObject().set("value", null));
+      }
+      if (!(output == null || output instanceof String)) {
+        want = want.copy().set("output", new JsObject().set("value", null));
+      }
+      fails.same("heldRun " + i++, canon(digestRun(Evaluate.heldRun(run).toValue())), canon(want));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "heldAlert")) {
+      cases++;
+      JsObject raw = Fixtures.object(c, "alert").copy();
+      raw.set("message", Fixtures.expand(raw.get("message")));
+      if (raw.has("run") && raw.get("run") != null && !(raw.get("run") instanceof JsObject)) {
+        // A queued alert whose run is not an object is let go when the state is read here
+        // (DESIGN.md), so it is never held.
+        Object v = raw;
+        org.junit.jupiter.api.Assertions.assertThrows(
+            Json.JsonException.class, () -> Alert.fromValue(v), "heldAlert " + i++);
+        continue;
+      }
+      JsObject held = Evaluate.heldAlert(Alert.fromValue(raw)).toValue();
+      if (held.get("message") instanceof String m) {
+        held.set("message", Fixtures.digest(m));
+      }
+      if (held.get("run") instanceof JsObject r) {
+        held.set("run", digestRun(r));
+      }
+      fails.same("heldAlert " + i++, canon(held), canon(c.get("result")));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "channelKeys")) {
+      cases++;
+      fails.same(
+          "channelKeys " + i++, Evaluate.channelKeys(strings(c.get("names"))), c.get("keys"));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "owedChannels")) {
+      cases++;
+      fails.same(
+          "owedChannels " + i++,
+          Evaluate.owedChannels(Alert.fromValue(c.get("alert")), strings(c.get("configured"))),
+          c.get("owed"));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "afterSend")) {
+      cases++;
+      Alert left =
+          Evaluate.afterSend(
+              Alert.fromValue(c.get("alert")), strings(c.get("tried")), strings(c.get("failed")));
+      fails.same(
+          "afterSend " + i++, canon(left == null ? null : left.toValue()), canon(c.get("result")));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(d, "withoutOwed")) {
+      cases++;
+      fails.same(
+          "withoutOwed " + i++,
+          canon(Evaluate.withoutOwed(Alert.fromValue(c.get("alert"))).toValue()),
+          canon(c.get("result")));
+    }
+    assertTrue(cases == 65 + 91, "delivery cases: " + cases);
     fails.check("health");
   }
 }

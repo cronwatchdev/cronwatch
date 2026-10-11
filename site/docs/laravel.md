@@ -147,7 +147,7 @@ Route::post('/cron/nightly', app(Cronwatch::class)
 
 ## The check
 
-A task that never ran records nothing, so something has to look. The provider schedules `cronwatch:check` every five minutes in the app's own scheduler, which is already running every minute wherever scheduled tasks work, so there is no step to add. It declares the schedule, finds missed and stuck runs, sends their alerts, retries alerts no channel accepted, and prunes old runs. `CRONWATCH_CHECK_CRON` changes how often, and `CRONWATCH_SCHEDULE_CHECK=false` leaves it out, for a crontab line of your own:
+A task that never ran records nothing, so something has to look. The provider schedules `cronwatch:check` every five minutes in the app's own scheduler, which is already running every minute wherever scheduled tasks work, so there is no step to add. It declares the schedule, finds missed and stuck runs, sends their alerts, retries alerts a channel has not yet accepted, and prunes old runs. `CRONWATCH_CHECK_CRON` changes how often, and `CRONWATCH_SCHEDULE_CHECK=false` leaves it out, for a crontab line of your own:
 
 ```
 */5 * * * *  cd /var/www/app && php artisan cronwatch:check

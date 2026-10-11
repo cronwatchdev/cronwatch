@@ -427,7 +427,7 @@ final class ConformanceTest extends TestCase
     {
         $d = self::fixture('health.json')->delivery;
         $this->assertSame(
-            ['maxUndelivered', 'sendLeaseMs', 'maxPendingRuns', 'alertKey', 'normalizeState', 'queueUndelivered', 'holdAlerts', 'releaseSending', 'recordSent', 'claimUndelivered', 'holdRun', 'releaseRun'],
+            ['maxUndelivered', 'sendLeaseMs', 'maxPendingRuns', 'alertKey', 'normalizeState', 'queueUndelivered', 'holdAlerts', 'releaseSending', 'recordSent', 'claimUndelivered', 'holdRun', 'releaseRun', 'heldTextCap', 'heldMessageCap', 'heldTextSlack', 'heldRun', 'heldAlert', 'channelKeys', 'owedChannels', 'afterSend', 'withoutOwed'],
             array_keys(get_object_vars($d)),
             'every delivery section is replayed here',
         );
@@ -444,8 +444,60 @@ final class ConformanceTest extends TestCase
         $this->eachCase($d->releaseSending, fn (\stdClass $c) => self::same($c->result, Evaluate::releaseSending(self::state($c->state), $c->now)));
         $this->eachCase($d->recordSent, fn (\stdClass $c) => self::same(
             $c->result,
-            Evaluate::recordSent(self::state($c->state), self::alerts($c->delivered), self::alerts($c->failed), self::alerts($c->stale), $c->now),
+            Evaluate::recordSent(self::state($c->state), self::alerts($c->delivered), self::alerts($c->failed), self::alerts($c->stale), $c->now, $c->reached ?? null),
         ));
+        $this->assertSame($d->heldTextCap, Evaluate::HELD_TEXT_CAP);
+        $this->assertSame($d->heldMessageCap, Evaluate::HELD_MESSAGE_CAP);
+        $this->assertSame($d->heldTextSlack, Evaluate::HELD_TEXT_SLACK);
+        $this->eachCase($d->heldRun, function (\stdClass $c): ?string {
+            // The run is the result's, with the error and output the specs give.
+            $run = clone $c->result;
+            $run->error = self::heldInput($c->error);
+            $run->output = self::heldInput($c->output);
+            return self::differs($c->result, self::heldDigest(Evaluate::heldRun($run)));
+        });
+        // As an alert read from a state: the fixture's run is kept as written, whatever its fields.
+        $this->eachCase($d->heldRun, function (\stdClass $c): ?string {
+            if (!is_string(self::heldInput($c->error) ?? '') || !is_string(self::heldInput($c->output) ?? '')) {
+                return null;
+            }
+            $run = Run::fromStored(['id' => 'rl', 'job' => 'j', 'status' => 'failed', 'error' => self::heldInput($c->error), 'output' => self::heldInput($c->output)]);
+            $held = Evaluate::heldRun($run);
+            $json = self::heldDigest((object) $held->toJson());
+            return self::differs([$c->result->error, $c->result->output], [$json->error, $json->output]);
+        });
+        $this->eachCase($d->heldAlert, function (\stdClass $c): ?string {
+            $alert = clone $c->alert;
+            $alert->message = self::expand($alert->message);
+            $held = Js::parse(Js::stringify(Evaluate::heldAlert(Alert::fromJson($alert))));
+            if ($held->run instanceof \stdClass) {
+                $held->run = self::heldDigest($held->run);
+            }
+            if (is_string($held->message)) {
+                $held->message = (object) self::digest($held->message);
+            }
+            return self::same($c->result, $held);
+        });
+        $this->eachCase($d->channelKeys, fn (\stdClass $c) => self::differs($c->keys, Evaluate::channelKeys($c->names)));
+        $this->eachCase($d->owedChannels, fn (\stdClass $c) => self::differs($c->owed, Evaluate::owedChannels(Alert::fromJson($c->alert), $c->configured)));
+        $this->eachCase($d->afterSend, fn (\stdClass $c) => self::same($c->result, Evaluate::afterSend(Alert::fromJson($c->alert), $c->tried, $c->failed)));
+        $this->eachCase($d->withoutOwed, fn (\stdClass $c) => self::same($c->result, Evaluate::withoutOwed(Alert::fromJson($c->alert))));
+    }
+
+    /** A held text's spec: null, a string, a { parts } recipe, or { value } for one that is not a string. */
+    private static function heldInput(mixed $spec): mixed
+    {
+        return $spec instanceof \stdClass && property_exists($spec, 'value') ? $spec->value : self::expand($spec);
+    }
+
+    /** A held run with its error and output as digest() writes them, or { value } when not a string. */
+    private static function heldDigest(\stdClass $run): \stdClass
+    {
+        $out = Js::parse(Js::stringify($run));
+        foreach (['error', 'output'] as $field) {
+            $out->{$field} = is_string($out->{$field} ?? null) ? (object) self::digest($out->{$field}) : (object) ['value' => $out->{$field} ?? null];
+        }
+        return $out;
     }
 
     public function testStaleAlert(): void

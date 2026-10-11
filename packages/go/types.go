@@ -510,7 +510,8 @@ type JobState struct {
 	// recovered alert the next successful run sends. Nil is a state written
 	// before the field existed (absent from the JSON).
 	PendingRecovery []Condition
-	// Alerts no channel accepted, each retried once per check. Nil is absent.
+	// Alerts some channel still owes, each retried once per check to those
+	// channels only, their runs trimmed. Nil is absent.
 	Undelivered []Alert
 	// The outbox: alerts written with the state that opened their
 	// condition, while the process that wrote them sends them. Each leaves
@@ -1002,6 +1003,13 @@ type Alert struct {
 	// a list of strings, or another whose at is not a number. It is written
 	// back as it was read until the next retry drops it.
 	malformed bool
+	// owed is an alert held in a job's state (Sending, Undelivered): the
+	// keys (channelKeys) of the channels that have not accepted it, as
+	// read, whatever its value (hasOwed). Without it every configured
+	// channel owes the alert (owedChannels). A channel is never given it
+	// (withoutOwed).
+	owed    any
+	hasOwed bool
 }
 
 func (a Alert) clone() Alert {
@@ -1015,6 +1023,7 @@ func (a Alert) clone() Alert {
 	c.read = a.read.Clone()
 	c.kept = a.kept
 	c.runRead = a.runRead.Clone()
+	c.owed = js.CloneValue(a.owed)
 	// The details' slices and pointers too, so a channel that changes what
 	// it was given changes nothing another channel or a store holds.
 	switch d := a.Details.(type) {
@@ -1067,6 +1076,9 @@ func (a Alert) JSValue() any {
 	if a.TriageTried || a.Triage != nil {
 		o.Set("triage", strOrNull(a.Triage))
 	}
+	if a.hasOwed {
+		o.Set("owed", js.CloneValue(a.owed))
+	}
 	out := keepUnknown(o, a.read, alertKeys)
 	if a.read == nil {
 		return out
@@ -1079,7 +1091,7 @@ func (a Alert) JSValue() any {
 	}
 	if a.sparse {
 		for _, k := range out.Keys() {
-			if !a.read.Has(k) && !(k == "triage" && (a.TriageTried || a.Triage != nil)) {
+			if !a.read.Has(k) && !(k == "triage" && (a.TriageTried || a.Triage != nil)) && !(k == "owed" && a.hasOwed) {
 				out.Delete(k)
 			}
 		}
@@ -1105,7 +1117,7 @@ func keptBit(key string) uint16 {
 
 // alertKeys are the keys of an alert this release writes.
 var alertKeys = map[string]bool{"type": true, "run": true, "details": true, "job": true, "definition": true,
-	"title": true, "message": true, "at": true, "triage": true}
+	"title": true, "message": true, "at": true, "triage": true, "owed": true}
 
 // detailKeys are the keys of each type's details this release writes.
 var detailKeys = map[AlertType]map[string]bool{
@@ -1233,6 +1245,9 @@ func alertFrom(v any) (Alert, error) {
 	if o.Has("triage") {
 		a.TriageTried = true
 		a.Triage = nullableStr(o, "triage")
+	}
+	if owed, has := o.Get("owed"); has {
+		a.owed, a.hasOwed = js.CloneValue(owed), true
 	}
 	// A value of another type than this release writes there is kept as
 	// it was read, so a write puts back what another writer stored.

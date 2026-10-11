@@ -258,12 +258,16 @@ defmodule Cronwatch.Conformance.CoreTest do
 
   # A delivery case's result, {state, dropped}, as the SDK writes it. The
   # fixture's alerts are in the order the script built them, so both sides
-  # go through the port's writer: the key order is the writer's, the values
-  # are compared whole.
-  defp held({%JobState{} = s, dropped}), do: %Object{pairs: [{"state", JobState.to_value(s)}, {"dropped", dropped}]}
+  # go through the port's writer, the values compared whole. A held alert
+  # laid out in another key order is written back as read until it changes,
+  # so the two sides compare with keys sorted.
+  defp held({%JobState{} = s, dropped}),
+    do: key_sorted(%Object{pairs: [{"state", JobState.to_value(s)}, {"dropped", dropped}]})
 
   defp held(%Object{} = want) do
-    %Object{pairs: [{"state", JobState.to_value(state(field(want, "state")))}, {"dropped", field(want, "dropped")}]}
+    key_sorted(%Object{
+      pairs: [{"state", JobState.to_value(state(field(want, "state")))}, {"dropped", field(want, "dropped")}]
+    })
   end
 
   defp alerts(list) do
@@ -350,7 +354,8 @@ defmodule Cronwatch.Conformance.CoreTest do
             alerts(list(c, "delivered")),
             alerts(list(c, "failed")),
             alerts(list(c, "stale")),
-            field(c, "now")
+            field(c, "now"),
+            field(c, "reached")
           )
 
         same(acc, "recordSent #{i}", held(got), held(field(c, "result")))
@@ -410,8 +415,132 @@ defmodule Cronwatch.Conformance.CoreTest do
             ~w(alertKey normalizeState queueUndelivered holdAlerts releaseSending recordSent claimUndelivered holdRun releaseRun),
           do: length(list(d, k))
 
-    assert counts == [6, 7, 5, 6, 7, 7, 10, 4, 4]
+    assert counts == [6, 7, 6, 8, 8, 11, 11, 4, 4]
     check!(fails, "health")
+  end
+
+  # A text spec: a string, or a { parts } recipe of pieces repeated and joined.
+  defp text_spec(%Object{} = o) do
+    o |> Object.get("parts") |> Enum.map_join(fn [piece, times] -> String.duplicate(piece, times) end)
+  end
+
+  defp text_spec(text), do: text
+
+  # A held text as the fixture writes it: as digest() writes a string, or { value } when not one.
+  defp held_text(text) when is_binary(text), do: digest(text)
+  defp held_text(value), do: Object.new([{"value", value}])
+
+  defp held_run_value(%Run{} = r) do
+    r |> Run.to_value() |> Object.put("error", held_text(r.error)) |> Object.put("output", held_text(r.output))
+  end
+
+  test "health.json: held alerts are trimmed, and owed by the channels that refused them" do
+    d = field(fixture("health"), "delivery")
+    assert field(d, "heldTextCap") == Evaluate.held_text_cap()
+    assert field(d, "heldTextSlack") == Evaluate.held_text_slack()
+    assert field(d, "heldMessageCap") == Evaluate.held_message_cap()
+
+    fails =
+      d
+      |> list("heldRun")
+      |> Enum.with_index()
+      |> Enum.reduce(failures(), fn {c, i}, acc ->
+        want = field(c, "result")
+        {:ok, base} = Run.from_value(want |> Object.put("error", nil) |> Object.put("output", nil))
+
+        input = fn
+          %Object{} = spec ->
+            if Object.has_key?(spec, "value"), do: Object.get(spec, "value"), else: text_spec(spec)
+
+          other ->
+            other
+        end
+
+        run = %{base | error: input.(field(c, "error")), output: input.(field(c, "output"))}
+        same(acc, "heldRun #{i}", key_sorted(held_run_value(Evaluate.held_run(run))), key_sorted(want))
+      end)
+
+    fails =
+      d
+      |> list("heldAlert")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        given = field(c, "alert")
+        given = Object.put(given, "message", text_spec(Object.get(given, "message")))
+        [alert] = alerts([given])
+        got = alert |> Evaluate.held_alert() |> Alert.to_value()
+
+        got =
+          if match?(%Object{}, Object.get(got, "run")),
+            do: Object.put(got, "run", held_digest(Object.get(got, "run"))),
+            else: got
+
+        got = Object.put(got, "message", digest(Object.get(got, "message")))
+        same(acc, "heldAlert #{i}", key_sorted(got), key_sorted(field(c, "result")))
+      end)
+
+    fails =
+      d
+      |> list("channelKeys")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        same(acc, "channelKeys #{i}", Evaluate.channel_keys(list(c, "names")), field(c, "keys"))
+      end)
+
+    fails =
+      d
+      |> list("owedChannels")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        [alert] = alerts([field(c, "alert")])
+        same(acc, "owedChannels #{i}", Evaluate.owed_channels(alert, list(c, "configured")), field(c, "owed"))
+      end)
+
+    fails =
+      d
+      |> list("afterSend")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        [alert] = alerts([field(c, "alert")])
+
+        got =
+          case Evaluate.after_send(alert, list(c, "tried"), list(c, "failed")) do
+            nil -> nil
+            a -> Alert.to_value(a)
+          end
+
+        want = if r = field(c, "result"), do: r |> List.wrap() |> alerts() |> hd() |> Alert.to_value()
+        same(acc, "afterSend #{i}", key_sorted(got), key_sorted(want))
+      end)
+
+    fails =
+      d
+      |> list("withoutOwed")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        [alert] = alerts([field(c, "alert")])
+        got = Alert.to_value(Evaluate.without_owed(alert))
+        same(acc, "withoutOwed #{i}", key_sorted(got), key_sorted(field(c, "result")))
+      end)
+
+    counts = for k <- ~w(heldRun heldAlert channelKeys owedChannels afterSend withoutOwed), do: length(list(d, k))
+    assert counts == [56, 13, 8, 8, 4, 2]
+    check!(fails, "health")
+  end
+
+  # A value with every object's keys sorted, so two compare as JSON values
+  # rather than as text.
+  defp key_sorted(%Object{pairs: pairs}),
+    do: %Object{pairs: pairs |> Enum.map(fn {k, v} -> {k, key_sorted(v)} end) |> Enum.sort_by(&elem(&1, 0))}
+
+  defp key_sorted(list) when is_list(list), do: Enum.map(list, &key_sorted/1)
+  defp key_sorted(v), do: v
+
+  # A held run object (as Alert.to_value writes it) with its error and output as the fixture writes them.
+  defp held_digest(%Object{} = run) do
+    run
+    |> Object.put("error", held_text(Object.get(run, "error")))
+    |> Object.put("output", held_text(Object.get(run, "output")))
   end
 
   test "a state holding sending reads and writes back as it was, a malformed entry included" do

@@ -34,6 +34,7 @@ export type {
   Condition,
   Duration,
   ExpectRule,
+  HeldAlert,
   JobDefinition,
   JobHealth,
   JobOptions,

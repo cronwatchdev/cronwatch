@@ -412,7 +412,7 @@ The client:
 |---|---|
 | `Job(name, options...)`, `MustJob` | declare a job and get its handle |
 | `Run(ctx, name, fn, options...)` | run without keeping a handle |
-| `Check(ctx)` | find missed and stuck runs, send alerts, retry alerts no channel accepted, prune |
+| `Check(ctx)` | find missed and stuck runs, send alerts, retry alerts a channel has not yet accepted, prune |
 | `StartChecking(every)`, `Stop()` | check in a goroutine; the interval is at least five seconds. `Start(every)`, its name before 0.11, still works and is deprecated: a job's `Start` opens a run |
 | `Jobs(ctx)`, `JobsWithRuns(ctx, limit)`, `JobSummary(ctx, name)` | summaries, without alerting |
 | `Runs(ctx, name, limit)`, `GetRun(ctx, id)` | newest first; `limit` is 1 to 500 |

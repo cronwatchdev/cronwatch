@@ -470,11 +470,17 @@ def test_delivery_constants_are_the_sdks() -> None:
     assert DELIVERY["maxUndelivered"] == _evaluate.MAX_UNDELIVERED
     assert DELIVERY["sendLeaseMs"] == _evaluate.SEND_LEASE_MS
     assert DELIVERY["maxPendingRuns"] == _evaluate.MAX_PENDING_RUNS
+    assert DELIVERY["heldTextCap"] == _evaluate.HELD_TEXT_CAP
+    assert DELIVERY["heldMessageCap"] == _evaluate.HELD_MESSAGE_CAP
+    assert DELIVERY["heldTextSlack"] == _evaluate.HELD_TEXT_SLACK
 
 
 def test_every_delivery_section_is_replayed() -> None:
-    constants = {"maxUndelivered", "sendLeaseMs", "maxPendingRuns"}
-    replayed = {"alertKey", "normalizeState", "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun"}
+    constants = {"maxUndelivered", "sendLeaseMs", "maxPendingRuns", "heldTextCap", "heldMessageCap", "heldTextSlack"}
+    replayed = {
+        "alertKey", "normalizeState", "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun",
+        "heldRun", "heldAlert", "channelKeys", "owedChannels", "afterSend", "withoutOwed",
+    }  # fmt: skip
     assert set(DELIVERY) == constants | replayed
 
 
@@ -530,7 +536,8 @@ def test_release_sending() -> None:
 def test_record_sent() -> None:
     def check(c: dict[str, Any]) -> str | None:
         lists = [[Alert.from_dict(a) for a in c[key]] for key in ("delivered", "failed", "stale")]
-        return same_delivery(c["result"], delivered(_evaluate.record_sent(JobState.from_dict(c["state"]), *lists, c["now"])))
+        reached = [c["reached"]] if "reached" in c else []
+        return same_delivery(c["result"], delivered(_evaluate.record_sent(JobState.from_dict(c["state"]), *lists, c["now"], *reached)))
 
     each_case(DELIVERY["recordSent"], check)
 
@@ -550,6 +557,66 @@ def test_hold_run() -> None:
 
 def test_release_run() -> None:
     each_case(DELIVERY["releaseRun"], lambda c: same_delivery(c["result"], _js.dumps(_evaluate.release_run(JobState.from_dict(c["state"]), c["runId"]).to_dict())))
+
+
+def held_text(spec: Any) -> Any:
+    """A held-text input: None, a string, a {"parts"} recipe, or {"value": x} for a value that is not a string."""
+    if isinstance(spec, dict) and "value" in spec:
+        return spec["value"]
+    return expand(spec)
+
+
+def held_digest(run: dict[str, Any]) -> dict[str, Any]:
+    """A held run as the fixture writes it: error and output as digest() writes text, or {"value": x}."""
+    field = lambda x: digest(x) if isinstance(x, str) else {"value": x}  # noqa: E731
+    return {**run, "error": field(run["error"]), "output": field(run["output"])}
+
+
+def alert_digest(alert: dict[str, Any]) -> dict[str, Any]:
+    out = dict(alert)
+    if isinstance(out.get("run"), dict):
+        out["run"] = held_digest(out["run"])
+    if isinstance(out.get("message"), str):
+        out["message"] = digest(out["message"])
+    return out
+
+
+def test_held_run() -> None:
+    def check(c: dict[str, Any]) -> str | None:
+        given = {**c["result"], "error": held_text(c["error"]), "output": held_text(c["output"])}
+        return differs(c["result"], held_digest(_evaluate.held_run(Run.from_dict(given)).to_dict()))
+
+    each_case(DELIVERY["heldRun"], check)
+
+
+def test_held_alert() -> None:
+    def check(c: dict[str, Any]) -> str | None:
+        given = {**c["alert"], "message": expand(c["alert"]["message"])}
+        held = _evaluate.held_alert(Alert.from_dict(given))
+        again = _evaluate.held_alert(held)
+        return same_delivery(c["result"], _js.dumps(alert_digest(held.to_dict()))) or same_delivery(c["result"], _js.dumps(alert_digest(again.to_dict())))
+
+    each_case(DELIVERY["heldAlert"], check)
+
+
+def test_channel_keys() -> None:
+    each_case(DELIVERY["channelKeys"], lambda c: differs(c["keys"], _evaluate.channel_keys(c["names"])))
+
+
+def test_owed_channels() -> None:
+    each_case(DELIVERY["owedChannels"], lambda c: differs(c["owed"], _evaluate.owed_channels(Alert.from_dict(c["alert"]), c["configured"])))
+
+
+def test_after_send() -> None:
+    def check(c: dict[str, Any]) -> str | None:
+        left = _evaluate.after_send(Alert.from_dict(c["alert"]), c["tried"], c["failed"])
+        return same_delivery(c["result"], _js.dumps(None if left is None else left.to_dict()))
+
+    each_case(DELIVERY["afterSend"], check)
+
+
+def test_without_owed() -> None:
+    each_case(DELIVERY["withoutOwed"], lambda c: same_delivery(c["result"], _js.dumps(_evaluate.without_owed(Alert.from_dict(c["alert"])).to_dict())))
 
 
 def test_stale_alert() -> None:
@@ -1161,6 +1228,102 @@ def test_client_unknown_fields(kind: str, tmp_path: Path) -> None:
 ELSEWHERE = {"triage.json"}
 
 
+@pytest.mark.parametrize("scenario", CLIENT["outbox"], ids=[s["name"] for s in CLIENT["outbox"]])
+def test_client_outbox(scenario: dict[str, Any]) -> None:
+    """Per-channel delivery through a real client on a memory store: one
+    fake channel per configured name, refusing while its key is down."""
+    clock = {"now": T0}
+    store = MemoryStore()
+    down: set[str] = set()
+    log: list[dict[str, Any]] = []
+    errors: list[str] = []
+    lock = threading.Lock()
+    names = list(scenario["channels"])
+
+    class Fake:
+        def __init__(self, name: str, key: str, position: int) -> None:
+            self.name, self.key, self.position = name, key, position
+
+        def send(self, alert: Alert, context: Any = None) -> None:
+            accepted = self.key not in down
+            run = alert.run if isinstance(alert.run, Run) else None
+            with lock:
+                log.append({
+                    "position": self.position, "order": len(log), "channel": self.key, "type": str(alert.type), "run": run.id if run else None,
+                    "accepted": accepted,
+                    "errorLength": _js.length16(run.error) if run and isinstance(run.error, str) else None,
+                    "outputLength": _js.length16(run.output) if run and isinstance(run.output, str) else None,
+                })  # fmt: skip
+            if not accepted:
+                raise RuntimeError(f"{self.key} down")
+
+    def make() -> Cronwatch:
+        keys = _evaluate.channel_keys(names)
+        return Cronwatch(
+            store=store,
+            now=lambda: clock["now"],
+            cron_secret=None,
+            alerts=[Fake(name, keys[i], i) for i, name in enumerate(names)],
+            on_error=lambda _error, where: errors.append(where),
+        )
+
+    def brief(alert: Any) -> dict[str, Any]:
+        data = alert.to_dict()
+        run = data.get("run")
+        out = {"type": data.get("type"), "run": run.get("id") if isinstance(run, dict) else None}
+        if "owed" in data:
+            out["owed"] = data["owed"]
+        return out
+
+    def snapshot() -> dict[str, Any]:
+        state = store.get_state("nightly")
+        sent = [{k: v for k, v in e.items() if k not in ("position", "order")} for e in sorted(log, key=lambda e: (e["position"], e["order"]))]
+        log.clear()
+        taken = list(errors)
+        errors.clear()
+        return {
+            "sent": sent,
+            "undelivered": [brief(a) for a in (state.undelivered or [])] if state else [],
+            "sending": [brief(e.alert) for e in (state.sending or [])] if state else [],
+            "lastAlertAt": state.last_alert_at if state else None,
+            "errors": taken,
+        }
+
+    cw = make()
+    for i, step in enumerate(scenario["steps"]):
+        op = step["op"]
+        if op in ("fail", "ok"):
+            clock["now"] = step["at"]
+            handle = cw.job("nightly").start(id=step["id"])
+            clock["now"] = step["at"] + 1000
+            if op == "fail":
+                handle.fail(expand(step["error"]) if "error" in step else "boom")
+            else:
+                handle.finish("done")
+        elif op == "check":
+            clock["now"] = step["at"]
+            cw.check()
+        elif op == "down":
+            down.update(step["channels"])
+        elif op == "up":
+            down.difference_update(step["channels"])
+        elif op == "configure":
+            cw.close()
+            names = list(step["channels"])
+            cw = make()
+        elif op == "legacy":
+            state = store.get_state("nightly")
+            assert state is not None
+            data = state.to_dict()
+            data["undelivered"] = [{k: v for k, v in a.items() if k != "owed"} for a in data["undelivered"]]
+            store.set_state(JobState.from_dict(data))
+        else:
+            raise AssertionError(f"unknown step {op}")
+        problem = differs(step["expect"], snapshot())
+        assert problem is None, f"{scenario['name']}: step {i} ({op}): {problem}"
+    cw.close()
+
+
 def test_every_fixture_is_replayed() -> None:
     replayed = {"client.json", "duration.json", "schedule.json", "evaluate.json", "format.json", "health.json", "output.json", "store.json", "channels.json", "pgcron.json"}
     assert {p.name for p in DIR.glob("*.json")} == replayed | ELSEWHERE
@@ -1171,7 +1334,7 @@ def test_every_fixture_is_replayed() -> None:
 SECTIONS = {
     "health.json": {"jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck", "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery"},
     # environment and secrets: tests/test_env.py.
-    "client.json": {"runIds", "unknownFields", "environment", "secrets"},
+    "client.json": {"runIds", "unknownFields", "environment", "secrets", "outbox"},
     # foreignRows: tests/test_foreign_rows.py (rows and check).
     "store.json": {"prune", "compareAndSetState", "updateRunIf", "foreignVersion", "nul", "foreignRows"},
     # urls is how fetch reads a URL, for ports with a URL parser of their own;

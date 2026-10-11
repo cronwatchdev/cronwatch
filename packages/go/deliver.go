@@ -1,13 +1,15 @@
 package cronwatch
 
-// Sending alerts: channels, triage, and the queue of alerts no channel
-// accepted, retried once per check (client.ts dispatch, retryUndelivered,
+// Sending alerts: channels, triage, and the queue of alerts some channel
+// refused, retried once per check to those channels (client.ts dispatch, retryUndelivered,
 // recordDelivery, deliver, addTriage).
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 )
 
@@ -16,7 +18,9 @@ type Channel interface {
 	// Name names the channel in errors ("alert channel <name>").
 	Name() string
 	// Send returns once the alert went out (to at least one recipient), or
-	// an error when it went nowhere. ctx ends after 15 seconds.
+	// an error when it went nowhere, and then the next check sends it to
+	// this channel again, and to no channel that took it. ctx ends after 15
+	// seconds.
 	Send(ctx context.Context, alert Alert, cc ChannelContext) error
 }
 
@@ -147,37 +151,44 @@ func (c *Client) reportDropped(name string, dropped int) {
 // back, onto a fresh read of the state, and the alerts leave Sending.
 // Triage is made here, never stored with the held alert: the write that
 // opens a condition cannot wait for it, and a retry triages an alert that
-// has none. With DeliverAtCheck the alerts were queued for a check
-// elsewhere instead.
+// has none. The alerts sent are the ones composed, whole runs and all; only
+// a retry reads the trimmed copy held in state. With DeliverAtCheck the
+// alerts were queued for a check elsewhere instead.
 func (c *Client) dispatch(ctx context.Context, name string, alerts []Alert, now int64) []Alert {
 	if len(alerts) == 0 || c.deferDelivery {
 		return alerts
 	}
 	sent := make([]Alert, len(alerts))
 	var delivered, failed []Alert
+	reached := false
 	for i, alert := range alerts {
 		alert = alert.clone()
 		if c.triage != nil && alert.Type != AlertRecovered {
 			c.addTriage(ctx, &alert, triageTimeout)
 		}
-		if c.deliver(ctx, alert) {
-			delivered = append(delivered, alert)
+		left, owes, took := c.deliver(ctx, alert)
+		reached = reached || took
+		if owes {
+			failed = append(failed, left)
 		} else {
-			failed = append(failed, alert)
+			delivered = append(delivered, alert)
 		}
 		sent[i] = alert
 	}
-	c.recordDelivery(ctx, name, delivered, failed, nil, now)
+	c.recordDelivery(ctx, name, delivered, failed, nil, now, reached)
 	return sent
 }
 
-// retryUndelivered sends the alerts no channel accepted last time, once
-// each, oldest first. They are claimed first (claimUndelivered): moved into
-// Sending with a lease, in one conditional write, so when several processes
-// check at once only the one whose write lands sends them. An alert that no
-// longer describes the job (staleAlert) is dropped instead. Retries across
-// a check share retryBudget of wall-clock time; claimed alerts it has no
-// time left for go back to the queue for the next check.
+// retryUndelivered sends the alerts some channel refused last time, once
+// each, oldest first, to the channels that still owe them and no others,
+// from the copy held in state, its run trimmed (heldRun). They are claimed
+// first (claimUndelivered): moved into Sending with a lease, in one
+// conditional write, so when several processes check at once only the one
+// whose write lands sends them. An alert that no longer describes the job
+// (staleAlert) is dropped instead. Retries across a check share
+// retryBudget of wall-clock time; claimed alerts it has no time left for go
+// back to the queue for the next check. It returns the alerts some channel
+// took on this attempt.
 func (c *Client) retryUndelivered(ctx context.Context, name string, state JobState, now int64, spent *time.Duration) []Alert {
 	if len(state.Undelivered) == 0 || c.deferDelivery {
 		return []Alert{}
@@ -194,10 +205,11 @@ func (c *Client) retryUndelivered(ctx context.Context, name string, state JobSta
 		return []Alert{}
 	}
 	var delivered, failed []Alert
+	took := []Alert{}
 	for _, a := range claimed {
 		left := retryBudget - *spent
 		if left <= 0 {
-			// Not tried: back to the queue as it was.
+			// Not tried: back to the queue as it was, owed and all.
 			failed = append(failed, a)
 			continue
 		}
@@ -208,29 +220,31 @@ func (c *Client) retryUndelivered(ctx context.Context, name string, state JobSta
 		if c.triage != nil && alert.Type != AlertRecovered && !alert.TriageTried {
 			c.addTriage(ctx, &alert, min(triageTimeout, left))
 		}
-		if c.deliver(ctx, alert) {
-			delivered = append(delivered, alert)
+		rest, owes, reached := c.deliver(ctx, alert)
+		if reached {
+			took = append(took, withoutOwed(alert))
+		}
+		if owes {
+			failed = append(failed, rest)
 		} else {
-			failed = append(failed, alert)
+			delivered = append(delivered, alert)
 		}
 		*spent += max(0, time.Since(started))
 	}
-	c.recordDelivery(ctx, name, delivered, failed, nil, now)
-	if delivered == nil {
-		return []Alert{}
-	}
-	return delivered
+	c.recordDelivery(ctx, name, delivered, failed, nil, now, len(took) > 0)
+	return took
 }
 
 // recordDelivery marks delivered alerts done, drops stale ones, and keeps
 // failed ones for the next check, taking them all out of Sending
 // (recordSent). A failed alert replaces its stored copy, so a triage made
-// on this attempt is kept. LastAlertAt moves only on a delivery. When this
-// write fails, alerts still in Sending are retried once their lease runs
-// out.
-func (c *Client) recordDelivery(ctx context.Context, name string, delivered, failed, stale []Alert, now int64) {
+// on this attempt and the channels that still owe it are kept. LastAlertAt
+// moves when reached, some channel accepted an alert on this attempt. When
+// this write fails, alerts still in Sending are retried once their lease
+// runs out.
+func (c *Client) recordDelivery(ctx context.Context, name string, delivered, failed, stale []Alert, now int64, reached bool) {
 	_, trimmed, err := updateState(ctx, c, name, func(previous JobState) (JobState, int, error) {
-		state, dropped := recordSent(normalizeState(&previous, name), delivered, failed, stale, now)
+		state, dropped := recordSent(normalizeState(&previous, name), delivered, failed, stale, now, reached)
 		return state, dropped, nil
 	})
 	if err != nil {
@@ -240,41 +254,67 @@ func (c *Client) recordDelivery(ctx context.Context, name string, delivered, fai
 	c.reportDropped(name, trimmed)
 }
 
-// deliver sends to every channel at once. True when at least one accepted
-// it, or there are none. A channel that has not returned from an earlier
-// send past its timeout gets nothing more until it does, so a hung channel
-// holds one goroutine rather than one per alert.
-func (c *Client) deliver(ctx context.Context, alert Alert) bool {
+// deliver sends the alert to every channel that still owes it
+// (owedChannels: all of them for an alert not sent before), at once, each
+// failure reported under its channel's name. left is the alert with owed
+// cut to the channels that refused it, when owes (some did); reached is
+// whether any channel accepted it. With no channels at all it counts as
+// delivered, as it always has. A channel that has not returned from an
+// earlier send past its timeout gets nothing more until it does, so a hung
+// channel holds one goroutine rather than one per alert.
+func (c *Client) deliver(ctx context.Context, alert Alert) (left Alert, owes, reached bool) {
 	if len(c.alerts) == 0 {
-		return true
+		return Alert{}, false, true
 	}
-	results := make(chan bool, len(c.alerts))
+	names := make([]string, len(c.alerts))
 	for i, ch := range c.alerts {
-		go func(i int, ch Channel) {
-			results <- c.sendOne(ctx, i, ch, alert)
-		}(i, ch)
+		names[i] = ch.Name()
 	}
-	ok := false
-	for range c.alerts {
-		if <-results {
-			ok = true
+	keys := channelKeys(names)
+	owed := owedChannels(alert, keys)
+	if len(owed) == 0 {
+		return Alert{}, false, false
+	}
+	plain := withoutOwed(alert)
+	// Each channel's failure is reported as soon as that channel answers,
+	// so in the order they answer; owed keeps the configured order.
+	refused := make([]bool, len(c.alerts))
+	var wg sync.WaitGroup
+	for i, ch := range c.alerts {
+		if !slices.Contains(owed, keys[i]) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := c.sendOne(ctx, i, ch, plain); err != nil {
+				refused[i] = true
+				c.report(err, "alert channel "+ch.Name())
+			}
+		}()
+	}
+	wg.Wait()
+	var failed []string
+	for i, no := range refused {
+		if no {
+			failed = append(failed, keys[i])
 		}
 	}
-	return ok
+	left, owes = afterSend(alert, owed, failed)
+	return left, owes, len(failed) < len(owed)
 }
 
-// sendOne sends one alert to one channel within channelTimeout. A channel
-// whose earlier send ran past its timeout and has still not returned is
-// skipped until it does, so a hung channel holds one goroutine rather than
-// one per alert.
-func (c *Client) sendOne(ctx context.Context, i int, ch Channel, alert Alert) bool {
+// sendOne sends one alert to one channel within channelTimeout, and says
+// why it did not go, which deliver reports at once. A channel whose earlier send
+// ran past its timeout and has still not returned is skipped until it does,
+// so a hung channel holds one goroutine rather than one per alert.
+func (c *Client) sendOne(ctx context.Context, i int, ch Channel, alert Alert) error {
 	where := "alert channel " + ch.Name()
 	c.busyMu.Lock()
 	stalled := c.channelBusy[i] > 0
 	c.busyMu.Unlock()
 	if stalled {
-		c.report(errors.New("still sending an earlier alert, past its timeout"), where)
-		return false
+		return errors.New("still sending an earlier alert, past its timeout")
 	}
 	sendCtx, cancel := context.WithTimeout(storeCtx(ctx), channelTimeout)
 	defer cancel()
@@ -303,11 +343,7 @@ func (c *Client) sendOne(ctx context.Context, i int, ch Channel, alert Alert) bo
 	defer timer.Stop()
 	select {
 	case err := <-done:
-		if err != nil {
-			c.report(err, where)
-			return false
-		}
-		return true
+		return err
 	case <-timer.C:
 		c.busyMu.Lock()
 		if !finished {
@@ -315,8 +351,7 @@ func (c *Client) sendOne(ctx context.Context, i int, ch Channel, alert Alert) bo
 			c.channelBusy[i]++
 		}
 		c.busyMu.Unlock()
-		c.report(fmt.Errorf("timed out after %dms", channelTimeout.Milliseconds()), where)
-		return false
+		return fmt.Errorf("timed out after %dms", channelTimeout.Milliseconds())
 	}
 }
 

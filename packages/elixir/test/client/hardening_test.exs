@@ -660,7 +660,9 @@ defmodule Cronwatch.HardeningTimingTest do
     assert Task.yield(pending, 0) == nil, "still waiting on the hung channel"
     Task.await(pending)
     assert wheres(errors) == ["alert channel hung"]
-    assert state(Cronwatch.Config.get(cw).store, "h").undelivered == [], "one channel took it: delivered"
+    # Held for the hung channel alone, which the next check retries.
+    assert [held] = state(Cronwatch.Config.get(cw).store, "h").undelivered
+    assert List.keyfind(held.extra, "owed", 0) == {"owed", ["hung"]}
   end
 
   test "triage is stopped when the client stops waiting for it" do

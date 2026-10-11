@@ -585,8 +585,13 @@ pub struct JobState {
     /// recovered alert the next successful run sends. `None` is a state
     /// written before the field existed (absent from the JSON).
     pub pending_recovery: Option<Vec<Condition>>,
-    /// Alerts no channel accepted, each retried once per check. `None` is
-    /// absent.
+    /// Alerts some channel still owes, each retried once per check to those
+    /// channels only (named by the `owed` list each holds, by the channels'
+    /// keys: a channel's name, with `#2`, `#3`, and so on for later ones of
+    /// the same name; without one, every channel configured now owes it).
+    /// Their runs and messages are trimmed: an error keeps its first 2048
+    /// UTF-16 units, an output its last 2048, and a message its first 4096,
+    /// each with a line saying how much was left out. `None` is absent.
     pub undelivered: Option<Vec<Alert>>,
     /// The outbox: alerts written with the state that opened their
     /// condition, while the process that wrote them sends them. Each leaves
@@ -1163,6 +1168,27 @@ impl Alert {
     /// The SDK's JSON.
     pub fn to_json(&self) -> String {
         self.to_value().to_json()
+    }
+
+    /// `owed` as stored with a held alert: the keys of the channels that
+    /// have not yet accepted it (`evaluate::owed_channels` reads it). Kept
+    /// among the fields the port does not read, so it is written back where
+    /// it stood.
+    pub(crate) fn owed(&self) -> Option<&Value> {
+        self.kept.top.iter().find(|(k, _)| k == "owed").map(|(_, v)| v)
+    }
+
+    /// Sets `owed`, in its place when the alert has one, else last.
+    pub(crate) fn set_owed(&mut self, owed: Value) {
+        match self.kept.top.iter_mut().find(|(k, _)| k == "owed") {
+            Some(entry) => entry.1 = owed,
+            None => self.kept.top.push(("owed".into(), owed)),
+        }
+    }
+
+    /// Takes `owed` off the alert.
+    pub(crate) fn take_owed(&mut self) {
+        self.kept.top.retain(|(k, _)| k != "owed");
     }
 
     /// The details as written: those of a type the port does not know as

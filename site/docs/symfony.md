@@ -135,7 +135,7 @@ cronwatch:
 */5 * * * *  cd /var/www/app && bin/console cronwatch:check
 ```
 
-`bin/console cronwatch:check` declares every schedule's jobs, finds missed and stuck runs, sends their alerts, retries alerts no channel accepted, prunes old runs, and prints `cronwatch: checked 3 jobs, sent 1 alert`; anything that goes wrong is one line on standard error and exit status 1. The check is never a job. Run one checker per store.
+`bin/console cronwatch:check` declares every schedule's jobs, finds missed and stuck runs, sends their alerts, retries alerts a channel has not yet accepted, prunes old runs, and prints `cronwatch: checked 3 jobs, sent 1 alert`; anything that goes wrong is one line on standard error and exit status 1. The check is never a job. Run one checker per store.
 
 If the worker stops, the check stops with it, and nothing inside the app can say so. Pair it with an uptime monitor for that case (see [Limits](/docs/limits/)).
 

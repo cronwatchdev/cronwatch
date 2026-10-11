@@ -118,8 +118,11 @@ export interface JobState {
    * before this field existed.
    */
   pendingRecovery?: Condition[];
-  /** Alerts that no channel accepted. Each check retries them once. */
-  undelivered?: Alert[];
+  /**
+   * Alerts some channel still owes: each check retries them once, to those
+   * channels only (HeldAlert.owed). Their runs are trimmed (heldRun).
+   */
+  undelivered?: HeldAlert[];
   /**
    * The outbox: alerts written with the state that opened their condition,
    * while the process that wrote them sends them. Each leaves once that
@@ -203,10 +206,19 @@ export type Alert = {
   [K in AlertType]: AlertBase & { type: K; details: AlertDetails[K] };
 }[AlertType];
 
+/**
+ * An alert as a job's state holds it, in `sending` or `undelivered`: its run
+ * trimmed (heldRun), and `owed`, the keys (channelKeys) of the channels that
+ * have not yet accepted it. Without `owed` (never sent yet, or held by a
+ * release before per-channel delivery) every configured channel owes it.
+ * A channel given the alert never sees `owed`.
+ */
+export type HeldAlert = Alert & { owed?: string[] };
+
 /** An alert in JobState.sending: `until` (epoch milliseconds) is when its sender's lease runs out. */
 export interface SendingAlert {
   until: number;
-  alert: Alert;
+  alert: HeldAlert;
 }
 
 /** What the client hands a channel with each alert. */

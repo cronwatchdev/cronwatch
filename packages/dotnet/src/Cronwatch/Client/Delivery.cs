@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Cronwatch.Internal;
 
 namespace Cronwatch;
 
-/// <summary>Delivery: channels, triage, and the queue of alerts no channel accepted.</summary>
+/// <summary>Delivery: channels, triage, and the queue of alerts some channel refused.</summary>
 public sealed partial class CronwatchClient
 {
     /// <summary>Alerts written with the state that opened their conditions, and how many older ones the queue let go.</summary>
@@ -66,17 +67,28 @@ public sealed partial class CronwatchClient
         var sent = new List<Alert>(alerts.Count);
         var delivered = new List<Alert>();
         var failed = new List<Alert>();
-        foreach (var held in alerts)
+        bool reached = false;
+        foreach (var composed in alerts)
         {
-            Alert alert = held;
+            Alert alert = composed;
             if (_triage != null && alert.Type != AlertType.Recovered)
             {
                 alert = await AddTriageAsync(alert, Timings.Triage).ConfigureAwait(false);
             }
-            (await DeliverAsync(alert).ConfigureAwait(false) ? delivered : failed).Add(alert);
+            // The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+            var (left, any) = await DeliverAsync(alert).ConfigureAwait(false);
+            reached |= any;
+            if (left != null)
+            {
+                failed.Add(left);
+            }
+            else
+            {
+                delivered.Add(alert);
+            }
             sent.Add(alert);
         }
-        await RecordDeliveryAsync(name, delivered, failed, [], now).ConfigureAwait(false);
+        await RecordDeliveryAsync(name, delivered, failed, [], now, reached).ConfigureAwait(false);
         return sent;
     }
 
@@ -88,11 +100,13 @@ public sealed partial class CronwatchClient
 
     /// <summary>
     /// Retries a job's queued alerts once, oldest first, within what is left of the check's
-    /// budget. They are claimed first (<see cref="Evaluate.ClaimUndelivered"/>): moved into
+    /// budget, to the channels that still owe them (<see cref="Alert.Owed"/>) and no others, from
+    /// the copy held in state, its run trimmed (<see cref="Evaluate.HeldAlert"/>). They are claimed first (<see cref="Evaluate.ClaimUndelivered"/>): moved into
     /// <c>sending</c> with a lease, in one conditional write, so when several processes check at
     /// once only the one whose write lands sends them. One that no longer describes the job is
     /// dropped instead. Claimed alerts the budget has no time left for go back to the queue for
-    /// the next check.
+    /// the next check. Answers the alerts some channel took on this attempt, without their
+    /// <c>owed</c> lists.
     /// </summary>
     internal async Task<IReadOnlyList<Alert>> RetryUndeliveredAsync(string name, JobState state, long now, RetryBudget budget)
     {
@@ -124,6 +138,7 @@ public sealed partial class CronwatchClient
         }
         var delivered = new List<Alert>();
         var failed = new List<Alert>();
+        var reached = new List<Alert>();
         foreach (var a in claimed)
         {
             TimeSpan left = Timings.RetryBudget - budget.Spent;
@@ -141,26 +156,39 @@ public sealed partial class CronwatchClient
             {
                 alert = await AddTriageAsync(alert, left < Timings.Triage ? left : Timings.Triage).ConfigureAwait(false);
             }
-            (await DeliverAsync(alert).ConfigureAwait(false) ? delivered : failed).Add(alert);
+            var (owing, any) = await DeliverAsync(alert).ConfigureAwait(false);
+            if (any)
+            {
+                reached.Add(Evaluate.WithoutOwed(alert));
+            }
+            if (owing != null)
+            {
+                failed.Add(owing);
+            }
+            else
+            {
+                delivered.Add(alert);
+            }
             budget.Spent += _time.GetElapsedTime(started);
         }
-        await RecordDeliveryAsync(name, delivered, failed, [], now).ConfigureAwait(false);
-        return delivered;
+        await RecordDeliveryAsync(name, delivered, failed, [], now, reached.Count > 0).ConfigureAwait(false);
+        return reached;
     }
 
     /// <summary>
     /// Marks delivered alerts done, drops stale ones, and keeps failed ones for the next check,
     /// taking them all out of <c>sending</c> (<see cref="Evaluate.RecordSent"/>). A failed alert
-    /// replaces its stored copy, so a triage made on this attempt is kept. <c>lastAlertAt</c>
-    /// moves only on a delivery. When this write fails, alerts still in <c>sending</c> are retried
+    /// replaces its stored copy, so a triage made on this attempt and the channels that still owe
+    /// it are kept. <c>lastAlertAt</c> moves when <paramref name="reached"/>, some channel accepted
+    /// an alert on this attempt. When this write fails, alerts still in <c>sending</c> are retried
     /// once their lease runs out.
     /// </summary>
-    private async Task RecordDeliveryAsync(string name, List<Alert> delivered, List<Alert> failed, List<Alert> dropped, long now)
+    private async Task RecordDeliveryAsync(string name, List<Alert> delivered, List<Alert> failed, List<Alert> dropped, long now, bool reached)
     {
         try
         {
             var (_, trimmed) = await UpdateStateAsync(name, previous =>
-                Evaluate.RecordSent(Evaluate.NormalizeState(previous, name), delivered, failed, dropped, now)).ConfigureAwait(false);
+                Evaluate.RecordSent(Evaluate.NormalizeState(previous, name), delivered, failed, dropped, now, reached)).ConfigureAwait(false);
             ReportDropped(name, trimmed);
         }
         catch (Exception e)
@@ -170,27 +198,51 @@ public sealed partial class CronwatchClient
     }
 
     /// <summary>
-    /// Sends the alert to every channel at once, each within its time; true when any accepted it
-    /// (or there are none).
+    /// Sends the alert to every channel that still owes it (<see cref="Evaluate.OwedChannels"/>:
+    /// all of them for an alert not sent before), at once, each within its time, each failure
+    /// reported under its channel's name. <c>Left</c> is the alert with <c>owed</c> cut to the
+    /// channels that refused it, or null when none did (or none is left to owe it);
+    /// <c>Reached</c> is whether any channel accepted it. With no channels at all it counts as
+    /// delivered.
     /// </summary>
-    internal async Task<bool> DeliverAsync(Alert alert)
+    internal async Task<(Alert? Left, bool Reached)> DeliverAsync(Alert alert)
     {
         if (_channels.Count == 0)
         {
-            return true;
+            return (null, true);
         }
-        var sends = new Task<bool>[_channels.Count];
+        var names = new List<string>(_channels.Count);
+        foreach (IChannel channel in _channels)
+        {
+            names.Add(channel.Name);
+        }
+        List<string> keys = Evaluate.ChannelKeys(names);
+        List<string> owed = Evaluate.OwedChannels(alert, keys);
+        if (owed.Count == 0)
+        {
+            return (null, false);
+        }
+        Alert plain = Evaluate.WithoutOwed(alert);
+        var sends = new List<(string Key, Task<bool> Sent)>(owed.Count);
         for (int i = 0; i < _channels.Count; i++)
         {
+            if (!owed.Contains(keys[i]))
+            {
+                continue;
+            }
             IChannel channel = _channels[i];
-            sends[i] = Spawn(() => SendOneAsync(channel, alert));
+            sends.Add((keys[i], Spawn(() => SendOneAsync(channel, plain))));
         }
-        bool ok = false;
-        foreach (bool sent in await Task.WhenAll(sends).ConfigureAwait(false))
+        await Task.WhenAll(sends.Select(s => s.Sent)).ConfigureAwait(false);
+        var failed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (key, sent) in sends)
         {
-            ok |= sent;
+            if (!await sent.ConfigureAwait(false))
+            {
+                failed.Add(key);
+            }
         }
-        return ok;
+        return (Evaluate.AfterSend(alert, owed, failed), failed.Count < owed.Count);
     }
 
     private async Task<bool> SendOneAsync(IChannel channel, Alert alert)

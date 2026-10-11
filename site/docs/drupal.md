@@ -102,7 +102,7 @@ Missed and stuck runs are found by a check. It runs at the end of every cron run
 drush cronwatch:check
 ```
 
-which declares every job, finds missed and stuck runs, sends their alerts, retries alerts no channel accepted, prunes old runs, and prints `cronwatch: checked 12 jobs, sent 0 alerts`; an error is a non-zero exit.
+which declares every job, finds missed and stuck runs, sends their alerts, retries alerts a channel has not yet accepted, prunes old runs, and prints `cronwatch: checked 12 jobs, sent 0 alerts`; an error is a non-zero exit.
 
 A check that runs at the end of cron cannot notice cron not running: when nothing starts cron (a quiet site on Automated Cron, a crontab line that broke), nothing starts the check either. So run the check from the server's crontab too, separately from cron, and prefer a system cron to Automated Cron for anything that must run on time:
 

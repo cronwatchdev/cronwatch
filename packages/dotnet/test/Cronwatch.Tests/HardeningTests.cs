@@ -161,7 +161,8 @@ public class HardeningTests
         Assert.Equal(["failed"], m.Alerts.Types());
         Assert.Equal(["alert channel hung"], m.Errors.Wheres());
         Assert.Contains("timed out after 1000ms", m.Errors.Messages()[0], StringComparison.Ordinal);
-        Assert.Empty((await State(m, "h")).Undelivered!);
+        // Held for the hung channel alone, the one that did not take it.
+        Assert.Equal(["hung"], Assert.Single((await State(m, "h")).Undelivered!).Owed!);
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
@@ -169,7 +170,7 @@ public class HardeningTests
     public async Task A_channel_that_throws_its_own_timeout_is_a_failure_of_its_own()
     {
         // Thrown before any task exists, and faulting the channel's own task: neither is the
-        // client's deadline, and neither may stop the alert being recorded as delivered.
+        // client's deadline, and neither may stop the alert being recorded as sent where it was.
         var thrown = CustomChannel.Create("thrown", (a, ctx, ct) => throw new TimeoutException("its own deadline"));
         var faulted = CustomChannel.Create("faulted", async (a, ctx, ct) =>
         {
@@ -183,7 +184,8 @@ public class HardeningTests
         Assert.DoesNotContain(m.Errors.Messages(), message => message.Contains("timed out after", StringComparison.Ordinal));
         Assert.All(m.Errors.Entries, e => Assert.IsType<TimeoutException>(e.Error));
         JobState state = await State(m, "h");
-        Assert.Empty(state.Undelivered!);
+        // Held for the two that refused it, never for the capture that took it.
+        Assert.Equal(["thrown", "faulted"], Assert.Single(state.Undelivered!).Owed!);
         Assert.True(state.Sending is not { Count: > 0 }, "an alert left in sending");
     }
 

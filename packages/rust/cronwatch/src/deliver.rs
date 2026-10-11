@@ -1,5 +1,5 @@
-//! Sending alerts: channels, triage, and the queue of alerts no channel
-//! accepted, retried once per check (client.ts dispatch, retryUndelivered,
+//! Sending alerts: channels, triage, and the queue of alerts some channel
+//! refused, retried once per check to those channels (client.ts dispatch, retryUndelivered,
 //! recordDelivery, deliver, addTriage).
 
 use std::fmt;
@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 use crate::client::Client;
 use crate::error::Error;
 use crate::evaluate::{
-    Evaluation, MAX_UNDELIVERED, SEND_LEASE_MS, claim_undelivered, hold_alerts, normalize_state, record_sent,
+    Evaluation, MAX_UNDELIVERED, SEND_LEASE_MS, after_send, channel_keys, claim_undelivered, hold_alerts,
+    normalize_state, owed_channels, record_sent, without_owed,
 };
 use crate::format::compose_alert;
 use crate::panics::panic_text;
@@ -211,18 +212,22 @@ impl Client {
             return alerts;
         }
         let (mut delivered, mut failed, mut sent) = (Vec::new(), Vec::new(), Vec::new());
+        let mut reached = false;
         for mut alert in alerts {
             if self.inner.triage.is_some() && alert.alert_type != AlertType::Recovered {
                 self.add_triage(&mut alert, TRIAGE_TIMEOUT).await;
             }
-            if self.deliver(&alert).await {
-                delivered.push(alert.clone());
-            } else {
-                failed.push(alert.clone());
+            // The alert as composed, full run and all; only a retry reads
+            // the trimmed copy held in state.
+            let (left, took) = self.deliver(&alert).await;
+            reached |= took;
+            match left {
+                Some(left) => failed.push(left),
+                None => delivered.push(alert.clone()),
             }
             sent.push(alert);
         }
-        self.record_delivery(name, &delivered, &failed, &[], now).await;
+        self.record_delivery(name, &delivered, &failed, &[], now, reached).await;
         sent
     }
 
@@ -240,14 +245,17 @@ impl Client {
         );
     }
 
-    /// Sends the alerts no channel accepted last time, once each, oldest
-    /// first. They are claimed first (`claim_undelivered`): moved into
+    /// Sends the alerts some channel refused last time, once each, oldest
+    /// first, to the channels that still owe them (`owed`) and no others,
+    /// from the copy held in state, its run trimmed (`held_run`). They are
+    /// claimed first (`claim_undelivered`): moved into
     /// `sending` with a lease, in one conditional write, so when several
     /// processes check at once only the one whose write lands sends them. An
     /// alert that no longer describes the job (`stale_alert`) is dropped
     /// instead. Retries across a check share `RETRY_BUDGET` of wall-clock
     /// time; claimed alerts it has no time left for go back to the queue for
-    /// the next check.
+    /// the next check. Returns the alerts some channel took on this
+    /// attempt.
     pub(crate) async fn retry_undelivered(
         &self,
         name: &str,
@@ -278,7 +286,7 @@ impl Client {
         if claimed.is_empty() {
             return Vec::new();
         }
-        let (mut delivered, mut failed) = (Vec::new(), Vec::new());
+        let (mut delivered, mut failed, mut sent) = (Vec::new(), Vec::new(), Vec::new());
         for a in claimed {
             let Some(left) = RETRY_BUDGET.checked_sub(*spent).filter(|l| !l.is_zero()) else {
                 // Not tried: back to the queue as it was.
@@ -292,27 +300,39 @@ impl Client {
             if self.inner.triage.is_some() && alert.alert_type != AlertType::Recovered && !alert.triage_tried {
                 self.add_triage(&mut alert, TRIAGE_TIMEOUT.min(left)).await;
             }
-            if self.deliver(&alert).await {
-                delivered.push(alert);
-            } else {
-                failed.push(alert);
+            let (left, reached) = self.deliver(&alert).await;
+            if reached {
+                sent.push(without_owed(&alert));
+            }
+            match left {
+                Some(left) => failed.push(left),
+                None => delivered.push(alert),
             }
             *spent += started.elapsed();
         }
-        self.record_delivery(name, &delivered, &failed, &[], now).await;
-        delivered
+        self.record_delivery(name, &delivered, &failed, &[], now, !sent.is_empty()).await;
+        sent
     }
 
     /// Marks delivered alerts done, drops stale ones, and keeps failed ones
     /// for the next check, taking them all out of `sending` (`record_sent`).
     /// A failed alert replaces its stored copy, so a triage made on this
-    /// attempt is kept. `last_alert_at` moves only on a delivery. When this
-    /// write fails, alerts still in `sending` are retried once their lease
-    /// runs out.
-    async fn record_delivery(&self, name: &str, delivered: &[Alert], failed: &[Alert], dropped: &[Alert], now: i64) {
+    /// attempt and the channels that still owe it are kept. `last_alert_at`
+    /// moves when `reached`, some channel accepted an alert on this attempt.
+    /// When this write fails, alerts still in `sending` are retried once
+    /// their lease runs out.
+    async fn record_delivery(
+        &self,
+        name: &str,
+        delivered: &[Alert],
+        failed: &[Alert],
+        dropped: &[Alert],
+        now: i64,
+        reached: bool,
+    ) {
         let result = self
             .update_state(name, async { Ok(()) }, |previous, _| {
-                Ok(record_sent(&normalize_state(Some(&previous), name), delivered, failed, dropped, now))
+                Ok(record_sent(&normalize_state(Some(&previous), name), delivered, failed, dropped, now, reached))
             })
             .await;
         match result {
@@ -321,20 +341,38 @@ impl Client {
         }
     }
 
-    /// Sends to every channel at once. True when at least one accepted it,
-    /// or there are none.
-    pub(crate) async fn deliver(&self, alert: &Alert) -> bool {
-        if self.inner.alerts.is_empty() {
-            return true;
+    /// Sends to every channel that still owes the alert (`owed_channels`:
+    /// all of them for an alert not sent before), at once, each failure
+    /// reported under its channel's name. Answers the alert with `owed` cut
+    /// to the channels that refused it, or None when none did (or none is
+    /// left to owe it), and whether any channel accepted it. With no
+    /// channels at all it counts as delivered.
+    pub(crate) async fn deliver(&self, alert: &Alert) -> (Option<Alert>, bool) {
+        let channels = &self.inner.alerts;
+        if channels.is_empty() {
+            return (None, true);
         }
-        let sends: Vec<_> = self.inner.alerts.iter().map(|ch| self.send_one(ch.clone(), alert.clone())).collect();
-        let mut ok = false;
-        for send in sends {
-            if send.await {
-                ok = true;
+        let names: Vec<&str> = channels.iter().map(|ch| ch.name()).collect();
+        let keys = channel_keys(&names);
+        let owed = owed_channels(alert, &keys);
+        if owed.is_empty() {
+            return (None, false);
+        }
+        let plain = without_owed(alert);
+        let sends: Vec<_> = channels
+            .iter()
+            .zip(&keys)
+            .filter(|(_, key)| owed.contains(key))
+            .map(|(ch, key)| (key.clone(), self.send_one(ch.clone(), plain.clone())))
+            .collect();
+        let mut failed = Vec::new();
+        for (key, send) in sends {
+            if !send.await {
+                failed.push(key);
             }
         }
-        ok
+        let reached = failed.len() < owed.len();
+        (after_send(alert, &owed, &failed), reached)
     }
 
     /// Starts one alert's send to one channel, in a task of its own, within

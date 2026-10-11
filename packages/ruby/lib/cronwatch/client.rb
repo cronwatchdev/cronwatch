@@ -437,9 +437,9 @@ module Cronwatch
     end
 
     # Look for missed and stuck runs across every job, send alerts, retry
-    # alerts no channel accepted, and prune old runs. Call it from start_checking, a
-    # scheduled job (Cronwatch::CheckJob), or by hand. Concurrent calls share
-    # one check.
+    # alerts to the channels that refused them, and prune old runs. Call it
+    # from start_checking, a scheduled job (Cronwatch::CheckJob), or by hand.
+    # Concurrent calls share one check.
     def check
       after_fork_check
       flight = nil
@@ -1459,11 +1459,15 @@ module Cronwatch
 
       delivered = []
       failed = []
+      reached = false
       alerts.each do |alert|
         add_triage(alert, @triage_timeout_ms) if @triage && alert.type != :recovered
-        (deliver(alert) ? delivered : failed) << alert
+        # The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+        left, took = deliver(alert)
+        reached ||= took
+        left ? failed << left : delivered << alert
       end
-      record_delivery(name, delivered, failed, [], at)
+      record_delivery(name, delivered, failed, [], at, reached)
       alerts
     end
 
@@ -1472,14 +1476,16 @@ module Cronwatch
     # @api private
     RetryBudget = Struct.new(:spent_ms)
 
-    # Send the alerts that no channel accepted last time, once each, oldest
-    # first. They are claimed first (Evaluate.claim_undelivered): moved into
-    # `sending` with a lease, in one conditional write, so when several
-    # processes check at once only the one whose write lands sends them. An
-    # alert that no longer describes the job (Evaluate.stale_alert?) is
-    # dropped instead. Retries across a check share RETRY_BUDGET_MS of
-    # wall-clock time; claimed alerts it has no time left for go back to the
-    # queue for the next check.
+    # Send the alerts some channel refused last time, once each, oldest
+    # first, to the channels that still owe them (Alert#owed) and no others,
+    # from the copy held in state, its run trimmed (Evaluate.held_run). They
+    # are claimed first (Evaluate.claim_undelivered): moved into `sending`
+    # with a lease, in one conditional write, so when several processes check
+    # at once only the one whose write lands sends them. An alert that no
+    # longer describes the job (Evaluate.stale_alert?) is dropped instead.
+    # Retries across a check share RETRY_BUDGET_MS of wall-clock time;
+    # claimed alerts it has no time left for go back to the queue for the
+    # next check. Returns the alerts some channel took on this attempt.
     def retry_undelivered(name, state, at, budget)
       return [] if (state.undelivered || []).empty? || @defer_delivery
 
@@ -1496,6 +1502,7 @@ module Cronwatch
 
       delivered = []
       failed = []
+      sent = []
       claimed.each do |alert|
         left = @retry_budget_ms - budget.spent_ms
         if left <= 0
@@ -1508,21 +1515,25 @@ module Cronwatch
         # An alert queued by a process that delivers at check time was never
         # triaged. One that was tried (triage: null) is not tried again.
         add_triage(alert, [@triage_timeout_ms, left].min) if @triage && alert.type != :recovered && !alert.triage_tried?
-        (deliver(alert) ? delivered : failed) << alert
+        left, took = deliver(alert)
+        sent << Evaluate.without_owed(alert) if took
+        left ? failed << left : delivered << alert
         budget.spent_ms += [0, ((AbortSignal.monotonic - started) * 1000).round].max
       end
-      record_delivery(name, delivered, failed, [], at)
-      delivered
+      record_delivery(name, delivered, failed, [], at, !sent.empty?)
+      sent
     end
 
     # Mark delivered alerts done, drop stale ones, and keep failed ones for the
     # next check, taking them all out of `sending` (Evaluate.record_sent). A
     # failed alert replaces its stored copy, so a triage made on this attempt
-    # is kept. last_alert_at moves only on a delivery. When this write fails,
-    # alerts still in `sending` are retried once their lease runs out.
-    def record_delivery(name, delivered, failed, dropped, at)
+    # and the channels that still owe it are kept. last_alert_at moves when
+    # `reached`, some channel accepted an alert on this attempt. When this
+    # write fails, alerts still in `sending` are retried once their lease
+    # runs out.
+    def record_delivery(name, delivered, failed, dropped, at, reached)
       _, trimmed = update_state(name) do |previous|
-        held = Evaluate.record_sent(Evaluate.normalize_state(previous, name), delivered, failed, dropped, at)
+        held = Evaluate.record_sent(Evaluate.normalize_state(previous, name), delivered, failed, dropped, at, reached)
         [held.state, held.dropped]
       end
       report_dropped(name, trimmed)
@@ -1530,17 +1541,28 @@ module Cronwatch
       report(e, "recording alert delivery for #{name}")
     end
 
-    # Send to every channel at once, each in its own thread with its own
-    # timeout. True when at least one accepted it, or there are none. A
-    # channel that times out is left to finish on its own, and nothing more
-    # is sent to it until it has: meanwhile its alerts count as not
-    # delivered there, to be retried by a later check. So a hung channel
-    # holds one thread, not one per alert.
+    # Send to every channel that still owes the alert (Evaluate.owed_channels:
+    # all of them for an alert not sent before), at once, each in its own
+    # thread with its own timeout, each failure reported under its channel's
+    # name. Returns [left, reached]: `left` is the alert with `owed` cut to
+    # the channels that refused it, or nil when none did (or none is left to
+    # owe it); `reached` is whether any channel accepted it. With no
+    # channels at all it counts as delivered. A channel that times out is
+    # left to finish on its own, and nothing more is sent to it until it
+    # has: meanwhile its alerts count as not delivered there, to be retried
+    # by a later check. So a hung channel holds one thread, not one per alert.
     def deliver(alert)
-      return true if @alerts.empty?
+      return [nil, true] if @alerts.empty?
 
+      keys = Evaluate.channel_keys(@alerts.map { |channel| channel_name(channel).to_s })
+      owed = Evaluate.owed_channels(alert, keys)
+      return [nil, false] if owed.empty?
+
+      plain = Evaluate.without_owed(alert)
       outcomes = Array.new(@alerts.length)
       threads = @alerts.each_with_index.map do |channel, i|
+        next nil unless owed.include?(keys[i])
+
         if @sending_lock.synchronize { @abandoned[i]&.alive? }
           outcomes[i] = TimeoutError.new("skipped: an earlier alert timed out and is still being sent")
           next nil
@@ -1548,7 +1570,7 @@ module Cronwatch
 
         Thread.new do
           Thread.current.report_on_exception = false
-          send_to(channel, alert)
+          send_to(channel, plain)
           outcomes[i] = true
         # Anything the channel raised, SystemStackError and exit included, is
         # a failed send: raised again through join, it would replace the
@@ -1559,6 +1581,7 @@ module Cronwatch
       end
       deadline = AbortSignal.monotonic + (@channel_timeout_ms / 1000.0)
       results = threads.each_with_index.map do |thread, i|
+        next nil unless owed.include?(keys[i])
         next outcomes[i] if thread.nil?
         if thread.join([deadline - AbortSignal.monotonic, 0].max)
           # A thread killed from outside leaves no outcome: not sent.
@@ -1568,10 +1591,14 @@ module Cronwatch
         @sending_lock.synchronize { @abandoned[i] = thread }
         TimeoutError.new("timed out after #{@channel_timeout_ms}ms")
       end
+      failed = []
       results.each_with_index do |result, i|
-        report(result, "alert channel #{channel_name(@alerts[i])}") unless result == true
+        next if result.nil? || result == true
+
+        failed << keys[i]
+        report(result, "alert channel #{channel_name(@alerts[i])}")
       end
-      results.include?(true)
+      [Evaluate.after_send(alert, owed, failed), failed.length < owed.length]
     end
 
     # channel.call(alert, context), the context's on_error reporting a problem

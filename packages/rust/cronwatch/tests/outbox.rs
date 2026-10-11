@@ -189,7 +189,9 @@ async fn a_queued_alert_keeps_the_fields_a_newer_release_gave_it_through_a_faile
     o.set("undelivered", vec![Value::Object(alert)]);
     shared.set_state(&cronwatch::JobState::from_value(&stored).unwrap()).await.unwrap();
 
-    let down = channel_fn("down", |_: Alert| async { Err("down".into()) });
+    // The same channel (by name) as the sender's below, down for now: a
+    // retry goes only to the channels that still owe the alert.
+    let down = channel_fn("capture", |_: Alert| async { Err("down".into()) });
     let failing = Kit::with(|b| b.store_arc(shared.clone()).alerts([down]));
     failing.advance(MIN);
     failing.check().await;

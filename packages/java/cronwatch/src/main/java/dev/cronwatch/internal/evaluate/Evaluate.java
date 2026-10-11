@@ -24,8 +24,10 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
@@ -201,21 +203,191 @@ public final class Evaluate {
     return alert.type().value() + "|" + alert.at() + "|" + (run == null ? "" : run.id());
   }
 
+  /** How much of a held alert's run error and output is kept: 2048 UTF-16 units of each. */
+  public static final int HELD_TEXT_CAP = 2048;
+
+  /**
+   * How far past {@link #HELD_TEXT_CAP} a text may run and still be kept whole: longer than any
+   * marker, so a text trimmed once (its kept part and its marker) is never trimmed again, and the
+   * count in its marker stays true.
+   */
+  public static final int HELD_TEXT_SLACK = 64;
+
+  /** How much of a held alert's message is kept: its first 4096 UTF-16 units. */
+  public static final int HELD_MESSAGE_CAP = 4096;
+
+  /**
+   * {@code heldRun}: a run as an alert held in a job's state keeps it ({@code sending} and {@code
+   * undelivered}), so the state stays small however much a run logged. Its error keeps its first
+   * {@link #HELD_TEXT_CAP} units and its output its last, each cut so as not to split a surrogate
+   * pair, with a line saying how many units were left out: {@code "<head>\n[N more characters
+   * trimmed]"} and {@code "[N earlier characters trimmed]\n<tail>"}. A text of at most {@code
+   * HELD_TEXT_CAP + HELD_TEXT_SLACK} units is kept as it is, and so is every other field. The first
+   * send of an alert uses the alert as composed; only a retry reads the held copy.
+   */
+  public static Run heldRun(Run run) {
+    String error = heldError(run.error());
+    String output = heldOutput(run.output());
+    if (Objects.equals(error, run.error()) && Objects.equals(output, run.output())) {
+      return run;
+    }
+    return run.withError(error).withOutput(output);
+  }
+
+  private static @Nullable String heldError(@Nullable String text) {
+    return text != null && text.length() > HELD_TEXT_CAP + HELD_TEXT_SLACK
+        ? keepHead(text, HELD_TEXT_CAP)
+        : text;
+  }
+
+  private static @Nullable String heldOutput(@Nullable String text) {
+    return text != null && text.length() > HELD_TEXT_CAP + HELD_TEXT_SLACK ? keepTail(text) : text;
+  }
+
+  private static String keepHead(String text, int cap) {
+    int end = cap;
+    if (Character.isHighSurrogate(text.charAt(end - 1))) {
+      end -= 1;
+    }
+    return text.substring(0, end) + "\n[" + (text.length() - end) + " more characters trimmed]";
+  }
+
+  private static String keepTail(String text) {
+    int start = text.length() - HELD_TEXT_CAP;
+    if (Character.isLowSurrogate(text.charAt(start))
+        && Character.isHighSurrogate(text.charAt(start - 1))) {
+      start += 1;
+    }
+    return "[" + start + " earlier characters trimmed]\n" + text.substring(start);
+  }
+
+  /**
+   * {@code heldAlert}: an alert as it is held in state: its run trimmed ({@link #heldRun}), and its
+   * message, when longer than {@code HELD_MESSAGE_CAP + HELD_TEXT_SLACK} units, cut to its first
+   * {@link #HELD_MESSAGE_CAP} like a run's error. Everything else, the title, the channels that owe
+   * it, and the fields a newer writer added included, as it is. The first send uses the alert as
+   * composed.
+   */
+  public static Alert heldAlert(Alert alert) {
+    JsObject v = alert.toValue();
+    boolean changed = false;
+    if (v.get("run") instanceof JsObject run) {
+      for (String key : List.of("error", "output")) {
+        if (run.get(key) instanceof String text) {
+          String held = key.equals("error") ? heldError(text) : heldOutput(text);
+          if (!text.equals(held)) {
+            run.set(key, held);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (v.get("message") instanceof String message
+        && message.length() > HELD_MESSAGE_CAP + HELD_TEXT_SLACK) {
+      v.set("message", keepHead(message, HELD_MESSAGE_CAP));
+      changed = true;
+    }
+    return changed ? Alert.fromValue(v) : alert;
+  }
+
+  /**
+   * {@code channelKeys}: each configured channel's key, in the order configured: its name, with
+   * "#2", "#3", and so on for the second and later channels of the same name, so two webhooks are
+   * "webhook" and "webhook#2". A key already given to an earlier channel (one named "webhook#2"
+   * itself, say) is skipped for the next number up, so every key is different. A held alert names
+   * the channels that still owe it by these keys ({@link #owedChannels}).
+   */
+  public static List<String> channelKeys(List<String> names) {
+    Map<String, Integer> seen = new HashMap<>();
+    Set<String> taken = new HashSet<>();
+    List<String> keys = new ArrayList<>(names.size());
+    for (String name : names) {
+      int n = seen.getOrDefault(name, 0) + 1;
+      seen.put(name, n);
+      String key = n == 1 ? name : name + "#" + n;
+      while (taken.contains(key)) {
+        n++;
+        key = name + "#" + n;
+      }
+      taken.add(key);
+      keys.add(key);
+    }
+    return keys;
+  }
+
+  /**
+   * The {@code owed} list a held alert carries (the keys of the channels that have not accepted
+   * it), or null when it has none, or none that is a list: every configured channel owes it then.
+   */
+  private static @Nullable List<?> owedList(Alert alert) {
+    return alert.toValue().get("owed") instanceof List<?> list ? list : null;
+  }
+
+  /**
+   * {@code owedChannels}: the channels a held alert is still owed by, of those configured now
+   * ({@code configured}, {@link #channelKeys} order): those in its {@code owed} that are still
+   * configured, or every configured one when it has no {@code owed} list (an alert held by a
+   * release before per-channel delivery, or one never sent). An entry of {@code owed} that is not a
+   * string is ignored. None left means the alert is done.
+   */
+  public static List<String> owedChannels(Alert alert, List<String> configured) {
+    List<?> owed = owedList(alert);
+    if (owed == null) {
+      return new ArrayList<>(configured);
+    }
+    List<String> out = new ArrayList<>();
+    for (String key : configured) {
+      if (owed.contains(key)) {
+        out.add(key);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * {@code afterSend}: an alert after a send to the channels in {@code tried}, of which those in
+   * {@code failed} refused it: null when none is left owing it, else the alert with {@code owed}
+   * set to those that refused, in configured order.
+   */
+  public static @Nullable Alert afterSend(Alert alert, List<String> tried, List<String> failed) {
+    List<Object> owed = new ArrayList<>();
+    for (String key : tried) {
+      if (failed.contains(key)) {
+        owed.add(key);
+      }
+    }
+    if (owed.isEmpty()) {
+      return null;
+    }
+    return Alert.fromValue(alert.toValue().set("owed", owed));
+  }
+
+  /** {@code withoutOwed}: an alert without its {@code owed} list, as a channel is given it. */
+  public static Alert withoutOwed(Alert alert) {
+    JsObject v = alert.toValue();
+    if (!v.has("owed")) {
+      return alert;
+    }
+    v.remove("owed");
+    return Alert.fromValue(v);
+  }
+
   /** The newest {@code max} of {@code list}. */
   private static <T> List<T> newest(List<T> list, int max) {
     return new ArrayList<>(list.subList(Math.max(0, list.size() - max), list.size()));
   }
 
   /**
-   * {@code alerts} added to the undelivered queue: one with the same key as a queued alert replaces
-   * it where it stands, the rest go at the end, and only the newest {@link #MAX_UNDELIVERED} stay.
-   * {@code dropped} counts those let go.
+   * {@code alerts} added to the undelivered queue, each with its run trimmed ({@link #heldAlert})
+   * and its {@code owed} list as given: one with the same key as a queued alert replaces it where
+   * it stands, the rest go at the end, and only the newest {@link #MAX_UNDELIVERED} stay. {@code
+   * dropped} counts those let go.
    */
   public static Queued queueUndelivered(JobState state, List<Alert> alerts) {
     MutableState next = cloneState(state);
-    Map<String, Alert> byKey = new HashMap<>();
+    Map<String, Alert> byKey = new LinkedHashMap<>();
     for (Alert a : alerts) {
-      byKey.put(alertKey(a), a);
+      byKey.put(alertKey(a), heldAlert(a));
     }
     List<Alert> queue = new ArrayList<>();
     Set<String> known = new HashSet<>();
@@ -224,9 +396,9 @@ public final class Evaluate {
       queue.add(byKey.getOrDefault(key, a));
       known.add(key);
     }
-    for (Alert a : alerts) {
-      if (!known.contains(alertKey(a))) {
-        queue.add(a);
+    for (Map.Entry<String, Alert> e : byKey.entrySet()) {
+      if (!known.contains(e.getKey())) {
+        queue.add(e.getValue());
       }
     }
     next.undelivered = newest(queue, MAX_UNDELIVERED);
@@ -237,8 +409,10 @@ public final class Evaluate {
    * The outbox. Alerts just composed are written with the state that opens their condition, before
    * any is sent, so a process that stops part way does not lose them: into {@code sending}, each
    * with its lease ending at {@code until}, when this process sends them, or ({@code deferred},
-   * {@code Deliver.AT_CHECK}) straight into the undelivered queue for a check elsewhere. {@code
-   * dropped} counts alerts let go past {@link #MAX_UNDELIVERED}.
+   * {@code Deliver.AT_CHECK}) straight into the undelivered queue for a check elsewhere. Either way
+   * the copy held has its run trimmed ({@link #heldAlert}) and no {@code owed} list, so every
+   * configured channel owes it; the first send uses the alerts as composed. {@code dropped} counts
+   * alerts let go past {@link #MAX_UNDELIVERED}.
    */
   public static Queued holdAlerts(
       JobState state, List<Alert> alerts, long until, boolean deferred) {
@@ -251,7 +425,7 @@ public final class Evaluate {
     MutableState next = cloneState(state);
     List<SendingAlert> sending = next.sending == null ? new ArrayList<>() : next.sending;
     for (Alert a : alerts) {
-      sending.add(new SendingAlert(until, a));
+      sending.add(new SendingAlert(until, heldAlert(a)));
     }
     next.sending = newest(sending, MAX_UNDELIVERED);
     return new Queued(next.toState(), Math.max(0, sending.size() - MAX_UNDELIVERED));
@@ -260,8 +434,9 @@ public final class Evaluate {
   /**
    * Alerts in {@code sending} whose lease ran out by {@code now}: the process sending them stopped
    * before it recorded how the send went. They go to the undelivered queue, where the retry sends
-   * them (with triage, which is never stored with them here) or drops them as stale. An entry
-   * without an alert is let go; one without a {@code until} counts as run out.
+   * them (with triage, which is never stored with them here) or drops them as stale, owed by the
+   * channels its {@code owed} names. An entry without an alert is let go; one without a {@code
+   * until} counts as run out.
    */
   public static Queued releaseSending(JobState state, long now) {
     List<SendingAlert> sending = state.sending() == null ? List.of() : state.sending();
@@ -288,14 +463,27 @@ public final class Evaluate {
     return queueUndelivered(next.toState(), lapsed);
   }
 
-  /**
-   * How a send went. Delivered and stale alerts leave the queue; failed ones replace their queued
-   * copy, so a triage made on this attempt is kept, or join the queue. Every one of them leaves
-   * {@code sending}. {@code lastAlertAt} moves only on a delivery. {@code dropped} counts alerts
-   * let go past {@link #MAX_UNDELIVERED}.
-   */
+  /** {@link #recordSent(JobState, List, List, List, long, boolean)}, reached when any delivered. */
   public static Queued recordSent(
       JobState state, List<Alert> delivered, List<Alert> failed, List<Alert> stale, long now) {
+    return recordSent(state, delivered, failed, stale, now, !delivered.isEmpty());
+  }
+
+  /**
+   * How a send went. Delivered alerts (no channel owes them any more) and stale ones leave the
+   * queue; failed ones (some channel still owes them, named by their {@code owed}) replace their
+   * queued copy, so a triage made on this attempt and the shrunken {@code owed} are kept, or join
+   * the queue. Every one of them leaves {@code sending}. {@code lastAlertAt} moves to {@code now}
+   * when {@code reached} (some channel accepted an alert on this attempt). {@code dropped} counts
+   * alerts let go past {@link #MAX_UNDELIVERED}.
+   */
+  public static Queued recordSent(
+      JobState state,
+      List<Alert> delivered,
+      List<Alert> failed,
+      List<Alert> stale,
+      long now,
+      boolean reached) {
     MutableState next = cloneState(state);
     Set<String> done = new HashSet<>();
     for (Alert a : delivered) {
@@ -320,7 +508,7 @@ public final class Evaluate {
       }
     }
     next.sending = held;
-    if (!delivered.isEmpty()) {
+    if (reached) {
       next.lastAlertAt = now;
     }
     return queueUndelivered(next.toState(), failed);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  afterSend, channelKeys, heldAlert, heldRun, owedChannels, withoutOwed,
   emptyState, failureCount, jobHealth, MAX_DURATION_MS, muteOpens, normalizeState, onCheck, onRunFinish, onRunStart, runDuration, stateVersion, summarize,
 } from "../src/evaluate.js";
 import type { AlertDetails, AlertDraft, JobDefinition, JobState, Run, StoredJob, StoredJobDefinition } from "../src/types.js";
@@ -418,3 +419,46 @@ test("an interval is due a period after the finish of a run that outlasted it", 
 });
 
 const DAY_MS = 24 * HOUR;
+
+test("heldRun keeps the first 2048 units of the error and the last 2048 of the output, never half a pair", () => {
+  const base = run("j", "failed", T0);
+  assert.equal(heldRun(base), base, "short: the same run");
+  const long = { ...base, error: "e".repeat(5000), output: "o".repeat(5000) };
+  const held = heldRun(long);
+  assert.equal(held.error, `${"e".repeat(2048)}\n[2952 more characters trimmed]`);
+  assert.equal(held.output, `[2952 earlier characters trimmed]\n${"o".repeat(2048)}`);
+  assert.deepEqual({ ...held, error: null, output: null }, { ...long, error: null, output: null }, "nothing else changes");
+  assert.deepEqual(heldRun(held), held, "trimmed once, never again");
+  // At the edge, within the slack: kept whole.
+  const edge = { ...base, error: "e".repeat(2048 + 64), output: "o".repeat(2048 + 64) };
+  assert.equal(heldRun(edge), edge);
+  // A surrogate pair across the cut is left out whole.
+  const astral = { ...base, error: "e".repeat(2047) + "\u{1F600}" + "e".repeat(3000), output: "o".repeat(3000) + "\u{1F600}" + "o".repeat(2047) };
+  const cutAstral = heldRun(astral);
+  assert.equal(cutAstral.error, `${"e".repeat(2047)}\n[3002 more characters trimmed]`);
+  assert.equal(cutAstral.output, `[3002 earlier characters trimmed]\n${"o".repeat(2047)}`);
+});
+
+test("channel keys number a repeated name, and owed narrows to channels still configured", () => {
+  assert.deepEqual(channelKeys(["slack", "webhook", "webhook", "email", "webhook"]), ["slack", "webhook", "webhook#2", "email", "webhook#3"]);
+  assert.deepEqual(channelKeys(["a", "a#2", "a"]), ["a", "a#2", "a#3"], "never the same key twice");
+  assert.deepEqual(channelKeys(["a", "a", "a#2"]), ["a", "a#2", "a#2#2"]);
+  const alert = { type: "failed", at: T0 } as Parameters<typeof owedChannels>[0];
+  assert.deepEqual(owedChannels(alert, ["slack", "email"]), ["slack", "email"], "no owed: every channel");
+  assert.deepEqual(owedChannels({ ...alert, owed: ["email", "gone", 3 as unknown as string] }, ["slack", "email"]), ["email"]);
+  assert.deepEqual(owedChannels({ ...alert, owed: ["gone"] }, ["slack"]), []);
+  assert.equal(afterSend(alert, ["slack", "email"], []), null);
+  assert.deepEqual(afterSend(alert, ["slack", "email"], ["email", "slack"])!.owed, ["slack", "email"]);
+  assert.deepEqual(withoutOwed({ ...alert, owed: ["x"] }), alert);
+});
+
+test("a held alert keeps the first 4096 units of its message, never half a pair, and is trimmed once", () => {
+  const alert = { type: "failed", job: "j", title: "t".repeat(9000), message: "m".repeat(9000), at: T0, run: null } as unknown as Parameters<typeof heldAlert>[0];
+  const held = heldAlert(alert);
+  assert.equal(held.message, `${"m".repeat(4096)}\n[4904 more characters trimmed]`);
+  assert.equal(held.title, alert.title, "the title is left alone");
+  assert.deepEqual(heldAlert(held), held);
+  assert.equal(heldAlert({ ...alert, message: "m".repeat(4096 + 64) }).message, "m".repeat(4096 + 64));
+  const astral = heldAlert({ ...alert, message: "m".repeat(4095) + "\u{1F600}" + "m".repeat(100) });
+  assert.equal(astral.message, `${"m".repeat(4095)}\n[102 more characters trimmed]`);
+});

@@ -96,7 +96,7 @@ Missed and stuck runs are found by a check. Craft CMS has nothing to run it on a
 */5 * * * *  cd /var/www/site && php craft cronwatch/check
 ```
 
-`craft cronwatch/check` declares every listed command and queue job, finds missed and stuck runs, sends their alerts, retries alerts no channel accepted, prunes old runs, and prints `cronwatch: checked 4 jobs, sent 0 alerts`; an error is one line on standard error and exit status 1. Run one checker per store.
+`craft cronwatch/check` declares every listed command and queue job, finds missed and stuck runs, sends their alerts, retries alerts a channel has not yet accepted, prunes old runs, and prints `cronwatch: checked 4 jobs, sent 0 alerts`; an error is one line on standard error and exit status 1. Run one checker per store.
 
 ## The store
 

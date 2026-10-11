@@ -32,13 +32,20 @@ class ClientConformanceTest {
 
   /**
    * Every section of {@code client.json} is replayed somewhere: {@code runIds} and {@code
-   * unknownFields} here, {@code environment} and {@code secrets} in {@code EnvTest}. A section the
-   * SDK adds fails here until it is replayed too.
+   * unknownFields} here, {@code environment} and {@code secrets} in {@code EnvTest}, {@code outbox}
+   * in {@code OutboxConformanceTest}. A section the SDK adds fails here until it is replayed too.
    */
   @Test
   void everySectionIsReplayed() {
     assertEquals(
-        List.of("generatedBy", "sdkVersion", "runIds", "unknownFields", "environment", "secrets"),
+        List.of(
+            "generatedBy",
+            "sdkVersion",
+            "runIds",
+            "unknownFields",
+            "environment",
+            "secrets",
+            "outbox"),
         FIXTURE.keys());
   }
 

@@ -1,7 +1,9 @@
 import { formatDuration, parseDuration } from "./duration.js";
 import { isDevelopment, isProduction, readSecretEnv, secretOption } from "./env.js";
 import {
+  afterSend,
   applySilence,
+  channelKeys,
   BASELINE_WINDOW,
   claimUndelivered,
   emptyState,
@@ -14,6 +16,7 @@ import {
   onCheck,
   onRunFinish,
   onRunStart,
+  owedChannels,
   recordSent,
   releaseRun,
   releaseSending,
@@ -24,6 +27,7 @@ import {
   summarize,
   timeoutMs,
   unevaluableSummary,
+  withoutOwed,
 } from "./evaluate.js";
 import type { Evaluation } from "./evaluate.js";
 import { composeAlert } from "./format.js";
@@ -39,6 +43,7 @@ import { memory } from "./stores/memory.js";
 import type {
   Alert,
   AlertChannel,
+  HeldAlert,
   CheckResult,
   Condition,
   Duration,
@@ -1167,7 +1172,7 @@ export class Cronwatch {
 
   /**
    * Look for missed and stuck runs across every job, send alerts, retry
-   * alerts no channel accepted, and prune old runs. Call it from an interval
+   * alerts to the channels that refused them, and prune old runs. Call it from an interval
    * (start()), a cron hitting the mounted routes, or by hand. Concurrent
    * calls share one check.
    */
@@ -1462,27 +1467,35 @@ export class Cronwatch {
   private async dispatch(name: string, alerts: Alert[], now: number): Promise<Alert[]> {
     if (alerts.length === 0 || this.deferDelivery) return alerts;
     const delivered: Alert[] = [];
-    const failed: Alert[] = [];
+    const failed: HeldAlert[] = [];
+    let reached = false;
     for (const alert of alerts) {
       if (this.triage && alert.type !== "recovered") await this.addTriage(alert, TRIAGE_TIMEOUT_MS);
-      (await this.deliver(alert) ? delivered : failed).push(alert);
+      // The alert as composed, full run and all; only a retry reads the trimmed copy held in state.
+      const sent = await this.deliver(alert);
+      reached ||= sent.reached;
+      if (sent.left) failed.push(sent.left);
+      else delivered.push(alert);
     }
-    await this.recordDelivery(name, delivered, failed, [], now);
+    await this.recordDelivery(name, delivered, failed, [], now, reached);
     return alerts;
   }
 
   /**
-   * Send the alerts that no channel accepted last time, once each, oldest
-   * first. They are claimed first (claimUndelivered): moved into `sending`
-   * with a lease, in one conditional write, so when several processes check
-   * at once only the one whose write lands sends them. An alert that no
-   * longer describes the job (staleAlert) is dropped instead. Retries across
-   * a check share RETRY_BUDGET_MS of wall-clock time; claimed alerts it has
-   * no time left for go back to the queue for the next check.
+   * Send the alerts some channel refused last time, once each, oldest
+   * first, to the channels that still owe them (HeldAlert.owed) and no
+   * others, from the copy held in state, its run trimmed (heldRun). They
+   * are claimed first (claimUndelivered): moved into `sending` with a lease,
+   * in one conditional write, so when several processes check at once only
+   * the one whose write lands sends them. An alert that no longer describes
+   * the job (staleAlert) is dropped instead. Retries across a check share
+   * RETRY_BUDGET_MS of wall-clock time; claimed alerts it has no time left
+   * for go back to the queue for the next check. Returns the alerts some
+   * channel took on this attempt.
    */
   private async retryUndelivered(name: string, state: JobState, now: number, budget: { spentMs: number }): Promise<Alert[]> {
     if ((state.undelivered ?? []).length === 0 || this.deferDelivery) return [];
-    let claimed: Alert[];
+    let claimed: HeldAlert[];
     try {
       ({ result: claimed } = await this.updateState(name, (previous) => {
         const claim = claimUndelivered(previous, now, this.now() + SEND_LEASE_MS);
@@ -1493,8 +1506,9 @@ export class Cronwatch {
       return [];
     }
     if (claimed.length === 0) return [];
-    const delivered: Alert[] = [];
-    const failed: Alert[] = [];
+    const delivered: HeldAlert[] = [];
+    const failed: HeldAlert[] = [];
+    const sent: Alert[] = [];
     for (const alert of claimed) {
       const left = RETRY_BUDGET_MS - budget.spentMs;
       if (left <= 0) {
@@ -1506,24 +1520,28 @@ export class Cronwatch {
       // An alert queued by a process that delivers at check time was never
       // triaged. One that was tried (triage: null) is not tried again.
       if (this.triage && alert.type !== "recovered" && alert.triage === undefined) await this.addTriage(alert, Math.min(TRIAGE_TIMEOUT_MS, left));
-      (await this.deliver(alert) ? delivered : failed).push(alert);
+      const outcome = await this.deliver(alert);
+      if (outcome.reached) sent.push(withoutOwed(alert));
+      if (outcome.left) failed.push(outcome.left);
+      else delivered.push(alert);
       budget.spentMs += Math.max(0, Date.now() - started);
     }
-    await this.recordDelivery(name, delivered, failed, [], now);
-    return delivered;
+    await this.recordDelivery(name, delivered, failed, [], now, sent.length > 0);
+    return sent;
   }
 
   /**
    * Mark delivered alerts done, drop stale ones, and keep failed ones for the
    * next check, taking them all out of `sending` (recordSent). A failed alert
-   * replaces its stored copy, so a triage made on this attempt is kept.
-   * lastAlertAt moves only on a delivery. When this write fails, alerts
-   * still in `sending` are retried once their lease runs out.
+   * replaces its stored copy, so a triage made on this attempt and the
+   * channels that still owe it are kept. lastAlertAt moves when `reached`,
+   * some channel accepted an alert on this attempt. When this write fails,
+   * alerts still in `sending` are retried once their lease runs out.
    */
-  private async recordDelivery(name: string, delivered: Alert[], failed: Alert[], dropped: Alert[], now: number): Promise<void> {
+  private async recordDelivery(name: string, delivered: HeldAlert[], failed: HeldAlert[], dropped: HeldAlert[], now: number, reached: boolean): Promise<void> {
     try {
       const { result: trimmed } = await this.updateState(name, (previous) => {
-        const { state, dropped: letGo } = recordSent(normalizeState(previous, name), delivered, failed, dropped, now);
+        const { state, dropped: letGo } = recordSent(normalizeState(previous, name), delivered, failed, dropped, now, reached);
         return { state, result: letGo };
       });
       this.reportDropped(name, trimmed);
@@ -1532,21 +1550,33 @@ export class Cronwatch {
     }
   }
 
-  /** Send to every channel at once. True when at least one accepted it, or there are none. */
-  private async deliver(alert: Alert): Promise<boolean> {
-    if (this.alerts.length === 0) return true;
-    const results = await Promise.all(
-      this.alerts.map(async (channel) => {
+  /**
+   * Send to every channel that still owes the alert (owedChannels: all of
+   * them for an alert not sent before), at once, each failure reported under
+   * its channel's name. `left` is the alert with `owed` cut to the channels
+   * that refused it, or null when none did (or none is left to owe it);
+   * `reached` is whether any channel accepted it. With no channels at all it
+   * counts as delivered, as it always has.
+   */
+  private async deliver(alert: HeldAlert): Promise<{ left: HeldAlert | null; reached: boolean }> {
+    if (this.alerts.length === 0) return { left: null, reached: true };
+    const keys = channelKeys(this.alerts.map((channel) => channel.name));
+    const owed = owedChannels(alert, keys);
+    if (owed.length === 0) return { left: null, reached: false };
+    const plain = withoutOwed(alert);
+    const failed: string[] = [];
+    await Promise.all(
+      this.alerts.map(async (channel, i) => {
+        if (!owed.includes(keys[i]!)) return;
         try {
-          await withTimeout(channel.send(alert, { onError: (e) => this.report(e, `alert channel ${channel.name}`) }), CHANNEL_TIMEOUT_MS);
-          return true;
+          await withTimeout(channel.send(plain, { onError: (e) => this.report(e, `alert channel ${channel.name}`) }), CHANNEL_TIMEOUT_MS);
         } catch (e) {
+          failed.push(keys[i]!);
           this.report(e, `alert channel ${channel.name}`);
-          return false;
         }
       }),
     );
-    return results.includes(true);
+    return { left: afterSend(alert, owed, failed), reached: failed.length < owed.length };
   }
 
   /** Sets alert.triage to the diagnosis, or to null when there is none, so it is tried once per alert. */

@@ -464,6 +464,73 @@ class ConformanceTest < Minitest::Test
   def test_delivery_constants_are_the_sdks
     assert_equal DELIVERY["maxUndelivered"], Cronwatch::Evaluate::MAX_UNDELIVERED
     assert_equal DELIVERY["sendLeaseMs"], Cronwatch::Evaluate::SEND_LEASE_MS
+    assert_equal DELIVERY["heldTextCap"], Cronwatch::Evaluate::HELD_TEXT_CAP
+    assert_equal DELIVERY["heldTextSlack"], Cronwatch::Evaluate::HELD_TEXT_SLACK
+    assert_equal DELIVERY["heldMessageCap"], Cronwatch::Evaluate::HELD_MESSAGE_CAP
+  end
+
+  # A held text in the fixtures: a String is given as a text spec and
+  # written as digest writes it; anything else travels as { "value" => x }.
+  def held_text_in(spec) = spec.is_a?(Hash) && spec.key?("value") ? spec["value"] : expand(spec)
+
+  def held_text_out(value) = value.is_a?(String) ? digest(value) : { "value" => value }
+
+  def held_run_out(run)
+    run.merge("error" => held_text_out(run["error"]), "output" => held_text_out(run["output"]))
+  end
+
+  # Hash keys sorted all the way down, for results whose fixture keys are in
+  # a hand-built order rather than the order the gem writes.
+  def sorted(value)
+    case value
+    when Hash then value.keys.sort.to_h { |k| [k, sorted(value[k])] }
+    when Array then value.map { |v| sorted(v) }
+    else value
+    end
+  end
+
+  def test_held_run
+    each_case(DELIVERY["heldRun"]) do |c|
+      run = Cronwatch::Run.from_h(c["result"].merge("error" => held_text_in(c["error"]), "output" => held_text_in(c["output"])))
+      differs(c["result"], held_run_out(Cronwatch::Evaluate.held_run(run).to_h))
+    end
+  end
+
+  def test_held_alert
+    each_case(DELIVERY["heldAlert"]) do |c|
+      alert = Cronwatch::Alert.from_h(c["alert"].merge("message" => expand(c["alert"]["message"])))
+      held = Cronwatch::Evaluate.held_alert(alert)
+      again = Cronwatch::Evaluate.held_alert(held)
+      next "trimming the held copy again changed it" unless json(again) == json(held)
+
+      out = held.to_h
+      out["message"] = held_text_out(out["message"]) if out["message"].is_a?(String)
+      out["run"] = held_run_out(out["run"]) if out["run"].is_a?(Hash)
+      differs(sorted(c["result"]), sorted(out))
+    end
+  end
+
+  def test_channel_keys
+    each_case(DELIVERY["channelKeys"]) { |c| differs(c["keys"], Cronwatch::Evaluate.channel_keys(c["names"])) }
+  end
+
+  def test_owed_channels
+    each_case(DELIVERY["owedChannels"]) do |c|
+      differs(c["owed"], Cronwatch::Evaluate.owed_channels(Cronwatch::Alert.from_h(c["alert"]), c["configured"]))
+    end
+  end
+
+  def test_after_send
+    each_case(DELIVERY["afterSend"]) do |c|
+      expected = c["result"] && Cronwatch::Alert.from_h(c["result"]).to_h
+      differs(expected, Cronwatch::Evaluate.after_send(Cronwatch::Alert.from_h(c["alert"]), c["tried"], c["failed"]))
+    end
+  end
+
+  def test_without_owed
+    each_case(DELIVERY["withoutOwed"]) do |c|
+      differs(Cronwatch::Alert.from_h(c["result"]).to_h, Cronwatch::Evaluate.without_owed(Cronwatch::Alert.from_h(c["alert"])))
+    end
   end
 
   def test_alert_key
@@ -497,8 +564,9 @@ class ConformanceTest < Minitest::Test
 
   def test_record_sent
     each_case(DELIVERY["recordSent"]) do |c|
-      result = Cronwatch::Evaluate.record_sent(parse_state(c["state"]), alerts_from(c["delivered"]), alerts_from(c["failed"]),
-                                               alerts_from(c["stale"]), c["now"])
+      args = [parse_state(c["state"]), alerts_from(c["delivered"]), alerts_from(c["failed"]), alerts_from(c["stale"]), c["now"]]
+      args << c["reached"] if c.key?("reached")
+      result = Cronwatch::Evaluate.record_sent(*args)
       differs(canonical(c["result"]), result)
     end
   end

@@ -2,11 +2,12 @@
 //! normalization, silence, and which queued alerts a retry drops.
 
 use super::format::{definition, draft_from, draft_value};
-use super::{Failures, field, fixture, int, objects, opt_int};
+use super::{Failures, digest, field, fixture, int, objects, opt_int};
 use crate::evaluate::{
-    Evaluation, MAX_PENDING_RUNS, MAX_UNDELIVERED, SEND_LEASE_MS, alert_key, apply_silence, claim_undelivered,
-    hold_alerts, hold_run, is_stuck, job_health, mute_opens, normalize_state, queue_undelivered, record_sent,
-    release_run, release_sending, silence_end, summarize, unevaluable_summary,
+    Evaluation, HELD_MESSAGE_CAP, HELD_TEXT_CAP, HELD_TEXT_SLACK, MAX_PENDING_RUNS, MAX_UNDELIVERED, SEND_LEASE_MS,
+    after_send, alert_key, apply_silence, channel_keys, claim_undelivered, held_alert, held_run, hold_alerts, hold_run,
+    is_stuck, job_health, mute_opens, normalize_state, owed_channels, queue_undelivered, record_sent, release_run,
+    release_sending, silence_end, summarize, unevaluable_summary, without_owed,
 };
 use crate::js::{Object, Value};
 use crate::stats::{median, percentile};
@@ -246,12 +247,15 @@ fn delivery(d: &Object, fails: &mut Failures) -> usize {
     }
     for (i, c) in objects(d, "recordSent").into_iter().enumerate() {
         cases += 1;
+        let delivered = alerts(field(c, "delivered"));
+        let reached = field(c, "reached").as_bool().unwrap_or(!delivered.is_empty());
         let got = held(record_sent(
             &state(field(c, "state")),
-            &alerts(field(c, "delivered")),
+            &delivered,
             &alerts(field(c, "failed")),
             &alerts(field(c, "stale")),
             int(c, "now"),
+            reached,
         ));
         fails.same(&format!("recordSent {i}"), &sorted(&got), &sorted(field(c, "result")));
     }
@@ -276,7 +280,14 @@ fn delivery(d: &Object, fails: &mut Failures) -> usize {
         let got = release_run(&state(field(c, "state")), id).to_value();
         fails.same(&format!("releaseRun {i}"), &sorted(&got), &sorted(field(c, "result")));
     }
+    cases += held_cases(d, fails);
     let listed = [
+        "heldRun",
+        "heldAlert",
+        "channelKeys",
+        "owedChannels",
+        "afterSend",
+        "withoutOwed",
         "alertKey",
         "normalizeState",
         "queueUndelivered",
@@ -287,9 +298,121 @@ fn delivery(d: &Object, fails: &mut Failures) -> usize {
         "holdRun",
         "releaseRun",
     ];
-    let known = ["maxUndelivered", "sendLeaseMs", "maxPendingRuns"];
+    let known = ["maxUndelivered", "sendLeaseMs", "maxPendingRuns", "heldTextCap", "heldTextSlack", "heldMessageCap"];
     for key in d.keys() {
         assert!(listed.contains(&key) || known.contains(&key), "health.json's delivery has {key}, not replayed");
+    }
+    cases
+}
+
+/// A text spec of the fixture: `null`, a string, `{ parts: [[piece, times],
+/// ...] }` joined, or `{ value: x }` for a value that is not a string.
+fn spec(v: &Value) -> Value {
+    let Some(o) = v.as_object() else {
+        return v.clone();
+    };
+    if let Some(value) = o.get("value") {
+        return value.clone();
+    }
+    let parts = field(o, "parts").as_array().expect("a recipe");
+    let text: String = parts
+        .iter()
+        .map(|p| {
+            let pair = p.as_array().expect("a pair");
+            pair[0].as_str().expect("a piece").repeat(pair[1].as_f64().expect("a count") as usize)
+        })
+        .collect();
+    Value::String(text)
+}
+
+/// A text as the fixture writes a result's: `digest`, or `{ value: x }`.
+fn written(v: &Value) -> Value {
+    match v {
+        Value::String(s) => digest(s),
+        other => Object::new().with("value", other.clone()).into(),
+    }
+}
+
+/// A run's value with its error and output as the fixture writes them.
+fn written_run(run: &Run) -> Value {
+    let mut v = run.to_value();
+    if let Value::Object(o) = &mut v {
+        for key in ["error", "output"] {
+            let text = written(field(o, key));
+            o.set(key, text);
+        }
+    }
+    v
+}
+
+/// The held copies (`heldRun`, `heldAlert`) and the per-channel bookkeeping
+/// (`channelKeys`, `owedChannels`, `afterSend`, `withoutOwed`).
+fn held_cases(d: &Object, fails: &mut Failures) -> usize {
+    let mut cases = 0;
+    fails.same("heldTextCap", &HELD_TEXT_CAP.into(), field(d, "heldTextCap"));
+    fails.same("heldTextSlack", &HELD_TEXT_SLACK.into(), field(d, "heldTextSlack"));
+    fails.same("heldMessageCap", &HELD_MESSAGE_CAP.into(), field(d, "heldMessageCap"));
+    for (i, c) in objects(d, "heldRun").into_iter().enumerate() {
+        let (error, output) = (spec(field(c, "error")), spec(field(c, "output")));
+        // A run's error and output are text or nothing here (see DESIGN.md,
+        // Where it cannot match the SDK): a foreign row's number or object
+        // is read as null, so the case of one is left to the SDK.
+        if !matches!(error, Value::Null | Value::String(_)) || !matches!(output, Value::Null | Value::String(_)) {
+            continue;
+        }
+        cases += 1;
+        let mut input = field(c, "result").as_object().expect("a run").clone();
+        input.set("error", error);
+        input.set("output", output);
+        let got = written_run(&held_run(&Run::from_value(&Value::Object(input)).expect("a run")));
+        fails.same(&format!("heldRun {i}"), &sorted(&got), &sorted(field(c, "result")));
+    }
+    for (i, c) in objects(d, "heldAlert").into_iter().enumerate() {
+        let mut input = field(c, "alert").as_object().expect("an alert").clone();
+        // An alert's run is an object or nothing here: one that is neither
+        // cannot be read (see DESIGN.md, Where it cannot match the SDK).
+        if !matches!(field(&input, "run"), Value::Null | Value::Object(_)) {
+            continue;
+        }
+        cases += 1;
+        let message = spec(field(&input, "message"));
+        input.set("message", message);
+        let got = held_alert(&Alert::from_value(&Value::Object(input)).expect("an alert"));
+        let mut v = got.to_value();
+        if let Value::Object(o) = &mut v {
+            o.set("message", digest(&got.message));
+            if let Some(run) = &got.run {
+                o.set("run", written_run(run));
+            }
+        }
+        fails.same(&format!("heldAlert {i}"), &sorted(&v), &sorted(field(c, "result")));
+    }
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array().expect("a list").iter().map(|s| s.as_str().expect("a string").to_string()).collect()
+    };
+    let list = |l: &[String]| Value::Array(l.iter().map(|s| Value::from(s.as_str())).collect());
+    for (i, c) in objects(d, "channelKeys").into_iter().enumerate() {
+        cases += 1;
+        let names = strings(field(c, "names"));
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        fails.same(&format!("channelKeys {i}"), &list(&channel_keys(&names)), field(c, "keys"));
+    }
+    let alert = |c: &Object| Alert::from_value(field(c, "alert")).expect("an alert");
+    for (i, c) in objects(d, "owedChannels").into_iter().enumerate() {
+        cases += 1;
+        let got = owed_channels(&alert(c), &strings(field(c, "configured")));
+        fails.same(&format!("owedChannels {i}"), &list(&got), field(c, "owed"));
+    }
+    for (i, c) in objects(d, "afterSend").into_iter().enumerate() {
+        cases += 1;
+        let got = after_send(&alert(c), &strings(field(c, "tried")), &strings(field(c, "failed")));
+        let got = got.map_or(Value::Null, |a| a.to_value());
+        fails.same(&format!("afterSend {i}"), &sorted(&got), &sorted(field(c, "result")));
+    }
+    for (i, c) in objects(d, "withoutOwed").into_iter().enumerate() {
+        cases += 1;
+        let got = without_owed(&alert(c)).to_value();
+        fails.same(&format!("withoutOwed {i}"), &sorted(&got), &sorted(field(c, "result")));
     }
     cases
 }

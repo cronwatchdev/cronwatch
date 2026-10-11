@@ -119,13 +119,20 @@ def test_a_hung_channel_times_out_without_holding_up_the_others() -> None:
     assert good.types() == ["failed"]
     assert errors.wheres == ["alert channel hung"]
     assert "timed out after 100ms" in errors.messages[0]
-    assert cw.store.get_state("h").undelivered == [], "one channel took it: delivered"
+    held = cw.store.get_state("h").undelivered
+    assert [a.to_dict()["owed"] for a in held] == [["hung"]], "the channel that timed out still owes it; the other took it"
 
     # While it is still going, the hung channel is skipped rather than given another thread.
     with pytest.raises(RuntimeError):
         cw.run("h2", boom())
     assert "skipped: an earlier alert timed out" in errors.messages[1]
     release.set()
+    for thread in list(cw._abandoned.values()):
+        thread.join(5)
+    # The retry goes to the hung channel alone, which takes it now.
+    cw.check()
+    assert good.types() == ["failed", "failed"], "the channel that took them is not sent them again"
+    assert cw.store.get_state("h").undelivered == []
 
 
 def test_triage_is_aborted_when_the_client_stops_waiting_for_it() -> None:

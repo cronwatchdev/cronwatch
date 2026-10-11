@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace Cronwatch\Tests;
 
 use Cronwatch\Alert;
+use Cronwatch\Alerts\AlertChannel;
+use Cronwatch\Alerts\ChannelContext;
 use Cronwatch\Cronwatch;
+use Cronwatch\Evaluate;
 use Cronwatch\JobDefinition;
 use Cronwatch\JobState;
 use Cronwatch\Js;
 use Cronwatch\Run;
+use Cronwatch\SendingAlert;
+use Cronwatch\Store\MemoryStore;
 use Cronwatch\Tests\Support\Backend;
 use Cronwatch\Tests\Support\Capture;
 use Cronwatch\Tests\Support\Clock;
@@ -22,7 +27,8 @@ use PHPUnit\Framework\TestCase;
  * data a newer release wrote (an unknown state field, condition, definition
  * key, run status, and trigger) kept through a check, a silence, an
  * unsilence, a summary, and a run, over the memory store and SQLite (and the
- * servers, when they are set).
+ * servers, when they are set), and per-channel delivery (outbox): which
+ * channels a first send and each retry reach, and what the state holds.
  */
 final class ClientConformanceTest extends TestCase
 {
@@ -37,7 +43,7 @@ final class ClientConformanceTest extends TestCase
 
     public function testEverySectionIsReplayed(): void
     {
-        $this->assertSame(['generatedBy', 'sdkVersion', 'runIds', 'unknownFields', 'environment', 'secrets'], array_keys(get_object_vars(self::fixture())));
+        $this->assertSame(['generatedBy', 'sdkVersion', 'runIds', 'unknownFields', 'environment', 'secrets', 'outbox'], array_keys(get_object_vars(self::fixture())));
     }
 
     /** The environment's name, from CRONWATCH_ENV, APP_ENV, and PHP's own variable, WP_ENVIRONMENT_TYPE. */
@@ -242,5 +248,126 @@ final class ClientConformanceTest extends TestCase
             return array_map($sort, $v);
         };
         return (string) json_encode($sort($decoded), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    /** @return iterable<string, array{\stdClass}> */
+    public static function outboxScenarios(): iterable
+    {
+        foreach (self::fixture()->outbox as $scenario) {
+            yield $scenario->name => [$scenario];
+        }
+    }
+
+    #[DataProvider('outboxScenarios')]
+    public function testOutbox(\stdClass $scenario): void
+    {
+        $clock = new Clock();
+        $store = new MemoryStore();
+        $down = [];
+        $log = [];
+        $errors = [];
+        $names = $scenario->channels;
+        $make = function () use (&$names, &$down, &$log, &$errors, $store, $clock): Cronwatch {
+            $keys = Evaluate::channelKeys($names);
+            $channels = [];
+            foreach ($names as $i => $name) {
+                $channels[] = new class ($name, $i, $keys[$i], $down, $log) implements AlertChannel {
+                    /** @param array<string, true> $down */
+                    public function __construct(private readonly string $label, private readonly int $position, private readonly string $key, private array &$down, private array &$log)
+                    {
+                    }
+
+                    public function name(): string
+                    {
+                        return $this->label;
+                    }
+
+                    public function send(Alert $alert, ChannelContext $context): void
+                    {
+                        $accepted = !isset($this->down[$this->key]);
+                        $this->log[] = [
+                            'position' => $this->position, 'channel' => $this->key, 'type' => $alert->type, 'run' => $alert->run?->id, 'accepted' => $accepted,
+                            'errorLength' => $alert->run?->error === null ? null : Js::length16($alert->run->error),
+                            'outputLength' => $alert->run?->output === null ? null : Js::length16($alert->run->output),
+                        ];
+                        if (!$accepted) {
+                            throw new \RuntimeException("{$this->key} down");
+                        }
+                    }
+                };
+            }
+            return new Cronwatch(store: $store, alerts: $channels, cronSecret: null, now: $clock, onError: function (\Throwable $error, string $where) use (&$errors): void {
+                $errors[] = $where;
+            });
+        };
+        $cw = $make();
+        $brief = function (Alert $alert): array {
+            $json = $alert->stateJson();
+            $fields = $json instanceof \stdClass ? get_object_vars($json) : $json;
+            return ['type' => $alert->type, 'run' => $alert->run?->id, ...(array_key_exists('owed', $fields) ? ['owed' => $fields['owed']] : [])];
+        };
+        foreach ($scenario->steps as $i => $step) {
+            switch ($step->op) {
+                case 'fail':
+                case 'ok':
+                    $clock->set($step->at);
+                    $handle = $cw->job('nightly')->start(id: $step->id);
+                    $clock->set($step->at + 1000);
+                    $step->op === 'fail' ? $handle->fail(self::expand($step->error ?? 'boom')) : $handle->finish('done');
+                    break;
+                case 'check':
+                    $clock->set($step->at);
+                    $cw->check();
+                    break;
+                case 'down':
+                    foreach ($step->channels as $key) {
+                        $down[$key] = true;
+                    }
+                    break;
+                case 'up':
+                    foreach ($step->channels as $key) {
+                        unset($down[$key]);
+                    }
+                    break;
+                case 'configure':
+                    $cw->close();
+                    $names = $step->channels;
+                    $cw = $make();
+                    break;
+                case 'legacy':
+                    $state = $store->getState('nightly');
+                    $state->undelivered = array_map(fn (Alert $alert) => Evaluate::withoutOwed($alert), $state->undelivered ?? []);
+                    $store->setState($state);
+                    break;
+                default:
+                    throw new \LogicException("unknown step {$step->op}");
+            }
+            $entries = $log;
+            $log = [];
+            $order = array_keys($entries);
+            usort($order, fn (int $x, int $y) => [$entries[$x]['position'], $x] <=> [$entries[$y]['position'], $y]);
+            $sent = array_map(function (int $at) use ($entries): array {
+                $entry = $entries[$at];
+                unset($entry['position']);
+                return $entry;
+            }, $order);
+            $state = $store->getState('nightly');
+            $actual = [
+                'sent' => $sent,
+                'undelivered' => array_map($brief, $state?->undelivered ?? []),
+                'sending' => array_map(fn (SendingAlert $entry) => $brief($entry->alert), $state?->sending ?? []),
+                'lastAlertAt' => $state?->lastAlertAt,
+                'errors' => $errors,
+            ];
+            $errors = [];
+            $this->assertSame(Js::stringify(Js::plain($step->expect)), Js::stringify(Js::plain($actual)), "{$scenario->name}: step {$i} ({$step->op})");
+        }
+        $cw->close();
+    }
+
+    /** Long text travels as {"parts": [[piece, times], ...]}. */
+    private static function expand(mixed $spec): mixed
+    {
+        return $spec instanceof \stdClass && isset($spec->parts) ? implode('', array_map(fn (array $part) => str_repeat($part[0], $part[1]), $spec->parts)) : $spec;
     }
 }

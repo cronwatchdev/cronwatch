@@ -8,6 +8,7 @@ use Cronwatch\Alert;
 use Cronwatch\Alerts\Custom;
 use Cronwatch\Cronwatch;
 use Cronwatch\JobDefinition;
+use Cronwatch\Js;
 use Cronwatch\Run;
 use Cronwatch\Store\MemoryStore;
 use Cronwatch\Store\Store;
@@ -117,16 +118,48 @@ final class ClientHardeningTest extends TestCase
         $this->assertSame(self::T0, $state->lastAlertAt);
     }
 
-    public function testASlowChannelHoldsUpOnlyItselfAndOneThatAcceptedMakesItDelivered(): void
+    public function testASlowChannelHoldsUpOnlyItselfAndIsTheOnlyOneRetried(): void
     {
         $good = new Capture();
-        $cw = $this->make(['alerts' => [new Custom('down', function (): never {
-            throw new \RuntimeException('timed out');
+        $failing = true;
+        $cw = $this->make(['alerts' => [new Custom('down', function () use (&$failing): void {
+            if ($failing) {
+                throw new \RuntimeException('timed out');
+            }
         }), $good]]);
         $this->failing(fn () => $cw->run('h', self::thrower()));
         $this->assertSame(['failed'], $good->types(), 'the other channel has it');
         $this->assertSame(['alert channel down'], $this->wheres());
-        $this->assertSame([], $cw->store->getState('h')->undelivered, 'one channel took it: delivered');
+        $state = $cw->store->getState('h');
+        $this->assertCount(1, $state->undelivered, 'still owed by the channel that refused it');
+        $this->assertSame(['down'], $state->undelivered[0]->toJson()['owed']);
+        $this->assertSame(self::T0, $state->lastAlertAt, 'one channel took it');
+
+        $failing = false;
+        $this->clock->advance(self::MIN);
+        $this->assertSame(['failed'], array_map(fn (Alert $a) => $a->type, $cw->check()->alerts), 'the retry reached the channel that refused');
+        $this->assertSame(['failed'], $good->types(), 'and only that one');
+        $this->assertSame([], $cw->store->getState('h')->undelivered);
+    }
+
+    public function testAHeldAlertKeepsATrimmedRunAndTheFirstSendTheWholeOne(): void
+    {
+        $seen = [];
+        $failing = true;
+        $cw = $this->make(['alerts' => [new Custom('c', function (Alert $alert) use (&$seen, &$failing): void {
+            $seen[] = Js::length16((string) $alert->run?->error);
+            if ($failing) {
+                throw new \RuntimeException('down');
+            }
+        })]]);
+        $this->failing(fn () => $cw->run('long', self::thrower(str_repeat('e', 5000))));
+        $held = $cw->store->getState('long')->undelivered[0];
+        $this->assertStringEndsWith(' more characters trimmed]', (string) $held->run?->error);
+        $failing = false;
+        $this->clock->advance(self::MIN);
+        $cw->check();
+        $this->assertGreaterThan(5000, $seen[0], 'the first send has the whole error');
+        $this->assertSame(Js::length16((string) $held->run?->error), $seen[1], 'the retry has the trimmed one held in state');
     }
 
     public function testTriageIsGivenASignalThatAbortsAtItsDeadline(): void
