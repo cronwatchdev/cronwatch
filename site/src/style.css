@@ -171,7 +171,10 @@ figure.browser, figure.timeline { font-variant-numeric: lining-nums; }
    dark, so dark paper takes a lighter one of the same hue (6:1). */
 .tab-dotnet:hover .logo, .tab-dotnet[aria-selected="true"] .logo { fill: #512bd4; }
 :root[data-theme="dark"] .tab-dotnet:hover .logo, :root[data-theme="dark"] .tab-dotnet[aria-selected="true"] .logo { fill: #9780e5; }
-/* Below about 860px nine names do not fit in a row, so the logos stand
+.tab-wordpress:hover .logo, .tab-wordpress[aria-selected="true"] .logo { fill: #21759b; }
+.tab-drupal:hover .logo, .tab-drupal[aria-selected="true"] .logo { fill: #0678be; }
+.tab-craft:hover .logo, .tab-craft[aria-selected="true"] .logo { fill: #e5422b; }
+/* Below about 860px twelve names do not fit in a row, so the logos stand
    alone, each tab a share of the row, and the names stay for screen readers. */
 @media (max-width: 860px) {
   .tabs { flex-wrap: nowrap; gap: 0; }
