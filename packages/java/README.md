@@ -14,7 +14,7 @@ From Maven Central:
 <dependency>
   <groupId>dev.cronwatch</groupId>
   <artifactId>cronwatch</artifactId>
-  <version>0.13.0</version>
+  <version>0.13.1</version>
 </dependency>
 ```
 

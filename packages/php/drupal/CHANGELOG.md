@@ -2,6 +2,11 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## 0.13.1 - 2026-10-11
+
+### Changed
+- Updated to the library's 0.13.1.
+
 ## 0.13.0 - 2026-10-10
 
 ### Changed
