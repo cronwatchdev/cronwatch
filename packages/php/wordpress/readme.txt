@@ -4,7 +4,7 @@ Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.1
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.13.0
+Stable tag: 0.13.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -136,6 +136,10 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 4. The foot of the settings page: the "Send a test alert" button and the watched events with their health, last run, and next due time.
 
 == Changelog ==
+
+= 0.13.1 =
+
+* Carries version 0.13.1 of the CronWatch library.
 
 = 0.13.0 =
 
