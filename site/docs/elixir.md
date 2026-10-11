@@ -13,7 +13,7 @@ The `cronwatch` package is a port of `@cronwatch/sdk`, not a new design. It deci
 # mix.exs
 def deps do
   [
-    {:cronwatch, "~> 0.13"}
+    {:cronwatch, "~> 0.14"}
   ]
 end
 ```

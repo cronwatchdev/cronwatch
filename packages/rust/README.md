@@ -12,8 +12,8 @@ Rust 1.85 or newer for `cronwatch`, `cronwatch-tokio-cron-scheduler`, and `cronw
 
 ```toml
 [dependencies]
-cronwatch = "0.13"
-cronwatch-sqlx = { version = "0.13", features = ["sqlite"] } # or "postgres", "mysql", "pgcron"
+cronwatch = "0.14"
+cronwatch-sqlx = { version = "0.14", features = ["sqlite"] } # or "postgres", "mysql", "pgcron"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```

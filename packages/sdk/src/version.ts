@@ -1,5 +1,5 @@
 /** This release of @cronwatch/sdk. scripts/release.mjs keeps it in step with package.json. */
-export const VERSION = "0.13.1";
+export const VERSION = "0.14.0";
 
 /**
  * The dashboard JSON API's version, which GET <base>/api answers. It goes up

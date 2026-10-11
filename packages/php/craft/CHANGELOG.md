@@ -1,6 +1,6 @@
 # Release Notes for CronWatch
 
-## Unreleased
+## 0.14.0 - 2026-10-11
 
 ### Changed
 - The API refuses a token shorter than 24 characters (503), and the plugin settings say why.
