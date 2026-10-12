@@ -382,7 +382,7 @@ The first argument is a connection string, a psycopg connection or pool, or anyt
 
 ## Redaction
 
-Before a run's output and error are stored, shown, or sent anywhere, `redact` rewrites them. The default, `cronwatch.redact_secrets`, blanks values that look like secrets (secret-named pairs, credentials in URLs, authorization headers, private keys, JWTs, webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats), exactly what the SDK's default blanks. Redaction runs before the 16 KB cap, so the cut never keeps the rest of a secret whose label it cut off. An `expect` rule is checked before redaction, so it still sees what was logged.
+Before a run's output and error are stored, shown, or sent anywhere, `redact` rewrites them. The default, `cronwatch.redact_secrets`, blanks values that look like secrets (secret-named pairs, credentials in URLs, authorization headers, private keys, JWTs, webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats), exactly what the SDK's default blanks. Redaction runs before the [output cap](/docs/limits/#output-and-errors), so the cut never keeps the rest of a secret whose label it cut off. An `expect` rule is checked before redaction, so it still sees what was logged.
 
 ```python
 cronwatch.Cronwatch(redact=False)                                            # keep output as logged

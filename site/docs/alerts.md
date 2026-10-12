@@ -35,7 +35,7 @@ Job output is shown inside a code block it cannot break out of, and messages nev
 
 ## Webhook
 
-POSTs the alert as JSON to any URL: the [alert payload](#the-alert-payload) below, with `"schema": 1` as its first field. With a `secret`, each request carries `X-CronWatch-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw body, and, so a receiver can refuse a captured request sent again, `X-CronWatch-Timestamp` (Unix seconds) with `X-CronWatch-Timestamp-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a full stop, and the raw body. A failed request is reported with the URL's origin only, since a webhook's path often holds its credential.
+POSTs the alert as JSON to an HTTP or HTTPS URL: the [alert payload](#the-alert-payload) below, with `"schema": 1` as its first field. With a `secret`, each request carries `X-CronWatch-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw body, and, so a receiver can refuse a captured request sent again, `X-CronWatch-Timestamp` (Unix seconds) with `X-CronWatch-Timestamp-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a full stop, and the raw body. A failed request is reported with the URL's origin only, since a webhook's path often holds its credential.
 
 ```ts
 import { webhook } from "@cronwatch/sdk/webhook";
@@ -54,6 +54,8 @@ const ok = received.length === expected.length && timingSafeEqual(received, expe
 ```
 
 `timingSafeEqual` throws when the two buffers differ in length, so compare the lengths first: a request with no signature, or a short one, is then refused rather than crashing the handler. Hash the raw body as it arrived, before any JSON parsing. To refuse replays, check the timestamped signature instead: compute `signature(secret, `${timestamp}.${rawBody}`)` with the `X-CronWatch-Timestamp` value, compare it with `X-CronWatch-Timestamp-Signature` the same way, and refuse a timestamp more than five minutes from your clock. Retries of an undelivered alert are new requests with a new timestamp; if a repeat matters, dedupe on the alert's `job`, `type`, `at`, and `run.id`, which a retry keeps. Without the SDK, `createHmac("sha256", secret).update(rawBody).digest("hex")` from `node:crypto` gives the same hex.
+
+Alert destinations must not contain a username or password in the URL. For a webhook that needs authentication, pass an authorization header through `headers`. In the TypeScript channels, request-construction and network errors omit URL credentials, paths, queries, and header values from the reported error.
 
 ## Email, SMS, and error trackers
 

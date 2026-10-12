@@ -74,7 +74,7 @@ A name is 1 to 120 letters, digits, `.`, `_`, `:`, or `-`, starting with a lette
 
 A binary the function returns, or `{:ok, binary}`, is the run's output when nothing was logged, and what `expect` checks. A `%Plug.Conn{}` it returns with a status of 400 or more fails the run with `HTTP <status> <reason>`, and so does a `%Req.Response{}` (or `{:ok, %Req.Response{}}`) when Req is loaded, so a job that calls an API and returns its answer fails when the API does.
 
-`Cronwatch.log(job, value)` adds one line (a value that is not a binary is written with `to_string/1`, or `inspect/1` when it has no `String.Chars`), and `Cronwatch.metric(job, name, value)` records a number. The run keeps the last 16 KB. Code deeper down finds the run with `Cronwatch.current/0`, and `Cronwatch.log/1` and `metric/2` use it; a `Task` the job starts (`Task.async_stream` included) finds its parent's run through `$callers`, so it logs to the same run. During a run, Logger metadata carries `cronwatch_job` and `cronwatch_run`.
+`Cronwatch.log(job, value)` adds one line (a value that is not a binary is written with `to_string/1`, or `inspect/1` when it has no `String.Chars`), and `Cronwatch.metric(job, name, value)` records a number. The run keeps a bounded tail of output; see [output limits](/docs/limits/#output-and-errors). Code deeper down finds the run with `Cronwatch.current/0`, and `Cronwatch.log/1` and `metric/2` use it; a `Task` the job starts (`Task.async_stream` included) finds its parent's run through `$callers`, so it logs to the same run. During a run, Logger metadata carries `cronwatch_job` and `cronwatch_run`.
 
 ### Timeouts and processes that die
 

@@ -84,6 +84,8 @@ The server works with the [JSON API](/docs/dashboard/#endpoints) of any release,
 
 The token gives the agent everything the dashboard can do, including silencing and forgetting jobs; there is no read-only token. Give the MCP server the token only where you are content for the agent to do those things. Run history includes whatever your jobs logged, so the agent reads that too; if it is sensitive, log less.
 
+Job definitions, run metadata, alert metadata, output, and errors are marked as untrusted data in tool responses. An agent should read them as evidence, not follow instructions embedded in them. This marking helps distinguish job data from instructions; it does not make arbitrary logged content trustworthy. Connection errors omit credentials from the configured URL.
+
 ## The agent skill
 
 A Claude Code skill in the repository teaches the workflow: where to declare jobs, how to wrap them, how to investigate a failure with these tools. See [Agent skill](/docs/agent-skill/).

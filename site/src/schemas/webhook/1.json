@@ -97,8 +97,8 @@
         "startedAt": { "type": "number" },
         "finishedAt": { "type": ["number", "null"] },
         "durationMs": { "type": ["number", "null"] },
-        "error": { "type": ["string", "null"], "description": "Redacted, and cut to 16 KB." },
-        "output": { "type": ["string", "null"], "description": "Redacted, and cut to its last 16 KB." },
+        "error": { "type": ["string", "null"], "description": "Redacted; tail capped at 16,384 UTF-16 code units, plus a trimming notice when needed." },
+        "output": { "type": ["string", "null"], "description": "Redacted; tail capped at 16,384 UTF-16 code units, plus a trimming notice when needed." },
         "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
         "trigger": { "type": "string", "description": "What started the run: run, start, handler, an integration's name, or the app's own." }
       }
