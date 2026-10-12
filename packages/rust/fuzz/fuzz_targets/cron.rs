@@ -41,7 +41,7 @@ fuzz_target!(|input: Input<'_>| {
         let Some(next) = schedule.fire_after(at) else {
             break;
         };
-        if at.abs() < DATE_RANGE && next.abs() < DATE_RANGE {
+        if at.unsigned_abs() < DATE_RANGE as u64 && next.unsigned_abs() < DATE_RANGE as u64 {
             assert!(next > at, "{:?} in {zone:?}: {next} is not after {at}", input.expr);
         }
         at = next;
