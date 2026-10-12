@@ -662,6 +662,8 @@ dialog.search::backdrop { background: rgba(9, 9, 11, .42); }
 .search-hint kbd:not(:first-child) { margin-left: 10px; }
 
 .doc { min-width: 0; max-width: 66ch; }
+.docs .doc a:not(.anchor) { text-decoration-color: #e5422b; text-decoration-thickness: 2px; text-underline-offset: .18em; }
+.docs .doc a:not(.anchor):is(:hover, :focus-visible) { text-decoration-thickness: 3px; }
 .doc > * + * { margin-top: 16px; }
 .doc .label { font: 500 11.5px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
 .doc .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 12px; }
