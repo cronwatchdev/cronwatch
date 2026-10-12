@@ -27,9 +27,16 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
 
 replace cronwatch.dev/go => ../
+
+// Pin unused transitive tooling in this unpublished module to patched releases.
+replace (
+	github.com/yuin/goldmark => github.com/yuin/goldmark v1.7.17
+	golang.org/x/net => golang.org/x/net v0.60.0
+)
