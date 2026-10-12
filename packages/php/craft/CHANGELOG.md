@@ -1,5 +1,10 @@
 # Release Notes for CronWatch
 
+## Unreleased
+
+### Fixed
+- Updated library fixes prevent duplicate failure counts during recovery, bound oversized output lines, and reject malformed dashboard JSON without changing silence state.
+
 ## 0.14.0 - 2026-10-11
 
 ### Changed

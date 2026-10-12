@@ -2,6 +2,11 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## Unreleased
+
+### Fixed
+- Updated library fixes prevent duplicate failure counts during recovery, bound oversized output lines, and reject malformed dashboard JSON without changing silence state.
+
 ## 0.14.0 - 2026-10-11
 
 ### Changed
