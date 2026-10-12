@@ -737,27 +737,50 @@ defmodule Cronwatch.HardeningTimingTest do
   end
 
   test "a timeout too long for one timer is cancelled with its run, and never fires on a later one" do
-    # One timer waits at most 40 ms here, so a 100 ms timeout takes three.
-    Application.put_env(:cronwatch, :max_timer, 40)
+    # Drive the timer messages explicitly so scheduler delays cannot let the
+    # timeout fire before this test closes the run.
+    chunk = 1_000_000
+    Application.put_env(:cronwatch, :max_timer, chunk)
     %{cw: cw} = make()
+    server = Cronwatch.Runs.server(cw)
     first = spawn(fn -> Process.sleep(:infinity) end)
     second = spawn(fn -> Process.sleep(:infinity) end)
+    third = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn -> Enum.each([first, second, third], &Process.exit(&1, :kill)) end)
     a = :atomics.new(1, [])
     b = :atomics.new(1, [])
 
-    :ok = Cronwatch.Runs.register(cw, "same", first, %{cancel: a}, 100)
-    Process.sleep(60)
-    # Gone after its first timer was re-armed: the re-armed one must go too.
+    :ok = Cronwatch.Runs.register(cw, "same", first, %{cancel: a}, 3 * chunk)
+    [{ref, {"same", ^first, timer}}] = Map.to_list(:sys.get_state(server).runs)
+    assert Process.cancel_timer(timer)
+    send(server, {:timeout, ref, 2 * chunk})
+    {"same", ^first, rearmed} = :sys.get_state(server).runs[ref]
+    assert rearmed != timer
+    assert Process.read_timer(rearmed)
+
     assert Cronwatch.Runs.close(cw, "same")
-    :ok = Cronwatch.Runs.register(cw, "same", second, %{cancel: b}, 60_000)
-    Process.sleep(120)
+    assert Process.read_timer(rearmed) == false, "closing cancels the rearmed timer"
+    :ok = Cronwatch.Runs.register(cw, "same", second, %{cancel: b}, 3 * chunk)
+    send(server, {:timeout, ref, 0})
+    :sys.get_state(server)
     assert :atomics.get(b, 1) == 0, "the earlier run's timeout did not cancel the later one"
     assert :atomics.get(a, 1) == 0
+    assert Cronwatch.Runs.close(cw, "same")
 
-    # A run still in flight is cancelled at its timeout, however many timers it takes.
+    # A run still in flight is cancelled only after every timer chunk.
     c = :atomics.new(1, [])
-    third = spawn(fn -> Process.sleep(:infinity) end)
-    :ok = Cronwatch.Runs.register(cw, "long", third, %{cancel: c}, 100)
-    eventually(fn -> :atomics.get(c, 1) == 1 end)
+    :ok = Cronwatch.Runs.register(cw, "long", third, %{cancel: c}, 3 * chunk)
+    [{ref, {"long", ^third, _timer}}] = Map.to_list(:sys.get_state(server).runs)
+
+    for left <- [2 * chunk, chunk, 0] do
+      {"long", ^third, timer} = :sys.get_state(server).runs[ref]
+      assert Process.cancel_timer(timer)
+      assert :atomics.get(c, 1) == 0
+      send(server, {:timeout, ref, left})
+      :sys.get_state(server)
+    end
+
+    assert :atomics.get(c, 1) == 1
+    assert Cronwatch.Runs.close(cw, "long")
   end
 end
