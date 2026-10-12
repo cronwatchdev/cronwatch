@@ -86,7 +86,7 @@ string path = await nightly.RunAsync(async (job, ct) =>
 
 A name is 1 to 120 letters, digits, `.`, `_`, `:`, or `-`, starting with a letter or digit. `cw.RunAsync(name, fn)` declares a name it has not seen, for a job run once. `JobOptions` keeps its fields in the order you set them in the initializer, so the stored definition is the JSON a Node process writes for the same options in the same order. Durations take the SDK's text (`"15m"`, `"1h30m"`, stored as written), a `TimeSpan`, or milliseconds. `Expect` takes the text the output must contain, `Expect.Matches(source, flags)` for a JavaScript pattern, or `Expect.That(output => ...)`.
 
-A `string` the function returns is the run's output when nothing was logged, and what `Expect` checks. An `HttpResponseMessage` of 400 or more (or on ASP.NET Core an `IResult` with such a status) fails the run with `HTTP <status> <reason>`, so a job that calls an API and returns its answer fails when the API does. The run keeps the last 16 KB of output.
+A `string` the function returns is the run's output when nothing was logged, and what `Expect` checks. An `HttpResponseMessage` of 400 or more (or on ASP.NET Core an `IResult` with such a status) fails the run with `HTTP <status> <reason>`, so a job that calls an API and returns its answer fails when the API does. The run keeps a bounded tail of output; see [output limits](/docs/limits/#output-and-errors).
 
 A failed run's error is written as the SDK writes a JavaScript error: the exception's simple name and message (`IOException: disk full`), then up to five frames of its stack, each `Example.Reports.BuildAsync (Reports.cs:42)`, async state machines written as the methods you wrote. Inner exceptions are not written.
 

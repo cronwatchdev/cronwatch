@@ -78,7 +78,7 @@ Path path = nightly.call(job -> reports.build());     // call() returns what the
 
 A name is 1 to 120 letters, digits, `.`, `_`, `:`, or `-`, starting with a letter or digit. `cw.run(name, fn)` and `cw.call(name, fn)` declare a name they have not seen, for a job run once. `JobOptions` keeps its fields in the order you set them, so the stored definition is the JSON a Node process writes for the same options in the same order. Durations take the SDK's text (`"15m"`, `"1h30m"`, stored as written), a `java.time.Duration`, or milliseconds.
 
-A `String` that `call`'s function returns is the run's output when nothing was logged, and what `expect` checks. An HTTP answer of 400 or more (a `java.net.http.HttpResponse`, or Spring's `ResponseEntity`) fails the run with `HTTP <status> <reason>`, so a job that calls an API and returns its answer fails when the API does. The run keeps the last 16 KB of output.
+A `String` that `call`'s function returns is the run's output when nothing was logged, and what `expect` checks. An HTTP answer of 400 or more (a `java.net.http.HttpResponse`, or Spring's `ResponseEntity`) fails the run with `HTTP <status> <reason>`, so a job that calls an API and returns its answer fails when the API does. The run keeps a bounded tail of output; see [output limits](/docs/limits/#output-and-errors).
 
 A failed run's error is written as the SDK writes a JavaScript error: the exception's simple name and message (`IOException: disk full`), then up to five frames of its stack, each `com.example.Reports.build (Reports.java:42)`. Causes are not written.
 
@@ -331,7 +331,7 @@ It reads through a data source on the database pg_cron runs in (its `cron.databa
 
 ## Redaction
 
-Before a run's output and error are stored, shown, or sent anywhere, they are redacted. The default blanks values that look like secrets (secret-named pairs, credentials in URLs, authorization headers, private keys, JWTs, webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats), exactly what the SDK's default blanks: the patterns are the SDK's, run by an engine with JavaScript's semantics, so every case the SDK's tests hold gives the same bytes. Redaction runs before the 16 KB cap, so the cut never keeps the rest of a secret whose label it cut off. An `expect` rule is checked before redaction, so it still sees what was logged.
+Before a run's output and error are stored, shown, or sent anywhere, they are redacted. The default blanks values that look like secrets (secret-named pairs, credentials in URLs, authorization headers, private keys, JWTs, webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats), exactly what the SDK's default blanks: the patterns are the SDK's, run by an engine with JavaScript's semantics, so every case the SDK's tests hold gives the same bytes. Redaction runs before the [output cap](/docs/limits/#output-and-errors), so the cut never keeps the rest of a secret whose label it cut off. An `expect` rule is checked before redaction, so it still sees what was logged.
 
 ```java
 Cronwatch.builder().noRedaction();                                   // keep output as logged

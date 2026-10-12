@@ -86,7 +86,7 @@ Missed since 2026-01-05 03:15:00 UTC (6h ago). It has no schedule now, so nothin
 
 ## expect rules
 
-`expect` turns a quiet success into a failure when the job produced no evidence of doing its work. The output is whatever the job logged with `job.log()`, or the string the function returned if it logged nothing. The rule sees all of it, or for very long output its first and last 16 KB, so a line logged early still counts even though only the tail is stored.
+`expect` turns a quiet success into a failure when the job produced no evidence of doing its work. The output is whatever the job logged with `job.log()`, or the string the function returned if it logged nothing. The rule sees all of it, or for very long output its first and last 16,384 UTF-16 code units, so a line logged early still counts even though only the tail is stored.
 
 ```ts
 cw.job("export", { expect: "wrote" });                       // output must contain the string
@@ -108,7 +108,7 @@ Baselines use the last twenty successful runs, reading past any failures in betw
 
 ## Output and metrics
 
-Output, whether logged or returned, and errors are capped at 16 KB per run, keeping the tail. Before either is stored, values that look like secrets are replaced with `[redacted]`: `password=`, `api_key:`, `:secret => "..."`, and similar pairs (quoted values in full), credentials in URLs, `Bearer`, `Basic`, and `Token` authorization values, PEM private keys, JWTs, Slack and Discord webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats. Redaction runs before the cap, so the cut never keeps the rest of a secret whose label it cut off. NUL bytes are removed. `expect` rules see the output before redaction. Pass `redact` to `cronwatch()` to use your own function, or `false` to turn it off. Every port blanks the same patterns by default and has the same option in its own spelling (`redact:` in Ruby, `WithRedact` in Go, and so on). Metrics are numbers keyed by name; report as many as you like. Both are stored with the run, shown on the dashboard and in alerts, and handed to the MCP server and to triage.
+Output, whether logged or returned, and errors keep a tail of at most 16,384 UTF-16 code units per run, plus a trimming notice when needed. See [output limits](/docs/limits/#output-and-errors) for the unit and memory bounds. Before either is stored, values that look like secrets are replaced with `[redacted]`: `password=`, `api_key:`, `:secret => "..."`, and similar pairs (quoted values in full), credentials in URLs, `Bearer`, `Basic`, and `Token` authorization values, PEM private keys, JWTs, Slack and Discord webhook URLs, and AWS, GitHub, Slack, Stripe, Google, and API key formats. Redaction runs before the cap, so the cut never keeps the rest of a secret whose label it cut off. NUL bytes are removed. `expect` rules see the output before redaction. Pass `redact` to `cronwatch()` to use your own function, or `false` to turn it off. Every port blanks the same patterns by default and has the same option in its own spelling (`redact:` in Ruby, `WithRedact` in Go, and so on). Metrics are numbers keyed by name; report as many as you like. Both are stored with the run, shown on the dashboard and in alerts, and handed to the MCP server and to triage.
 
 ## Runs that span calls
 
@@ -126,6 +126,6 @@ Starting closes missed and stuck like any run starting. Finishing is judged like
 
 A run is judged once, however many times it is finished. The finish is written only while the stored run is still running (or marked timed out by a check), in one step, so when two processes finish the same run at once (a queue that delivers the completion twice, say) one records it and counts it, and the other gets `null` and hears through `onError` that the run was already finished. The built-in stores do this; a custom store without `updateRunIf` falls back to a read then a write, which is only safe when one process finishes a given run. A finish that arrives after a check marked the run stuck is still recorded: a success closes stuck with a recovery, and a failure is not counted a second time.
 
-- `expect` sees what `run()` would: the handle keeps the first 16 KB of everything logged through it, so a line logged early still matches after `flush()` has sent it on and the stored output kept only the tail.
+- `expect` sees what `run()` would: the handle keeps the first 16,384 UTF-16 code units of everything logged through it, so a line logged early still matches after `flush()` has sent it on and the stored output kept only the tail.
 - A run belongs to the job that started it. `start({ id })` with an id another job holds throws, whether that job's start is still in flight or long done, and a handle that finds another job's run under its id finishes and flushes nothing. Ids starting with `pgcron:` are the [pg_cron reader's](/docs/supabase/) and are refused.
 - When the store fails during `finish()`, nothing is recorded, the error goes to `onError`, and the handle stays active: call `finish()` again once the store is back. The lines and metrics logged are kept.

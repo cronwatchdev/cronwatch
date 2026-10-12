@@ -90,7 +90,7 @@ Declare each job once, at startup, and keep the handle, a cheap `Clone` like the
 
 A `String` the function returns is the run's output when nothing was logged (and what `expect` checks). An HTTP answer it returns (a `cronwatch::web::Response`, or with `tower` an `http::Response`) with a status of 400 or more fails the run with `HTTP <status> <reason>`; with `tower`, `job.run_http(f)` does the same for an `http::Response` of any body, so a job that calls an API and returns its answer fails when the API does.
 
-The `JobContext` the function gets is a cheap `Clone`, so the future owns it: `name()`, `run_id()`, `started_at()` (epoch milliseconds), `log(line)`, `metric(name, value)`, and `metrics(values)`. `log` takes one line, anything with `Display`; format it yourself. The run keeps the last 16 KB. Code deep in a call chain finds the run with `cronwatch::current()`, which is `None` outside one.
+The `JobContext` the function gets is a cheap `Clone`, so the future owns it: `name()`, `run_id()`, `started_at()` (epoch milliseconds), `log(line)`, `metric(name, value)`, and `metrics(values)`. `log` takes one line, anything with `Display`; format it yourself. The run keeps a bounded tail of output; see [output limits](/docs/limits/#output-and-errors). Code deep in a call chain finds the run with `cronwatch::current()`, which is `None` outside one.
 
 ### The timeout and dropped futures
 

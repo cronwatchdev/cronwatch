@@ -31,7 +31,9 @@ A queued alert that no longer describes the job is dropped instead of sent late:
 
 ## Output and errors
 
-Output and errors are capped at 16 KB, keeping the tail. NUL characters are removed from both before anything else, because Postgres refuses them. A custom `redact` that throws is reported through `onError` and the default patterns are used instead, so the run is still recorded.
+Output and errors keep a tail of at most 16,384 UTF-16 code units, with an `[earlier output trimmed]` notice prepended when text is cut. This is a text limit, not a byte limit: most characters use one code unit, supplementary characters such as many emoji use two, and the UTF-8 bytes stored in a database may take more space. Every port uses this measure to match the TypeScript SDK. The recorder also bounds individual oversized log lines and its retained text window, so one long line is not kept in full.
+
+NUL characters are removed from both before anything else, because Postgres refuses them. A custom `redact` that throws is reported through `onError` and the default patterns are used instead, so the run is still recorded.
 
 ## A job that cannot be evaluated
 

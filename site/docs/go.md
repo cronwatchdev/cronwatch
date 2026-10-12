@@ -107,7 +107,7 @@ res, err := cronwatch.RunValue(ctx, sync, func(ctx context.Context, job *cronwat
 })
 ```
 
-The `JobContext` has `Name()`, `RunID()`, `StartedAt()` (epoch milliseconds), `Log(parts...)`, `Metric(name, value)`, and `Metrics(values)`. `Log` joins its parts with spaces: strings as they are, errors as `Name: message` (`PathError: open x: no such file or directory`, or `Error: ...` for an unnamed error), anything else as JSON. The run keeps the last 16 KB. Code deep in a call chain finds the run with `cronwatch.Current(ctx)`, which is nil outside one.
+The `JobContext` has `Name()`, `RunID()`, `StartedAt()` (epoch milliseconds), `Log(parts...)`, `Metric(name, value)`, and `Metrics(values)`. `Log` joins its parts with spaces: strings as they are, errors as `Name: message` (`PathError: open x: no such file or directory`, or `Error: ...` for an unnamed error), anything else as JSON. The run keeps a bounded tail of output; see [output limits](/docs/limits/#output-and-errors). Code deep in a call chain finds the run with `cronwatch.Current(ctx)`, which is nil outside one.
 
 ### Context and the timeout
 
@@ -156,7 +156,7 @@ default:
 }
 ```
 
-[`examples/crontab`](https://github.com/cronwatchdev/cronwatch/tree/main/packages/go/examples/crontab) in the repository is this program, with a test that runs its two commands on one SQLite file. `Check` returns a `*CheckResult` with `CheckedAt`, `Jobs`, `Alerts`, and `Pruned`; its error is for the store failing as the check starts. Calls at the same time share one check, which runs to the end even when the first caller's context is cancelled, while each caller stops waiting when its own context ends.
+[`examples/crontab`](https://github.com/cronwatchdev/cronwatch/tree/main/packages/go/examples/crontab) in the repository is this program, with a test that runs its two commands on one SQLite file. That unpublished examples module requires Go 1.26 for its development dependencies; the core library supports Go 1.25. `Check` returns a `*CheckResult` with `CheckedAt`, `Jobs`, `Alerts`, and `Pruned`; its error is for the store failing as the check starts. Calls at the same time share one check, which runs to the end even when the first caller's context is cancelled, while each caller stops waiting when its own context ends.
 
 ## The dashboard
 
