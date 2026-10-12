@@ -137,6 +137,9 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 
 == Changelog ==
 
+= Unreleased =
+* Updated library fixes prevent duplicate failure counts during recovery, bound oversized output lines, and reject malformed dashboard JSON without changing silence state.
+
 = 0.14.0 =
 
 * Needs WordPress 6.5 or newer (was 6.1). The library uses `array_is_list`, which WordPress provides from 6.5, and PHP 8.2 support in WordPress is complete from 6.5.

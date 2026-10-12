@@ -2,6 +2,25 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Fixed
+
+- Every language: concurrent recovery checks and a run's normal completion consume a pending result only once, so one failed run cannot count twice toward an alert. A late success still recovers a timed-out run.
+- Every language: output recording bounds individual oversized lines as well as the retained window, preserves the output preview and expectations, and removes NUL bytes before clipping the redaction margin.
+- Every language: malformed JSON and non-object JSON bodies return 400 on dashboard sign-in and silence routes, without changing a job's silence state.
+- TypeScript: alert transport errors no longer expose credentials from URLs or headers, and alert URLs containing credentials are rejected.
+- MCP: job definitions, run metadata and alert metadata are fenced as untrusted data, and connection errors do not disclose credentials.
+- Java: the Spring starter uses patched Jackson and Tomcat dependencies.
+- Updated development and optional dependency selections, with two narrowly scoped, expiring advisory exceptions documented in security/README.md.
+- Rust: removed the test certificate generator dependency and refreshed workspace package versions in Cargo.lock. Releases now refresh that lockfile automatically.
+- Rust: the cron fuzz target handles the smallest signed integer without overflowing.
+
+### Changed
+
+- CI scans resolved dependencies in all nine ecosystems on code changes and weekly, and blocks on unexcepted advisories or incomplete scans.
+- Go examples require Go 1.26 for patched development dependencies; the core library still supports Go 1.25.
+
 ## 0.14.0 - 2026-10-11
 
 ### Fixed
