@@ -59,6 +59,8 @@ for name in "" robfigcron gocron river asynq; do
       continue
     fi
     report="$(cd "$root/$dir" && apidiff -incompatible "$export_file" "$pkg")"
+    # A release changes Version by definition; retain every other API diagnostic.
+    report="$(printf '%s\n' "$report" | awk -v package="$pkg" -f "$root/scripts/go-api-report.awk")"
     if [ -n "$report" ]; then
       echo "  $pkg: incompatible changes"
       printf '    %s\n' "${report//$'\n'/$'\n'    }"
