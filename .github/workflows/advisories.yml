@@ -19,6 +19,14 @@ jobs:
         ecosystem: [npm, PyPI, RubyGems, Go, crates.io, Hex, Packagist, Maven, NuGet]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: matrix.ecosystem == 'PyPI'
+        with:
+          python-version: "3.14"
+      - name: Resolve Python runtime and test dependencies
+        if: matrix.ecosystem == 'PyPI'
+        working-directory: packages/python
+        run: uv lock
       - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         if: matrix.ecosystem == 'RubyGems'
         with:

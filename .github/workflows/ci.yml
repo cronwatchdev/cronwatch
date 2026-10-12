@@ -830,6 +830,7 @@ jobs:
       - name: The nested modules are tidy
         run: |
           for module in sqltest examples robfigcron gocron river asynq; do
+            if [ "$module" = "examples" ] && [ "${{ matrix.go }}" = "1.25" ]; then continue; fi
             (cd "packages/go/$module" && go mod tidy -diff) || exit 1
           done
       - name: gofmt
@@ -837,6 +838,7 @@ jobs:
       - name: go vet
         run: |
           for module in . sqltest examples robfigcron gocron river asynq; do
+            if [ "$module" = "examples" ] && [ "${{ matrix.go }}" = "1.25" ]; then continue; fi
             (cd "packages/go/$module" && go vet ./...) || exit 1
           done
       # staticcheck 0.8 needs Go 1.26 to build, so it lints on the newest entry;
@@ -875,13 +877,14 @@ jobs:
       # The integrations at the releases their go.mod requires (the oldest
       # supported: gocron 2.21.0, River 0.44.1, Asynq 0.25.1, robfig/cron
       # 3.0.1), River against Postgres and Asynq against Redis, and the
-      # crontab example.
+      # crontab example (Go 1.26 or newer).
       - name: The integrations and the examples
         env:
           CRONWATCH_TEST_PG: postgres://postgres:pw@127.0.0.1:5432/cw
           CRONWATCH_TEST_REDIS: redis://127.0.0.1:6379/0
         run: |
           for module in robfigcron gocron river asynq examples; do
+            if [ "$module" = "examples" ] && [ "${{ matrix.go }}" = "1.25" ]; then continue; fi
             (cd "packages/go/$module" && go test -race -count=1 ./...) || exit 1
           done
       # And at the newest releases: River 0.45 and newer need Go 1.26, so
