@@ -825,6 +825,8 @@ class Web:
         if self._token and method == "POST" and path == "/signin":
             try:
                 given_token = self._read_body(request).get("token")
+            except _MalformedBody:
+                return _html_response(_html.message_page("Bad request", "Malformed request body", base), 400)
             except BodyTooLarge:
                 # A body too large is no token at all.
                 given_token = None
@@ -904,6 +906,8 @@ class Web:
                     fields = self._read_body(request)
                 except BodyTooLarge:
                     return _html_response(_html.message_page("Not silenced", "The request was too large.", base), 413)
+                except _MalformedBody:
+                    return _html_response(_html.message_page("Not silenced", "Malformed request body", base), 400)
                 try:
                     duration = _silence_duration(fields.get("for"))
                 except ValueError as error:
@@ -948,6 +952,8 @@ class Web:
                     body = self._read_body(request)
                 except BodyTooLarge:
                     return _too_large()
+                except _MalformedBody:
+                    return _api({"ok": False, "error": "Malformed request body"}, 400)
                 try:
                     duration = _silence_duration(body["for"] if "for" in body else request.param("for"))
                 except ValueError as error:
@@ -1021,9 +1027,7 @@ class Web:
                 data = _js_loads(text[1:] if text.startswith("﻿") else text)
                 if isinstance(data, dict):
                     return {str(k): _js_string(v) for k, v in data.items()}
-                if isinstance(data, list):
-                    return {str(i): _js_string(v) for i, v in enumerate(data)}
-                return {}
+                raise _MalformedBody()
             if "application/x-www-form-urlencoded" in kind or "multipart/form-data" in kind:
                 if request.form is not None:
                     return {str(k): _form_value(v) for k, v in request.form.items()}
@@ -1037,8 +1041,12 @@ class Web:
         except BodyTooLarge:
             raise
         except Exception:
-            return {}
+            raise _MalformedBody() from None
         return {}
+
+
+class _MalformedBody(ValueError):
+    """A declared request body that cannot be parsed."""
 
 
 def _too_large_body() -> bytes:

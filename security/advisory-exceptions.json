@@ -1,0 +1,33 @@
+[
+  {
+    "ecosystem": "crates.io",
+    "name": "rsa",
+    "version": "0.10.0-rc.18",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2023-0071",
+      "GHSA-c38w-74pg-36hr",
+      "GHSA-4grx-2x9w-596c"
+    ],
+    "expires": "2027-01-10",
+    "reason": "No upstream patch exists. Only the SQLx MySQL tests enable mysql-rsa. SQLx uses public-key encryption for client authentication, never the private-key operation affected by the Marvin timing attack. The published libraries leave mysql-rsa to the app. Review or remove by expiry."
+  },
+  {
+    "ecosystem": "Go",
+    "name": "golang.org/x/crypto",
+    "version": "v0.58.0",
+    "sources": [
+      "packages/go/examples/go.mod"
+    ],
+    "advisories": [
+      "GO-2026-5932"
+    ],
+    "expires": "2027-01-10",
+    "absent_import_prefixes": [
+      "golang.org/x/crypto/openpgp"
+    ],
+    "reason": "This advisory covers only the unmaintained OpenPGP packages and has no patched module release. The unpublished examples do not import OpenPGP, directly or transitively. The scanner verifies that absence before accepting this exception."
+  }
+]

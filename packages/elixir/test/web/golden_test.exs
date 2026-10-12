@@ -10,6 +10,8 @@ defmodule Cronwatch.Web.GoldenTest do
   sides, so each becomes `<id:N>` in order of first appearance. The gem and
   the Python, PHP, Go, and Rust ports replay the same file.
   """
+  alias Cronwatch.Web.Request
+
   use ExUnit.Case, async: false
 
   @moduletag :capture_log
@@ -41,7 +43,7 @@ defmodule Cronwatch.Web.GoldenTest do
     golden = JS.parse!(File.read!(@golden))
     assert Object.get(golden, "t0") == @t0, "golden.json's t0"
     captures = Object.get(golden, "captures")
-    assert length(captures) == 86, "golden.json's captures"
+    assert length(captures) == 98, "golden.json's captures"
 
     Enum.map(captures, fn c ->
       %{
@@ -261,7 +263,21 @@ defmodule Cronwatch.Web.GoldenTest do
     captures = captures()
     seed()
     port = Endpoint.serve()
-    Enum.reduce(captures, %{}, &served(port, &1, &2))
+
+    Enum.reduce(captures, %{}, fn c, ids ->
+      type = Enum.find_value(c.headers, "", fn {k, v} -> if k == "content-type", do: v end)
+
+      if c.body != nil and String.contains?(type, "application/json") and not Request.valid_body?(type, c.body) do
+        # Phoenix can reject JSON before the dashboard runs; its error page and headers are its own.
+        before = Cronwatch.job_summary!("sync-users", instance: @inst).silenced_until
+        {status, _, _} = HTTP.request(port, c.method, resolve(c.path), [{"host", "app.test"} | c.headers], c.body)
+        assert status == 400
+        assert Cronwatch.job_summary!("sync-users", instance: @inst).silenced_until == before
+        ids
+      else
+        served(port, c, ids)
+      end
+    end)
   end
 
   # One capture through a server, or straight into the plug when it is

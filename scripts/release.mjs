@@ -196,7 +196,7 @@ const GEM_FORBIDDEN = ["test/", "conformance/"];
 const NPM_PACKAGES = ["@cronwatch/sdk", "@cronwatch/mcp"];
 
 /** Files the steps regenerate, reported by --dry-run. */
-const REGENERATED = ["package-lock.json", "conformance/*.json (sdkVersion)", "packages/ruby/test/web/golden.json"];
+const REGENERATED = ["package-lock.json", "packages/rust/Cargo.lock", "conformance/*.json (sdkVersion)", "packages/ruby/test/web/golden.json"];
 
 const ROOT = process.cwd();
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
@@ -373,7 +373,7 @@ export function planEdits(rows, readFile, current, next) {
  * (`cronwatch = "X.Y"` in Cargo, `{:cronwatch, "~> X.Y"}` on Hex).
  */
 function strays(current) {
-  const skip = new Set([...VERSIONED.map((row) => row.file), ...MARKDOWN_CHANGELOGS, ROOT_CHANGELOG, "package-lock.json", "scripts/release.mjs", "scripts/release.test.mjs"]);
+  const skip = new Set([...VERSIONED.map((row) => row.file), ...MARKDOWN_CHANGELOGS, ROOT_CHANGELOG, "package-lock.json", "packages/rust/Cargo.lock", "scripts/release.mjs", "scripts/release.test.mjs"]);
   const minor = minorOf(current).replace(".", "\\.");
   const found = [];
   for (const args of [["-F", current], ["-E", `cronwatch[a-z-]* = (\\{ version = )?"${minor}"|\\{:cronwatch, \\\\?"~(>|&gt;) ${minor}`]]) {
@@ -508,6 +508,7 @@ function main() {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const steps = [
     ["Refresh package-lock.json", npm, ["install", "--no-audit", "--no-fund"]],
+    ["Refresh the Rust workspace lock", "cargo", ["update", "--workspace"], { cwd: path.join(ROOT, "packages/rust") }],
     ["Regenerate conformance/", npm, ["run", "conformance"]],
     ["Build the SDK", npm, ["run", "build", "--workspace", "packages/sdk"]],
     ["Regenerate the web golden fixture", "node", ["packages/ruby/test/web/golden.mjs"], { env: { TZ: "UTC" } }],

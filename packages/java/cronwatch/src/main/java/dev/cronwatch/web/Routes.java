@@ -603,6 +603,9 @@ public final class Routes implements Endpoint {
     // access log. Cross-site posts were refused above.
     if (!token.isEmpty() && method.equals("POST") && path.equals("/signin")) {
       byte[] data = readLimited(req);
+      if (data != null && !Requests.validBody(said.contentType(), data)) {
+        return page(Html.messagePage("Bad request", "Malformed request body", base, false), 400);
+      }
       String sent = data == null ? null : Requests.bodyField(said.contentType(), data, "token");
       if (sent == null || !Text.constantTimeEquals(sent, token)) {
         return signInPage(base);
@@ -731,6 +734,9 @@ public final class Routes implements Endpoint {
         byte[] data = readLimited(req);
         if (data == null) {
           return tooLarge(true, base);
+        }
+        if (!Requests.validBody(said.contentType(), data)) {
+          return page(Html.messagePage("Not silenced", "Malformed request body", base, false), 400);
         }
         String value = Requests.bodyField(said.contentType(), data, "for");
         double ms;
@@ -890,6 +896,8 @@ public final class Routes implements Endpoint {
         if (data == null) {
           return tooLarge(false, "");
         }
+        if (!Requests.validBody(said.contentType(), data))
+          return api(errorBody("Malformed request body"), 400);
         String value = Requests.bodyField(said.contentType(), data, "for");
         if (value == null) {
           value = Requests.param(said.query(), "for");

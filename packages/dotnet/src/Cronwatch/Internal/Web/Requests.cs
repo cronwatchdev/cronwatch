@@ -299,6 +299,20 @@ internal static class Requests
         return found;
     }
 
+    /// <summary>Whether the declared JSON object or multipart form can be parsed.</summary>
+    public static bool ValidBody(string contentType, byte[] data)
+    {
+        if (contentType.Contains("application/json", StringComparison.Ordinal))
+        {
+            string text = Encoding.UTF8.GetString(data);
+            if (text.StartsWith('﻿')) text = text[1..];
+            try { return Json.Parse(text) is JsObject; }
+            catch (JsonParseException) { return false; }
+        }
+        if (contentType.Contains("multipart/form-data", StringComparison.Ordinal)) return MultipartFields(contentType, data) != null;
+        return true;
+    }
+
     /// <summary>
     /// A field of a request's form or JSON object, as <c>String(value)</c> gives it in
     /// JavaScript; null for anything else, or a body that cannot be read as its type says. The

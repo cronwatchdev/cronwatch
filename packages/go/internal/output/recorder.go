@@ -12,7 +12,7 @@ import (
 // window is how much logged text a recorder holds, in code units, before
 // it drops lines from the front. RedactAndCap trims exactly at the end, so
 // this only bounds memory: well past the cap, so the kept tail is whole.
-const window = 64 * 1024
+const window = OutputCap + RedactEdge + 2
 
 // Recorder is createRecorder in job.ts: the lines a run logs and the
 // numbers it reports. It is safe for concurrent use, since a job may log
@@ -26,10 +26,13 @@ type Recorder struct {
 	size    int
 	// head is the first lines logged, until they reach OutputCap, kept for
 	// expect even after the window has dropped them.
-	head     []string
-	headSize int
-	dropped  bool
-	metrics  *js.Object
+	head      []string
+	headSize  int
+	whole     string
+	wholeLost bool
+	tail      string
+	logged    bool
+	metrics   *js.Object
 }
 
 // NewRecorder is an empty recorder.
@@ -47,9 +50,29 @@ func (r *Recorder) Log(parts ...any) {
 	n := js.Length16(line)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	separator := ""
+	if r.logged {
+		separator = "\n"
+	}
+	r.logged = true
+	if !r.wholeLost {
+		if js.Length16(r.whole)+len(separator)+n <= 2*OutputCap {
+			r.whole += separator + line
+		} else {
+			r.wholeLost = true
+			r.whole = ""
+		}
+	}
+	r.tail = strings.Clone(tail(r.tail+separator+tail(line, OutputCap), OutputCap))
 	if r.headSize < OutputCap {
-		r.head = append(r.head, line)
+		r.head = append(r.head, strings.Clone(js.Head16(line, OutputCap-r.headSize)))
 		r.headSize += n + 1
+	}
+	line = StripNul(line)
+	n = js.Length16(line)
+	if n >= window {
+		line = strings.Clone(js.Tail16(line, window-1))
+		n = js.Length16(line)
 	}
 	r.lines = append(r.lines, line)
 	r.lengths = append(r.lengths, n)
@@ -57,9 +80,9 @@ func (r *Recorder) Log(parts ...any) {
 	// Drop from the front once well past the cap; RedactAndCap trims exactly at the end.
 	for r.size > window && len(r.lines) > 1 {
 		r.size -= r.lengths[0] + 1
+		r.lines[0] = ""
 		r.lines = r.lines[1:]
 		r.lengths = r.lengths[1:]
-		r.dropped = true
 	}
 }
 
@@ -86,11 +109,11 @@ func (r *Recorder) ExpectText() *string {
 	if len(r.lines) == 0 {
 		return nil
 	}
-	all := strings.Join(r.lines, "\n")
-	if !r.dropped && js.Length16(all) <= 2*OutputCap {
-		return &all
+	if !r.wholeLost {
+		s := r.whole
+		return &s
 	}
-	s := js.Head16(strings.Join(r.head, "\n"), OutputCap) + "\n" + js.Tail16(all, OutputCap)
+	s := js.Head16(strings.Join(r.head, "\n"), OutputCap) + "\n" + r.tail
 	return &s
 }
 
@@ -111,4 +134,11 @@ func (r *Recorder) Metrics() *js.Object {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.metrics.Clone()
+}
+
+func tail(s string, n int) string {
+	if js.Length16(s) <= n {
+		return s
+	}
+	return js.Tail16(s, n)
 }

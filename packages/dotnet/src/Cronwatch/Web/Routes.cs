@@ -592,6 +592,7 @@ public sealed class Routes
         if (_token.Length > 0 && method == "POST" && path == "/signin")
         {
             byte[]? data = await ReadLimitedAsync(req, ct).ConfigureAwait(false);
+            if (data != null && !Requests.ValidBody(said.ContentType, data)) return Message("Bad request", "Malformed request body", basePath, 400);
             string? sent = data == null ? null : Requests.BodyField(said.ContentType, data, "token");
             if (sent == null || !WebText.ConstantTimeEquals(sent, _token))
             {
@@ -724,6 +725,7 @@ public sealed class Routes
                 {
                     return TooLarge(true, basePath);
                 }
+                if (!Requests.ValidBody(said.ContentType, data)) return Message("Not silenced", "Malformed request body", basePath, 400);
                 string? value = Requests.BodyField(said.ContentType, data, "for");
                 double ms;
                 try
@@ -873,6 +875,7 @@ public sealed class Routes
                 {
                     return TooLarge(false, "");
                 }
+                if (!Requests.ValidBody(said.ContentType, data)) return Api(ErrorBody("Malformed request body"), 400);
                 string? value = Requests.BodyField(said.ContentType, data, "for") ?? Requests.Param(said.Query, "for");
                 double ms;
                 try

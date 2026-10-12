@@ -199,6 +199,23 @@ defmodule Cronwatch.Web.Request do
     end
   end
 
+  @doc "Whether the declared JSON object or multipart form can be parsed."
+  @spec valid_body?(String.t(), binary()) :: boolean()
+  def valid_body?(content_type, data) do
+    cond do
+      String.contains?(content_type, "application/json") ->
+        text = JS.scrub(data)
+        text = with "﻿" <> rest <- text, do: rest
+        match?({:ok, %Object{}}, JS.parse(text))
+
+      String.contains?(content_type, "multipart/form-data") ->
+        multipart_fields(content_type, data) != nil
+
+      true ->
+        true
+    end
+  end
+
   @doc """
   A field of a request's form or JSON object, as `String(value)` gives it in
   JavaScript; nil for anything else, or a body that cannot be read as its

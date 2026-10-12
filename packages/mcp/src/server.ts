@@ -37,7 +37,7 @@ function summarizeJob(j: JobSummary): string {
   if (j.consecutiveFailures) bits.push(`  consecutive failures: ${j.consecutiveFailures}`);
   if (j.silencedUntil && j.silencedUntil > Date.now()) bits.push(`  silenced until ${iso(j.silencedUntil)}`);
   if (j.definition.description) bits.push(clipLine(`  ${j.definition.description}`));
-  return bits.join("\n");
+  return untrusted(bits.join("\n"));
 }
 
 /** Tool hints for clients: these only read from the app's CronWatch API. */
@@ -54,8 +54,9 @@ function expect(ok: unknown, request: string, what: string, then = "is CRONWATCH
 
 function summarizeRun(r: Run): string {
   const head = `${r.status} at ${iso(r.startedAt)}, ${ms(r.durationMs)}, trigger ${r.trigger}, id ${r.id}`;
-  const parts = [head];
-  if (r.metrics && Object.keys(r.metrics).length) parts.push(clipLine(`  metrics: ${JSON.stringify(r.metrics)}`));
+  const metadata = [head];
+  if (r.metrics && Object.keys(r.metrics).length) metadata.push(`  metrics: ${JSON.stringify(r.metrics)}`);
+  const parts = [untrusted(metadata.join("\n"))];
   if (r.error) parts.push(`  error:\n${untrusted(r.error.split("\n").slice(0, 6).join("\n"))}`);
   if (r.output) {
     const lines = r.output.trimEnd().split("\n");
@@ -164,7 +165,7 @@ export function createServer(options: ServerOptions): McpServer {
         const job = data.job!;
         const all = data.runs!;
         const def = JSON.stringify(job.definition, null, 2);
-        let out = [summarizeJob(job), "", `definition: ${def}`, "", `recent runs (${all.length}):`].join("\n");
+        let out = [summarizeJob(job), "", `definition:\n${untrusted(def)}`, "", `recent runs (${all.length}):`].join("\n");
         // Whole runs, newest first, as many as fit; the rest are named, not cut through.
         let shown = 0;
         for (const r of all) {
@@ -195,7 +196,7 @@ export function createServer(options: ServerOptions): McpServer {
         const result = await api.call<CheckResult | null>("POST", "/check");
         expect(Array.isArray(result?.jobs) && Array.isArray(result.alerts), "POST /check", "the check's result");
         const lines = [`Checked ${result.jobs.length} jobs at ${iso(result.checkedAt)}.`];
-        if (result.alerts.length) lines.push(`Alerts sent: ${result.alerts.map((a) => `${a.job} ${a.type}`).join(", ")}`);
+        if (result.alerts.length) lines.push(`Alerts sent:\n${untrusted(result.alerts.map((a) => `${a.job} ${a.type}`).join(", "))}`);
         else lines.push("No new alerts.");
         const bad = result.jobs.filter((j) => j.health !== "healthy");
         if (bad.length) lines.push("", ...bad.map(summarizeJob));

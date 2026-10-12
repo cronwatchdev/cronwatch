@@ -272,6 +272,7 @@ const MAX_REQUEST_BODY = 1 << 20;
 
 /** A request body past MAX_REQUEST_BODY. */
 const TOO_LARGE = Symbol("too large");
+const BAD_BODY = Symbol("malformed body");
 
 /**
  * The request's body, at most MAX_REQUEST_BODY bytes: refused from its
@@ -310,7 +311,7 @@ async function readLimited(request: Request): Promise<Uint8Array<ArrayBuffer> | 
 }
 
 /** The fields of a JSON or form body, {} for anything else; TOO_LARGE past the cap. */
-async function readBody(request: Request): Promise<Record<string, string> | typeof TOO_LARGE> {
+async function readBody(request: Request): Promise<Record<string, string> | typeof TOO_LARGE | typeof BAD_BODY> {
   const type = request.headers.get("content-type") ?? "";
   const json = type.includes("application/json");
   const form = type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data");
@@ -327,14 +328,14 @@ async function readBody(request: Request): Promise<Record<string, string> | type
   try {
     if (json) {
       const data = await copy.json();
-      return typeof data === "object" && data !== null ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : {};
+      return typeof data === "object" && data !== null && !Array.isArray(data) ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : BAD_BODY;
     }
     const fields = await copy.formData();
     const out: Record<string, string> = {};
     for (const [k, v] of fields.entries()) out[k] = String(v);
     return out;
   } catch {
-    return {};
+    return BAD_BODY;
   }
 }
 
@@ -447,6 +448,7 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
     // the URL and every access log. Cross-site posts were refused above.
     if (token && method === "POST" && path === "/signin") {
       const body = await readBody(request);
+      if (body === BAD_BODY) return html(messagePage("Bad request", "Malformed request body", base), 400);
       const sent = body === TOO_LARGE ? undefined : body.token;
       if (sent === undefined || !constantTimeEqual(sent, token)) return signInPage();
       return redirect(signInReturn(request.headers.get("referer"), publicOrigin, base), { "set-cookie": await signInCookie() });
@@ -519,6 +521,7 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
       if (parts[2] === "silence") {
         const body = await readBody(request);
         if (body === TOO_LARGE) return html(messagePage("Not silenced", "The request was too large.", base), 413);
+        if (body === BAD_BODY) return html(messagePage("Not silenced", "Malformed request body", base), 400);
         let duration: Duration;
         try {
           duration = silenceDuration(body.for);
@@ -559,6 +562,7 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
         if (rest[2] === "silence") {
           const body = await readBody(request);
           if (body === TOO_LARGE) return api({ ok: false, error: "Request body too large" }, 413);
+          if (body === BAD_BODY) return api({ ok: false, error: "Malformed request body" }, 400);
           let duration: Duration;
           try {
             duration = silenceDuration(body.for ?? url.searchParams.get("for"));

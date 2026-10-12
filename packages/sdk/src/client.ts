@@ -766,9 +766,11 @@ export class Cronwatch {
         if (stored.job !== run.job) return `belongs to job "${stored.job}"`;
       }
     }
+    // A recovery can consume the marker after the finished row is committed, before this process evaluates it.
+    const tracked = (await this.readState(run.job)).pendingRuns?.includes(run.id) ?? false;
     const claim = await this.claimFinish(run);
     if ("ignored" in claim) return claim.ignored;
-    if (!claim.lateAfterTimeout || run.status === "ok") await this.finishRun(toStored(definition), run, finishedAt);
+    if (!claim.lateAfterTimeout || run.status === "ok") await this.finishRun(toStored(definition), run, finishedAt, tracked && !claim.lateAfterTimeout);
     return null;
   }
 
@@ -1089,7 +1091,7 @@ export class Cronwatch {
     if (!evaluate) return [];
     await this.updateState(run.job, (before) => ({ state: holdRun(onRunStart(definition, run, before, this.now()), run.id), result: undefined }));
     if (run.status === "running") return [];
-    return this.finishRun(definition, run, this.now());
+    return this.finishRun(definition, run, this.now(), true);
   }
 
   /** recordRun() for a run already stored. */
@@ -1099,6 +1101,7 @@ export class Cronwatch {
       return [];
     }
     if ((stored.status !== "running" && stored.status !== "timeout") || run.status === "running") return [];
+    const tracked = (await this.readState(run.job)).pendingRuns?.includes(run.id) ?? false;
     const claim = await this.claimFinish(run);
     if ("ignored" in claim) {
       this.report(new Error(`run ${run.id} of ${run.job} ${claim.ignored}; ignored`), `recording ${run.job}`);
@@ -1111,7 +1114,7 @@ export class Cronwatch {
       return [];
     }
     if (claim.lateAfterTimeout && run.status !== "ok") return [];
-    return this.finishRun(definition, run, this.now());
+    return this.finishRun(definition, run, this.now(), tracked && !claim.lateAfterTimeout);
   }
 
   /**
@@ -1119,11 +1122,12 @@ export class Cronwatch {
    * written, against the job's state and send what that produces. The
    * alerts are written with that state (see outbox()). Never throws.
    */
-  private async finishRun(definition: StoredJobDefinition, run: Run, now: number): Promise<Alert[]> {
+  private async finishRun(definition: StoredJobDefinition, run: Run, now: number, pendingOnly = false): Promise<Alert[]> {
     let held: Held;
     try {
       let history: Run[] | null = null;
       ({ result: held } = await this.updateState(run.job, async (previous) => {
+        if (pendingOnly && !(previous.pendingRuns ?? []).includes(run.id)) return { state: previous, result: { alerts: [], dropped: 0 } };
         history ??= await this.history(run);
         const before = releaseRun(previous, run.id);
         return this.outbox(applySilence(before, onRunFinish(definition, run, before, history, now), now), definition, now);
@@ -1286,7 +1290,7 @@ export class Cronwatch {
           continue;
         }
         if (run.status === "running" || typeof run.finishedAt !== "number" || run.finishedAt > now - SEND_LEASE_MS) continue;
-        alerts.push(...(await this.finishRun(stored.definition, run, now)));
+        alerts.push(...(await this.finishRun(stored.definition, run, now, true)));
       } catch (e) {
         this.onError(e, `evaluating run ${id} of ${stored.name}`);
       }

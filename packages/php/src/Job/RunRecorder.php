@@ -16,7 +16,7 @@ use Cronwatch\Run;
 final class RunRecorder
 {
     /** Lines are dropped from the front once the output is well past the cap; redactAndCap trims it exactly at the end. */
-    public const KEEP = 64 * 1024;
+    public const KEEP = Output::OUTPUT_CAP + Output::REDACT_EDGE + 2;
 
     /** @var array<int, string> The lines kept, from index $first on. */
     private array $lines = [];
@@ -25,8 +25,10 @@ final class RunRecorder
     /** @var list<string> The first lines logged, up to the cap. */
     private array $head = [];
     private int $headSize = 0;
-    /** Whether any line has been dropped from $lines: what expectText needs once the output runs long. */
-    private bool $dropped = false;
+    /** Raw expectation text while it fits twice the cap; otherwise the prefix and tail are kept. */
+    private ?string $whole = '';
+    private string $tail = '';
+    private bool $logged = false;
     /** @var array<string, int|float> */
     private array $metrics = [];
     public readonly AbortSignal $signal;
@@ -41,9 +43,21 @@ final class RunRecorder
     public function log(string $line): void
     {
         $length = Js::length16($line);
+        $separator = $this->logged ? "\n" : '';
+        $this->logged = true;
+        if ($this->whole !== null) {
+            $this->whole = Js::length16($this->whole) + strlen($separator) + $length <= 2 * Output::OUTPUT_CAP ? $this->whole . $separator . $line : null;
+        }
+        $this->tail = Js::tail16($this->tail . $separator . Js::tail16($line, Output::OUTPUT_CAP), Output::OUTPUT_CAP);
         if ($this->headSize < Output::OUTPUT_CAP) {
-            $this->head[] = $line;
+            $this->head[] = Js::head16($line, Output::OUTPUT_CAP - $this->headSize);
             $this->headSize += $length + 1;
+        }
+        $line = Output::stripNul($line);
+        $length = Js::length16($line);
+        if ($length >= self::KEEP) {
+            $line = Js::tail16($line, self::KEEP - 1);
+            $length = Js::length16($line);
         }
         $this->lines[] = $line;
         $this->size += $length + 1;
@@ -51,7 +65,6 @@ final class RunRecorder
             $this->size -= Js::length16($this->lines[$this->first]) + 1;
             unset($this->lines[$this->first]);
             $this->first++;
-            $this->dropped = true;
         }
     }
 
@@ -61,7 +74,7 @@ final class RunRecorder
     }
 
     /**
-     * The lines still held (past 64 KB the oldest are let go), joined and not
+     * The lines still held (past the bounded redaction window the oldest are let go), joined and not
      * yet capped: the client redacts them first, then caps them (Output::redactAndCap).
      */
     public function output(): ?string
@@ -79,11 +92,7 @@ final class RunRecorder
         if ($this->lines === []) {
             return null;
         }
-        $all = implode("\n", $this->lines);
-        if (!$this->dropped && Js::length16($all) <= 2 * Output::OUTPUT_CAP) {
-            return $all;
-        }
-        return Js::head16(implode("\n", $this->head), Output::OUTPUT_CAP) . "\n" . Js::tail16($all, Output::OUTPUT_CAP);
+        return $this->whole ?? Js::head16(implode("\n", $this->head), Output::OUTPUT_CAP) . "\n" . $this->tail;
     }
 
     /** @return array<string, int|float> */

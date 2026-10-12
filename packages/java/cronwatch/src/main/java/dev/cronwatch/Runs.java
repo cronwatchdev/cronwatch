@@ -652,12 +652,14 @@ final class Runs {
         }
       }
     }
+    JobState state = core.readState(run.job());
+    boolean tracked = state.pendingRuns() != null && state.pendingRuns().contains(run.id());
     Claim claim = claimFinish(run);
     if (claim.ignored() != null) {
       return claim.ignored();
     }
     if (!claim.late() || run.status().equals(RunStatus.OK)) {
-      finishRun(def.stored(), run, finishedAt);
+      finishRun(def.stored(), run, finishedAt, tracked && !claim.late());
     }
     return null;
   }
@@ -692,6 +694,10 @@ final class Runs {
    * pendingRuns}. Never throws: problems go to the error handler.
    */
   List<Alert> finishRun(Definition def, Run run, long now) {
+    return finishRun(def, run, now, false);
+  }
+
+  List<Alert> finishRun(Definition def, Run run, long now, boolean pendingOnly) {
     Delivery.Held held;
     try {
       held =
@@ -699,6 +705,11 @@ final class Runs {
                   run.job(),
                   () -> history(run),
                   (previous, history) -> {
+                    if (pendingOnly
+                        && (previous.pendingRuns() == null
+                            || !previous.pendingRuns().contains(run.id()))) {
+                      return new Core.Changed<>(previous, new Delivery.Held(List.of(), 0));
+                    }
                     JobState before = Evaluate.releaseRun(previous, run.id());
                     Evaluation settled =
                         Evaluate.applySilence(
@@ -832,7 +843,7 @@ final class Runs {
     if (run.status().equals(RunStatus.RUNNING)) {
       return List.of();
     }
-    return finishRun(def.stored(), run, core.now());
+    return finishRun(def.stored(), run, core.now(), true);
   }
 
   /** {@code recordRun} for a run already stored. */
@@ -855,6 +866,8 @@ final class Runs {
     if (!open || run.status().equals(RunStatus.RUNNING)) {
       return List.of();
     }
+    JobState state = core.readState(run.job());
+    boolean tracked = state.pendingRuns() != null && state.pendingRuns().contains(run.id());
     Claim claim = claimFinish(run);
     if (claim.ignored() != null) {
       core.report(
@@ -874,7 +887,7 @@ final class Runs {
     if (claim.late() && !run.status().equals(RunStatus.OK)) {
       return List.of();
     }
-    return finishRun(def, run, core.now());
+    return finishRun(def, run, core.now(), tracked && !claim.late());
   }
 
   /**

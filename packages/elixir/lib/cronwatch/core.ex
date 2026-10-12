@@ -262,6 +262,8 @@ defmodule Cronwatch.Core do
         why
 
       :claim ->
+        tracked = run.id in (read_state!(c, run.job).pending_runs || [])
+
         case claim_finish!(c, run) do
           {:ignored, why} ->
             why
@@ -273,7 +275,7 @@ defmodule Cronwatch.Core do
             nil
 
           {:ok, late} ->
-            if not late or run.status == "ok", do: finish_run(c, job.definition, run, finished_at)
+            if not late or run.status == "ok", do: finish_run(c, job.definition, run, finished_at, tracked and not late)
             nil
         end
     end
@@ -284,7 +286,7 @@ defmodule Cronwatch.Core do
   sends what that produces. The alerts are written with that state (see
   `Cronwatch.Delivery.outbox/5`). Never raises; answers the alerts.
   """
-  def finish_run(c, definition, run, now) do
+  def finish_run(c, definition, run, now, pending_only \\ false) do
     # The history is read once per finish, on the first attempt, even when
     # the state update is tried again.
     key = {__MODULE__, :history, make_ref()}
@@ -293,11 +295,15 @@ defmodule Cronwatch.Core do
       try do
         {_, held} =
           update_state!(c, run.job, fn previous ->
-            history = Process.get(key) || Process.put(key, history!(c, run)) || Process.get(key)
-            previous = Evaluate.release_run(previous, run.id)
-            {:ok, e} = ok_or_raise(Evaluate.on_run_finish(definition, run, previous, history, now))
-            {state, drafts} = Evaluate.apply_silence(previous, e, now)
-            Delivery.outbox(c, state, drafts, definition, now)
+            if pending_only and run.id not in (previous.pending_runs || []) do
+              {previous, {[], 0}}
+            else
+              history = Process.get(key) || Process.put(key, history!(c, run)) || Process.get(key)
+              previous = Evaluate.release_run(previous, run.id)
+              {:ok, e} = ok_or_raise(Evaluate.on_run_finish(definition, run, previous, history, now))
+              {state, drafts} = Evaluate.apply_silence(previous, e, now)
+              Delivery.outbox(c, state, drafts, definition, now)
+            end
           end)
 
         {:ok, held}

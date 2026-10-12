@@ -63,7 +63,7 @@ export class ApiClient {
       text = await readCapped(response, this.maxBodyBytes);
     } catch (e) {
       if ((e as Error)?.name === "TimeoutError") throw new ApiError(`${method} ${path} got no answer within ${timeout / 1000} seconds`, 0);
-      throw e;
+      throw new ApiError(`${method} ${path} could not reach the dashboard`, 0);
     }
     if (text === null) throw new ApiError(`${method} ${path} answered ${response.status} with a body over ${this.maxBodyBytes} bytes; it was not read`, response.status);
     let data: unknown = null;

@@ -11,7 +11,7 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "!src/conformance/**", "!src/**/tests.rs", "!src/**/*_tests.rs", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**/*", "!src/conformance/**", "!src/**/tests.rs", "!src/**/*_tests.rs", "!src/alerts/testdata/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [features]
 # A blocking client for programs with no runtime of their own.
@@ -80,9 +80,7 @@ hyper-util = { version = "0.1.14", features = ["http1", "tokio"] }
 tower = { version = "0.5.2", default-features = false, features = ["util"] }
 # The job's handler and the dashboard served on AWS Lambda.
 lambda_http = { version = "1", default-features = false, features = ["apigw_http"] }
-# A certificate made at run time and a TLS server, for the test that an
-# untrusted certificate is refused. rcgen 0.14 needs Rust 1.88.
-rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem"] }
+# A local TLS server, with a public untrusted certificate fixture.
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
 # The Rust croner crate (tokio-cron-scheduler's parser), for the report of
 # the croner fuzz generator against it: a report, not a gate.

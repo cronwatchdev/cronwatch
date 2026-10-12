@@ -768,7 +768,7 @@ class Cronwatch:
         self._update_state(run.job, lambda before: (hold_run(on_run_start(definition, run, before, self.now()), run.id), None))
         if run.status == RunStatus.RUNNING:
             return []
-        return self._finish_run(definition, run, self.now())
+        return self._finish_run(definition, run, self.now(), pending_only=True)
 
     def on_error(self, error: BaseException, where: str) -> None:
         """Hands an error to on_error, as a source reports what went wrong."""
@@ -1334,11 +1334,12 @@ class Cronwatch:
                     raise
                 if stored.job != run.job:
                     return f'belongs to job "{stored.job}"'
+        tracked = run.id in (self._read_state(run.job).pending_runs or [])
         late, ignored = self._claim_finish(run)
         if ignored:
             return ignored
         if not late or run.status == RunStatus.OK:
-            self._finish_run(to_stored(definition), run, finished_at)
+            self._finish_run(to_stored(definition), run, finished_at, pending_only=tracked and not late)
         return None
 
     def _write_run_if(self, run: Run, from_statuses: Sequence[RunStatus]) -> bool:
@@ -1541,6 +1542,7 @@ class Cronwatch:
             return []
         if stored.status not in (RunStatus.RUNNING, RunStatus.TIMEOUT) or run.status == RunStatus.RUNNING:
             return []
+        tracked = run.id in (self._read_state(run.job).pending_runs or [])
         late, ignored = self._claim_finish(run)
         if ignored:
             self._report(RuntimeError(f"run {run.id} of {run.job} {ignored}; ignored"), f"recording {run.job}")
@@ -1554,15 +1556,17 @@ class Cronwatch:
             return []
         if late and run.status != RunStatus.OK:
             return []
-        return self._finish_run(definition, run, self.now())
+        return self._finish_run(definition, run, self.now(), pending_only=tracked and not late)
 
-    def _finish_run(self, definition: JobDefinition, run: Run, at: int) -> list[Alert]:
+    def _finish_run(self, definition: JobDefinition, run: Run, at: int, *, pending_only: bool = False) -> list[Alert]:
         """Evaluate a finished run (ok, failed, or timed out by a check), already
         written, against the job's state, and send what that produces. The
         alerts are written with that state (see _outbox()). Never raises."""
         past: list[list[Run]] = []
 
         def change(previous: JobState) -> tuple[JobState, _Held]:
+            if pending_only and run.id not in (previous.pending_runs or []):
+                return previous, _Held([], 0)
             if not past:
                 past.append(self._history(run))
             before = release_run(previous, run.id)
@@ -1708,7 +1712,7 @@ class Cronwatch:
                     continue
                 if run.status == RunStatus.RUNNING or not _js.is_number(run.finished_at) or run.finished_at > at - SEND_LEASE_MS:
                     continue
-                alerts.extend(self._finish_run(stored.definition, run, at))
+                alerts.extend(self._finish_run(stored.definition, run, at, pending_only=True))
             except Exception as error:
                 self._report(error, f"evaluating run {run_id} of {stored.name}")
         return alerts

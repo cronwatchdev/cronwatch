@@ -604,9 +604,9 @@ class RoutesTest {
   }
 
   // The Rust audit: a body nested a few thousand arrays deep overflowed a thread's stack. The JSON
-  // reader refuses nesting past 256, so the body reads as none and the silence is the default hour.
+  // reader refuses nesting past 256 and the request is rejected without silencing the job.
   @Test
-  void aBodyNestedDeeplyIsReadAsNone() throws Exception {
+  void aBodyNestedDeeplyIsRefused() throws Exception {
     try (WebKit w = new WebKit()) {
       w.ok("s");
       String body = "[".repeat(100_000) + "]".repeat(100_000);
@@ -620,8 +620,8 @@ class RoutesTest {
                           w.send(
                               "POST", "/cronwatch/api/jobs/s/silence", headers(AUTH, JSON), body));
       t.join();
-      status("deep", res[0], 200);
-      assertEquals(T0 + HOUR, w.summary("s").silencedUntil(), "the default hour");
+      status("deep", res[0], 400);
+      assertNull(w.summary("s").silencedUntil(), "malformed JSON does not silence the job");
     }
   }
 

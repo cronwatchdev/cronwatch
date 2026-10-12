@@ -29,6 +29,33 @@ const failed = (extra: Partial<Alert> = {}): Alert => ({
   ...extra,
 } as Alert);
 
+test("Fetch construction failures never report the URL's credentials or a header's value", async () => {
+  const secret = "audit-opaque-credential";
+  const email = { from: "a@example.com", to: "b@example.com" };
+  const channels = [
+    webhook({ url: `https://u:p@example.invalid/${secret}` }),
+    slack({ webhookUrl: `https://u:p@example.invalid/${secret}` }),
+    discord({ webhookUrl: `https://u:p@example.invalid/${secret}` }),
+    resend({ apiKey: `${secret}\ninvalid`, ...email }),
+    webhook({ url: "https://example.invalid", headers: { authorization: `${secret}\rinvalid` } }),
+  ];
+  for (const channel of channels) {
+    const errors: unknown[] = [];
+    const cw = cronwatch({ alerts: [channel], onError: (error) => errors.push(error) });
+    await assert.rejects(cw.job("test").run(() => { throw new Error("failed"); }));
+    assert.equal(errors.length, 1);
+    assert.ok(!String(errors[0]).includes(secret));
+    assert.ok(!(errors[0] as Error).cause, "a logger must not find the original secret in a cause");
+  }
+});
+
+test("a rejected Fetch error is replaced without retaining secret-bearing diagnostics", async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("opaque-secret in a transport error"); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  await assert.rejects(webhook({ url: "https://example.invalid/opaque-secret" }).send(failed()), /^Error: POST https:\/\/example.invalid failed$/);
+});
+
 function stubFetch(t: { after(fn: () => void): void }, answer: (url: string, init: RequestInit) => Response) {
   const calls: { url: string; init: RequestInit }[] = [];
   const original = globalThis.fetch;

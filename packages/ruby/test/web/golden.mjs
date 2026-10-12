@@ -152,6 +152,11 @@ const requests = [
   ["GET", "/cronwatch/jobs/far-cron-back", bearer],
   ["GET", "/cronwatch/api/jobs/far-cron-back", bearer],
   ["GET", "/cronwatch/api/check", cookie],
+  ...["{invalid", "[]", "null", "42"].flatMap((body) => [
+    ["POST", "/cronwatch/api/jobs/sync-users/silence", json, body],
+    ["POST", "/cronwatch/jobs/sync-users/silence", json, body],
+    ["POST", "/cronwatch/signin", { "content-type": "application/json" }, body],
+  ]),
   ["POST", "/cronwatch/api/jobs/sync-users/silence", json, JSON.stringify({ for: "2h" })],
   ["POST", "/cronwatch/api/jobs/sync-users/silence", json, JSON.stringify({ for: "forever" })],
   ["POST", "/cronwatch/api/jobs/sync-users/silence?for=1h30m", bearer],

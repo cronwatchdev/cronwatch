@@ -130,7 +130,7 @@ defmodule Cronwatch.OutputTest do
 
   test "conformance: what an expect rule sees" do
     cases = list(fixture("output"), "expectText")
-    assert length(cases) == 11
+    assert length(cases) == 12
 
     cases
     |> Enum.reduce(failures(), fn c, f ->
@@ -345,7 +345,7 @@ defmodule Cronwatch.OutputTest do
     assert snap.dropped
     assert String.starts_with?(Lines.expect_text(snap), "done early\n")
     # The window as held, not capped: the run redacts it, then caps it.
-    assert JS.len16(Lines.output(snap)) == 65 * 1001 - 1
+    assert JS.len16(Lines.output(snap)) == 68 * 1001 - 1
     capped = Output.redact_and_cap(Lines.output(snap), &Output.redact_secrets/1)
     assert JS.len16(capped) == 16 * 1024 + JS.len16("[earlier output trimmed]\n")
   end

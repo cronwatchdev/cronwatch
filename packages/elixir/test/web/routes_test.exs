@@ -415,11 +415,12 @@ defmodule Cronwatch.Web.RoutesTest do
     assert messages(w.errors) |> hd() =~ "the store fell over"
   end
 
-  test "a body nested deeply is read as none, not a crash" do
+  test "a body nested deeply is refused without changing state" do
     w = web()
     ok(w, "s")
     body = String.duplicate("[", 100_000) <> String.duplicate("]", 100_000)
-    assert req(w, "POST", "/cronwatch/api/jobs/s/silence", [@auth, @json], body).status == 200
+    assert req(w, "POST", "/cronwatch/api/jobs/s/silence", [@auth, @json], body).status == 400
+    assert summary(w, "s").silenced_until == nil
   end
 
   test "silence durations" do

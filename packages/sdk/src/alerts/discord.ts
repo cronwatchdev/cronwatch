@@ -1,5 +1,5 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { cut, drain, errorBody, errorText, postable, urlSecrets } from "./shared.js";
+import { cut, drain, errorBody, errorText, fetchPost, urlSecrets } from "./shared.js";
 
 export interface DiscordOptions {
   /** A channel webhook URL from Server Settings, Integrations, Webhooks. */
@@ -17,8 +17,6 @@ const COLOR: Record<Alert["type"], number> = {
   recovered: 0x1f8a4c,
 };
 
-const TIMEOUT_MS = 10_000;
-
 /** The longest embed description Discord takes. The title (under 256) and it stay well inside the embed's 6000. */
 export const DESCRIPTION_MAX = 4096;
 
@@ -29,12 +27,8 @@ export function discord(options: DiscordOptions): AlertChannel {
     name: "discord",
     async send(alert) {
       const url = options.link?.(alert);
-      const response = await fetch(postable(options.webhookUrl), {
-        method: "POST",
+      const response = await fetchPost(options.webhookUrl, {
         headers: { "content-type": "application/json" },
-        // Refused, not followed: a webhook URL is its own credential.
-        redirect: "error",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
         body: JSON.stringify({
           content: alert.title,
           // Job output can hold anything, "@everyone" included; ping no one.

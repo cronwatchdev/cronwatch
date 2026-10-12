@@ -239,9 +239,9 @@ class ServletTest {
       };
 
   @Test
-  void aBodyAFilterAheadReadAsTextIsNone() throws Exception {
+  void aBodyAFilterAheadReadAsTextIsRefused() throws Exception {
     // The servlet specification refuses getInputStream() once getReader() was called: the body is
-    // then none, as one read already, never a 500.
+    // unreadable JSON is rejected without silencing the job, never a 500.
     AtomicLong clock = new AtomicLong(T0);
     try (Cronwatch cw =
         Cronwatch.builder().clock(clock::get).noCronSecret().noShutdownHook().build()) {
@@ -262,8 +262,9 @@ class ServletTest {
                     Map.entry("authorization", "Bearer tok"),
                     Map.entry("content-type", "application/json")),
                 "{\"for\":\"3h\"}".getBytes(StandardCharsets.UTF_8));
-        assertEquals(200, res.status(), res.text());
-        assertEquals(T0 + HOUR, cw.jobSummary("r").silencedUntil(), "the query's");
+        assertEquals(400, res.status(), res.text());
+        assertNull(
+            cw.jobSummary("r").silencedUntil(), "an unreadable JSON body does not silence the job");
       } finally {
         server.stop();
       }

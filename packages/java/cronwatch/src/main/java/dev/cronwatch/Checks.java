@@ -267,7 +267,7 @@ final class Checks {
             || finishedAt > now - Evaluate.SEND_LEASE_MS) {
           continue;
         }
-        out.addAll(runs.finishRun(job.definition(), run, now));
+        out.addAll(runs.finishRun(job.definition(), run, now, true));
       } catch (RuntimeException e) {
         core.report(e, "evaluating run " + id + " of " + job.name());
       }

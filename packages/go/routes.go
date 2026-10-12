@@ -669,7 +669,14 @@ func (rt *Routes) serve(r *http.Request, pathname, path, rawQuery, base string, 
 		if errors.Is(err, errBodyTooLarge) {
 			return signInPage(), nil
 		}
-		sent, ok := readBody(r, data)["token"]
+		body := readBody(r, data)
+		if err != nil {
+			body = map[string]string{}
+		}
+		if body == nil {
+			return page(messagePage("Bad request", "Malformed request body", base, false), http.StatusBadRequest), nil
+		}
+		sent, ok := body["token"]
 		if !ok || !constantTimeEqual(sent, rt.token) {
 			return signInPage(), nil
 		}
@@ -808,7 +815,14 @@ func (rt *Routes) serve(r *http.Request, pathname, path, rawQuery, base string, 
 			if errors.Is(err, errBodyTooLarge) {
 				return tooLarge(true, base), nil
 			}
-			value, present := readBody(r, data)["for"]
+			body := readBody(r, data)
+			if err != nil {
+				body = map[string]string{}
+			}
+			if body == nil {
+				return page(messagePage("Not silenced", "Malformed request body", base, false), http.StatusBadRequest), nil
+			}
+			value, present := body["for"]
 			ms, err := silenceDuration(value, present)
 			if err != nil {
 				return page(messagePage("Not silenced", err.Error(), base, false), http.StatusBadRequest), nil
@@ -914,7 +928,14 @@ func (rt *Routes) serveAPI(r *http.Request, method string, rest []string, query 
 			if errors.Is(err, errBodyTooLarge) {
 				return tooLarge(false, ""), nil
 			}
-			value, present := readBody(r, data)["for"]
+			body := readBody(r, data)
+			if err != nil {
+				body = map[string]string{}
+			}
+			if body == nil {
+				return apiAnswer(js.NewObject("ok", false, "error", "Malformed request body"), http.StatusBadRequest), nil
+			}
+			value, present := body["for"]
 			if !present {
 				value, present = param(query, "for")
 			}

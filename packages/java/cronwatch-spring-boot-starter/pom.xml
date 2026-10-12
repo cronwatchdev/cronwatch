@@ -36,6 +36,29 @@
 
   <dependencyManagement>
     <dependencies>
+      <!-- Patch the test server and JSON stack until Boot's next maintenance BOM includes them. -->
+      <dependency>
+        <groupId>tools.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>3.1.7</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-core</artifactId>
+        <version>11.0.25</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-el</artifactId>
+        <version>11.0.25</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-websocket</artifactId>
+        <version>11.0.25</version>
+      </dependency>
       <!-- Spring's modules at one release; what the parent manages (JUnit, SLF4J, the servlet API) stays its own. -->
       <dependency>
         <groupId>org.springframework.boot</groupId>

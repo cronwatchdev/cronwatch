@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use super::OUTPUT_CAP;
+use super::{OUTPUT_CAP, REDACT_EDGE, strip_nul};
 use crate::js;
 
 /// How much logged text a recorder holds, in code units, before it drops
 /// lines from the front. `redact_and_cap` trims exactly at the end, so this only
 /// bounds memory: well past the cap, so the kept tail is whole.
-const WINDOW: usize = 64 * 1024;
+const WINDOW: usize = OUTPUT_CAP + REDACT_EDGE + 2;
 
 /// `createRecorder` in `job.ts`: the lines a run logs and the numbers it
 /// reports. It is safe to share, since a job may log from tasks of its own.
@@ -26,7 +26,10 @@ struct Inner {
     /// expect even after the window has dropped them.
     head: Vec<String>,
     head_size: usize,
-    dropped: bool,
+    whole: String,
+    whole_lost: bool,
+    tail: String,
+    logged: bool,
     metrics: js::Object,
 }
 
@@ -42,12 +45,31 @@ impl Recorder {
 
     /// Appends a line.
     pub(crate) fn log(&self, line: impl Into<String>) {
-        let line = line.into();
-        let n = js::len16(&line);
+        let mut line = line.into();
+        let mut n = js::len16(&line);
         let mut r = self.lock();
+        let separator = if r.logged { "\n" } else { "" };
+        r.logged = true;
+        if !r.whole_lost {
+            if js::len16(&r.whole) + separator.len() + n <= 2 * OUTPUT_CAP {
+                r.whole.push_str(separator);
+                r.whole.push_str(&line);
+            } else {
+                r.whole.clear();
+                r.whole_lost = true;
+            }
+        }
+        r.tail = tail(&format!("{}{}{}", r.tail, separator, tail(&line, OUTPUT_CAP)), OUTPUT_CAP);
         if r.head_size < OUTPUT_CAP {
-            r.head.push(line.clone());
+            let room = OUTPUT_CAP - r.head_size;
+            r.head.push(js::head16(&line, room));
             r.head_size += n + 1;
+        }
+        line = strip_nul(&line);
+        n = js::len16(&line);
+        if n >= WINDOW {
+            line = js::tail16(&line, WINDOW - 1);
+            n = js::len16(&line);
         }
         r.lines.push_back((line, n));
         r.size += n + 1;
@@ -56,7 +78,6 @@ impl Recorder {
         while r.size > WINDOW && r.lines.len() > 1 {
             let (_, len) = r.lines.pop_front().expect("more than one line");
             r.size -= len + 1;
-            r.dropped = true;
         }
     }
 
@@ -80,11 +101,10 @@ impl Recorder {
         if r.lines.is_empty() {
             return None;
         }
-        let all = join(&r.lines);
-        if !r.dropped && js::len16(&all) <= 2 * OUTPUT_CAP {
-            return Some(all);
+        if !r.whole_lost {
+            return Some(r.whole.clone());
         }
-        Some(format!("{}\n{}", js::head16(&r.head.join("\n"), OUTPUT_CAP), js::tail16(&all, OUTPUT_CAP)))
+        Some(format!("{}\n{}", js::head16(&r.head.join("\n"), OUTPUT_CAP), r.tail))
     }
 
     /// Reports a number for the run; a later value for the same name
@@ -112,4 +132,8 @@ fn join(lines: &VecDeque<(String, usize)>) -> String {
         out.push_str(line);
     }
     out
+}
+
+fn tail(s: &str, n: usize) -> String {
+    if js::len16(s) <= n { s.to_owned() } else { js::tail16(s, n) }
 }

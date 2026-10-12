@@ -224,7 +224,7 @@ impl Client {
                     let unfinished = run.status == RunStatus::Running
                         || run.finished_at.is_none_or(|at| at > now.saturating_sub(SEND_LEASE_MS));
                     if !unfinished {
-                        alerts.extend(self.finish_run(&job.definition, &run, now).await);
+                        alerts.extend(self.finish_run_mode(&job.definition, &run, now, true).await);
                     }
                     Ok(())
                 }

@@ -443,17 +443,16 @@ public class RoutesTests
     }
 
     // The Rust audit: a body nested a few thousand arrays deep overflowed a thread's stack. The
-    // JSON reader refuses nesting past 256, so the body reads as none and the silence is the
-    // default hour.
+    // JSON reader refuses nesting past 256 and the request is rejected without silencing the job.
     [Fact]
-    public async Task A_body_nested_deeply_is_read_as_none()
+    public async Task A_body_nested_deeply_is_refused()
     {
         await using var w = new WebKit();
         await w.Ok("s");
         string body = new string('[', 100_000) + new string(']', 100_000);
         CronwatchResponse res = await Task.Run(() => w.Send("POST", "/cronwatch/api/jobs/s/silence", Hs(Auth, JsonType), body));
-        Status("deep", res, 200);
-        Assert.Equal(T0 + Hour, (await w.Summary("s"))!.SilencedUntil);
+        Status("deep", res, 400);
+        Assert.Null((await w.Summary("s"))!.SilencedUntil);
     }
 
     private static async Task<long> Until(WebKit w, string body)

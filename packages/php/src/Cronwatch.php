@@ -383,7 +383,7 @@ final class Cronwatch
         if ($run->status === RunStatus::RUNNING) {
             return [];
         }
-        return $this->finishRun($definition, $run, $this->now());
+        return $this->finishRun($definition, $run, $this->now(), pendingOnly: true);
     }
 
     /**
@@ -1095,12 +1095,13 @@ final class Cronwatch
                 }
             }
         }
+        $tracked = in_array($run->id, $this->readState($run->job)->pendingRuns ?? [], true);
         [$late, $ignored] = $this->claimFinish($run);
         if ($ignored !== null) {
             return $ignored;
         }
         if (!$late || $run->status === RunStatus::OK) {
-            $this->finishRun(Serialize::toStored($definition), $run, $finishedAt, $startPending);
+            $this->finishRun(Serialize::toStored($definition), $run, $finishedAt, $startPending, $tracked && !$late);
         }
         return null;
     }
@@ -1381,6 +1382,7 @@ final class Cronwatch
         if (!in_array($stored->status, [RunStatus::RUNNING, RunStatus::TIMEOUT], true) || $run->status === RunStatus::RUNNING) {
             return [];
         }
+        $tracked = in_array($run->id, $this->readState($run->job)->pendingRuns ?? [], true);
         [$late, $ignored] = $this->claimFinish($run);
         if ($ignored !== null) {
             $this->report(new \RuntimeException("run {$run->id} of {$run->job} {$ignored}; ignored"), "recording {$run->job}");
@@ -1398,7 +1400,7 @@ final class Cronwatch
         if ($late && $run->status !== RunStatus::OK) {
             return [];
         }
-        return $this->finishRun($definition, $run, $this->now());
+        return $this->finishRun($definition, $run, $this->now(), pendingOnly: $tracked && !$late);
     }
 
     /**
@@ -1408,11 +1410,14 @@ final class Cronwatch
      *
      * @return list<Alert>
      */
-    private function finishRun(JobDefinition $definition, Run $run, int|float $at, bool $startPending = false): array
+    private function finishRun(JobDefinition $definition, Run $run, int|float $at, bool $startPending = false, bool $pendingOnly = false): array
     {
         $history = null;
         try {
-            [, $held] = $this->updateState($run->job, function (JobState $previous) use ($definition, $run, $at, $startPending, &$history): array {
+            [, $held] = $this->updateState($run->job, function (JobState $previous) use ($definition, $run, $at, $startPending, $pendingOnly, &$history): array {
+                if ($pendingOnly && !in_array($run->id, $previous->pendingRuns ?? [], true)) {
+                    return [$previous, ['alerts' => [], 'dropped' => 0]];
+                }
                 $history ??= $this->history($run);
                 $before = Evaluate::releaseRun($previous, $run->id);
                 $started = $startPending ? Evaluate::onRunStart($definition, self::asStarted($run), $before, $run->startedAt) : $before;
@@ -1815,7 +1820,7 @@ final class Cronwatch
                 if ($run->status === RunStatus::RUNNING || !Js::isNumber($run->finishedAt) || $run->finishedAt > $at - Evaluate::SEND_LEASE_MS) {
                     continue;
                 }
-                array_push($alerts, ...$this->finishRun($stored->definition, $run, $at));
+                array_push($alerts, ...$this->finishRun($stored->definition, $run, $at, pendingOnly: true));
             } catch (\Throwable $error) {
                 $this->report($error, "evaluating run {$id} of {$stored->name}");
             }

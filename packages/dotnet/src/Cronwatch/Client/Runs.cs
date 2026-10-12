@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Cronwatch.Internal;
@@ -555,6 +556,8 @@ public sealed partial class CronwatchClient
                 }
             }
         }
+        JobState state = await ReadStateAsync(run.Job).ConfigureAwait(false);
+        bool tracked = state.PendingRuns?.Contains(run.Id) ?? false;
         var (late, ignored) = await ClaimFinishAsync(run).ConfigureAwait(false);
         if (ignored != null)
         {
@@ -562,7 +565,7 @@ public sealed partial class CronwatchClient
         }
         if (!late || run.Status == RunStatus.Ok)
         {
-            await FinishRunAsync(def.Stored, run, finishedAt).ConfigureAwait(false);
+            await FinishRunAsync(def.Stored, run, finishedAt, tracked && !late).ConfigureAwait(false);
         }
         return null;
     }
@@ -586,7 +589,7 @@ public sealed partial class CronwatchClient
     }
 
     /// <summary>Judges a finished run and sends what it raised.</summary>
-    internal async Task<IReadOnlyList<Alert>> FinishRunAsync(Definition def, Run run, long now)
+    internal async Task<IReadOnlyList<Alert>> FinishRunAsync(Definition def, Run run, long now, bool pendingOnly = false)
     {
         Held held;
         try
@@ -596,6 +599,10 @@ public sealed partial class CronwatchClient
                 () => HistoryAsync(run),
                 (previous, history) =>
                 {
+                    if (pendingOnly && (previous.PendingRuns == null || !previous.PendingRuns.Contains(run.Id)))
+                    {
+                        return (previous, new Held([], 0));
+                    }
                     // The run's evaluation is written here, so it leaves pendingRuns in the same write.
                     JobState before = Evaluate.ReleaseRun(previous, run.Id);
                     return Outbox(Evaluate.ApplySilence(before, Evaluate.OnRunFinish(def, run, before, history, now), now), def, now);
@@ -720,7 +727,7 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        return await FinishRunAsync(def.Stored, run, Now()).ConfigureAwait(false);
+        return await FinishRunAsync(def.Stored, run, Now(), pendingOnly: true).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<Alert>> RecordOverAsync(Definition def, Run stored, Run run, bool evaluate)
@@ -736,6 +743,8 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
+        JobState state = await ReadStateAsync(run.Job).ConfigureAwait(false);
+        bool tracked = state.PendingRuns?.Contains(run.Id) ?? false;
         var (late, ignored) = await ClaimFinishAsync(run).ConfigureAwait(false);
         if (ignored != null)
         {
@@ -759,7 +768,7 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        return await FinishRunAsync(def, run, Now()).ConfigureAwait(false);
+        return await FinishRunAsync(def, run, Now(), tracked && !late).ConfigureAwait(false);
     }
 
     /// <summary>

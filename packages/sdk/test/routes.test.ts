@@ -2,10 +2,29 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+
 import { cronwatch } from "../src/index.js";
 import { escapeName } from "../src/routes/escape.js";
 import { VERSION } from "../src/version.js";
 import { capture, clock } from "./helpers.js";
+
+test("malformed silence payloads are refused without changing state", async () => {
+  const cw = cronwatch({ alerts: [], cronSecret: null });
+  await cw.job("nightly").run(() => {});
+  const routes = cw.routes({ token: "test-token" });
+  for (const body of ["{invalid", "[]", "null", "42"]) {
+    const response = await routes.POST(new Request("https://app.test/cronwatch/api/jobs/nightly/silence", {
+      method: "POST", headers: { authorization: "Bearer test-token", "content-type": "application/json" }, body,
+    }));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error: "Malformed request body" });
+    assert.equal((await cw.store.getState("nightly"))!.silencedUntil, null);
+  }
+  const response = await routes.POST(new Request("https://app.test/cronwatch/api/jobs/nightly/silence", {
+    method: "POST", headers: { authorization: "Bearer test-token", "content-type": "application/json" }, body: "{}",
+  }));
+  assert.equal(response.status, 200);
+});
 
 function app(token: string | null = "tok") {
   const c = clock();
