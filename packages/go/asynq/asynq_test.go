@@ -309,6 +309,10 @@ func TestAsynqEndToEnd(t *testing.T) {
 		runs := k.runs(t, "report:flaky")
 		return len(runs) == 3 && runs[0].Status == cronwatch.StatusOK
 	})
+	// The finished row is saved before its alerts are delivered.
+	waitFor(t, "flaky's recovery alert", func() bool {
+		return len(k.alerts.types("report:flaky")) >= 2
+	})
 	eq(t, "flaky's alerts", strings.Join(k.alerts.types("report:flaky"), ","), "failed,recovered")
 	eq(t, "no errors", strings.Join(k.errors.List(), "\n"), "")
 }
