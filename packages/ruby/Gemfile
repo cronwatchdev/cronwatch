@@ -21,11 +21,12 @@ gem "anthropic", ">= 1.73", require: false
 #   BUNDLE_GEMFILE=test/rails/gemfiles/rails_7_2.gemfile bundle install
 #   BUNDLE_GEMFILE=test/rails/gemfiles/rails_7_2.gemfile bundle exec rake test
 rails = ENV.fetch("CRONWATCH_RAILS", "8.1")
+rails_min = rails == "7.2" ? "7.2.3.1" : "#{rails}.0"
 group :test do
-  gem "activejob", "~> #{rails}.0"
-  gem "activerecord", "~> #{rails}.0"
+  gem "activejob", "~> #{rails}.0", ">= #{rails_min}"
+  gem "activerecord", "~> #{rails}.0", ">= #{rails_min}"
   gem "pg", ">= 1.5"
-  gem "railties", "~> #{rails}.0"
+  gem "railties", "~> #{rails}.0", ">= #{rails_min}"
   # Rails 8 takes sqlite3 2.x; 7.2 still takes 1.4 and up.
   gem "sqlite3", Gem::Version.new(rails) >= Gem::Version.new("8.0") ? ">= 2.1" : ">= 1.4"
 

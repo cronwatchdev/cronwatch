@@ -428,7 +428,7 @@ module Cronwatch
       update_state(run.job) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
       return [] if run.status == :running
 
-      finish_run(definition, run, now)
+      finish_run(definition, run, now, pending_only: true)
     end
 
     # Hands an error to on_error, as a source reports what went wrong. See #report.
@@ -919,6 +919,7 @@ module Cronwatch
       end
       return [] if !%i[running timeout].include?(stored.status) || run.status == :running
 
+      tracked = (read_state(run.job).pending_runs || []).include?(run.id)
       late, ignored = claim_finish(run)
       if ignored
         report(RuntimeError.new("run #{run.id} of #{run.job} #{ignored}; ignored"), "recording #{run.job}")
@@ -931,7 +932,7 @@ module Cronwatch
       end
       return [] if late && run.status != :ok
 
-      finish_run(definition, run, now)
+      finish_run(definition, run, now, pending_only: tracked && !late)
     end
 
     # Takes a run stored without judging out of the job's pending runs, so a
@@ -1028,13 +1029,14 @@ module Cronwatch
           return "belongs to job \"#{stored.job}\"" if stored.job != run.job
         end
       end
+      tracked = (read_state(run.job).pending_runs || []).include?(run.id)
       late, ignored = claim_finish(run)
       return ignored if ignored
 
       if !judge
         release_unjudged(run)
       elsif !late || run.status == :ok
-        finish_run(Serialize.to_stored(definition), run, finished_at)
+        finish_run(Serialize.to_stored(definition), run, finished_at, pending_only: tracked && !late)
       end
       nil
     end
@@ -1250,7 +1252,7 @@ module Cronwatch
         end
         next if run.status == :running || !run.finished_at.is_a?(Numeric) || run.finished_at > at - Evaluate::SEND_LEASE_MS
 
-        alerts.concat(finish_run(stored.definition, run, at))
+        alerts.concat(finish_run(stored.definition, run, at, pending_only: true))
       rescue StandardError => e
         report(e, "evaluating run #{id} of #{stored.name}")
       end
@@ -1260,11 +1262,12 @@ module Cronwatch
     # Evaluate a finished run (ok, failed, or timed out by a check), already
     # written, against the job's state and send what that produces. The
     # alerts are written with that state (see outbox). Never raises.
-    def finish_run(definition, run, at)
+    def finish_run(definition, run, at, pending_only: false)
       held = nil
       begin
         past = nil
         _, held = update_state(run.job) do |previous|
+          next [previous, Outbox.new([], 0)] if pending_only && !(previous.pending_runs || []).include?(run.id)
           past ||= history(run)
           before = Evaluate.release_run(previous, run.id)
           outbox(Evaluate.apply_silence(before, Evaluate.on_run_finish(definition, run, before, past, at), at), definition, at)

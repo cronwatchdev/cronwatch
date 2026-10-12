@@ -32,14 +32,31 @@ export function origin(url: string): string {
  * quotes the whole URL, and a webhook URL's path is its credential.
  */
 export function postable(url: string): string {
-  let protocol: string;
+  let parsed: URL;
   try {
-    protocol = new URL(url).protocol;
+    parsed = new URL(url);
   } catch {
     throw new Error("only http and https URLs can be posted to, not this URL");
   }
-  if (protocol !== "http:" && protocol !== "https:") throw new Error(`only http and https URLs can be posted to, not ${protocol}`);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`only http and https URLs can be posted to, not ${parsed.protocol}`);
+  if (parsed.username || parsed.password) throw new Error("URLs containing credentials cannot be posted to");
   return url;
+}
+
+/** Fetch can quote credentials in construction errors. Only safe diagnostics leave this boundary. */
+export async function fetchPost(url: string, init: { headers: Record<string, string>; body: string }): Promise<Response> {
+  const target = postable(url);
+  try {
+    new Headers(init.headers);
+  } catch {
+    throw new Error("request headers are not valid");
+  }
+  try {
+    return await fetch(target, { ...init, method: "POST", redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch (error) {
+    if ((error as Error)?.name === "TimeoutError") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    throw new Error(`POST ${origin(target)} failed`);
+  }
 }
 
 /** How much of a provider's error body goes into the error message. */
@@ -55,7 +72,7 @@ export const ERROR_BODY_MAX = 200;
  * followed: the credential headers would go with it to wherever it points.
  */
 export async function post(provider: string, url: string, init: { headers: Record<string, string>; body: string }, secrets: (string | undefined)[] = []): Promise<Response> {
-  const response = await fetch(postable(url), { method: "POST", headers: init.headers, body: init.body, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const response = await fetchPost(url, init);
   if (!response.ok) {
     const text = await errorText(response);
     throw new Error(`${provider} ${origin(url)} answered ${response.status}${text ? `: ${errorBody(text, secrets)}` : ""}`);

@@ -3,6 +3,29 @@ import { test } from "node:test";
 import { cronwatch } from "../src/index.js";
 import { OUTPUT_CAP, REDACT_EDGE, redactAndCap, redactSecrets } from "../src/output.js";
 import { capture } from "./helpers.js";
+import { createRecorder } from "../src/job.js";
+
+test("a recorder bounds huge lines and keeps secrets crossing its retained tail out of the stored output", async () => {
+  const window = OUTPUT_CAP + REDACT_EDGE + 2;
+  const rec = createRecorder({ id: "r", job: "j", status: "running", startedAt: 0, finishedAt: null, durationMs: null, error: null, output: null, metrics: {}, trigger: "run" });
+  rec.context.log("first " + "x".repeat(1024 * 1024));
+  assert.ok(rec.output()!.length < window);
+  assert.ok(rec.expectText()!.length <= 2 * OUTPUT_CAP + 1);
+  assert.match(rec.expectText()!, /^first /);
+  const cw = cronwatch({ alerts: [], cronSecret: null });
+  await cw.job("edge").run((job) => {
+    job.log("x".repeat(1024 * 1024) + " password=" + "secret".repeat(500) + " y".repeat((window - 1500) / 2));
+  });
+  const run = (await cw.runs("edge"))[0]!;
+  assert.ok(run.output!.length <= OUTPUT_CAP + "[earlier output trimmed]\n".length);
+  assert.doesNotMatch(run.output!, /secret/);
+  await cw.job("nul-edge", { expect: "\u0000" }).run((job) => {
+    job.log("x".repeat(1024 * 1024) + " password=secret " + "\u0000".repeat(window) + "done");
+  });
+  const nul = (await cw.runs("nul-edge"))[0]!;
+  assert.equal(nul.status, "ok", "the expectation still sees raw NULs");
+  assert.doesNotMatch(nul.output!, /secret|\u0000/);
+});
 
 test("secrets are redacted from output and errors before they are stored or alerted", async () => {
   const alerts = capture();

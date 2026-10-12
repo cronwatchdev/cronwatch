@@ -11,13 +11,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import _js
-from ._output import OUTPUT_CAP
+from ._output import OUTPUT_CAP, REDACT_EDGE, strip_nul
 from .types import Run
 
 __all__ = ["AbortError", "AbortSignal", "JobContext", "KEEP", "RunRecorder", "current", "stringify"]
 
 #: Lines are dropped from the front once the output is well past the cap; redact_and_cap trims it exactly at the end.
-KEEP = 64 * 1024
+KEEP = OUTPUT_CAP + REDACT_EDGE + 2
 
 
 class AbortError(Exception):
@@ -82,7 +82,9 @@ class RunRecorder:
         # dropped from _lines: what expect_text needs once the output runs long.
         self._head: list[str] = []
         self._head_size = 0
-        self._dropped = False
+        self._whole: str | None = ""
+        self._tail = ""
+        self._logged = False
         self._metrics: dict[str, float] = {}
         self._lock = threading.Lock()
         self.signal = AbortSignal(timeout_ms)
@@ -91,21 +93,30 @@ class RunRecorder:
     def log(self, line: str) -> None:
         length = _js.length16(line)
         with self._lock:
+            separator = "\n" if self._logged else ""
+            self._logged = True
+            if self._whole is not None:
+                self._whole = self._whole + separator + line if _js.length16(self._whole) + len(separator) + length <= 2 * OUTPUT_CAP else None
+            self._tail = _js.tail16(self._tail + separator + _js.tail16(line, OUTPUT_CAP), OUTPUT_CAP)
             if self._head_size < OUTPUT_CAP:
-                self._head.append(line)
+                self._head.append(_js.head16(line, OUTPUT_CAP - self._head_size))
                 self._head_size += length + 1
+            line = strip_nul(line)
+            length = _js.length16(line)
+            if length >= KEEP:
+                line = _js.tail16(line, KEEP - 1)
+                length = _js.length16(line)
             self._lines.append(line)
             self._size += length + 1
             while self._size > KEEP and len(self._lines) > 1:
                 self._size -= _js.length16(self._lines.popleft()) + 1
-                self._dropped = True
 
     def metric(self, name: str, value: float) -> None:
         with self._lock:
             self._metrics[name] = value
 
     def output(self) -> str | None:
-        """The lines still held (past 64 KB the oldest are let go), joined and
+        """The lines still held (past the bounded redaction window the oldest are let go), joined and
         not yet capped: the client redacts them first, then caps them
         (redact_and_cap)."""
         with self._lock:
@@ -118,10 +129,9 @@ class RunRecorder:
         with self._lock:
             if not self._lines:
                 return None
-            everything = "\n".join(self._lines)
-            if not self._dropped and _js.length16(everything) <= 2 * OUTPUT_CAP:
-                return everything
-            return _js.head16("\n".join(self._head), OUTPUT_CAP) + "\n" + _js.tail16(everything, OUTPUT_CAP)
+            if self._whole is not None:
+                return self._whole
+            return _js.head16("\n".join(self._head), OUTPUT_CAP) + "\n" + self._tail
 
     def metrics(self) -> dict[str, float]:
         with self._lock:

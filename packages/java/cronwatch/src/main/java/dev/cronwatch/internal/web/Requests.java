@@ -272,6 +272,22 @@ public final class Requests {
     return found;
   }
 
+  /** Whether the declared JSON object or multipart form can be parsed. */
+  public static boolean validBody(String contentType, byte[] data) {
+    if (contentType.contains("application/json")) {
+      String text = new String(data, StandardCharsets.UTF_8);
+      if (text.startsWith("﻿")) text = text.substring(1);
+      try {
+        return Json.parse(text) instanceof JsObject;
+      } catch (Json.JsonException e) {
+        return false;
+      }
+    }
+    if (contentType.contains("multipart/form-data"))
+      return multipartFields(contentType, data) != null;
+    return true;
+  }
+
   /**
    * A field of a request's form or JSON object, as {@code String(value)} gives it in JavaScript;
    * null for anything else, or a body that cannot be read as its type says. The last of several

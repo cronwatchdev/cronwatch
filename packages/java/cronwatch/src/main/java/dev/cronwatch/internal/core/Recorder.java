@@ -20,14 +20,16 @@ public final class Recorder {
    * cap trims exactly at the end, so this only bounds memory: well past the cap, so the kept tail
    * is whole.
    */
-  static final int WINDOW = 64 * 1024;
+  static final int WINDOW = Output.OUTPUT_CAP + Output.REDACT_EDGE + 2;
 
   private final ReentrantLock lock = new ReentrantLock();
   private final ArrayDeque<String> lines = new ArrayDeque<>();
   private long size;
   private final List<String> head = new ArrayList<>();
   private long headSize;
-  private boolean dropped;
+  private @Nullable String whole = "";
+  private String tail = "";
+  private boolean logged;
 
   /** Set in place, as the SDK sets a metric: a copy per call made a run of many quadratic. */
   private final LinkedHashMap<String, Double> metrics = new LinkedHashMap<>();
@@ -42,16 +44,28 @@ public final class Recorder {
   public void log(String line) {
     lock.lock();
     try {
+      String separator = logged ? "\n" : "";
+      logged = true;
+      if (whole != null) {
+        whole =
+            whole.length() + separator.length() + line.length() <= 2 * Output.OUTPUT_CAP
+                ? whole + separator + line
+                : null;
+      }
+      tail = Js.tail(tail + separator + Js.tail(line, Output.OUTPUT_CAP), Output.OUTPUT_CAP);
       if (headSize < Output.OUTPUT_CAP) {
-        head.add(line);
+        head.add(line.substring(0, Math.min(line.length(), (int) (Output.OUTPUT_CAP - headSize))));
         headSize += line.length() + 1;
+      }
+      line = Output.stripNul(line);
+      if (line.length() >= WINDOW) {
+        line = line.substring(line.length() - (WINDOW - 1));
       }
       lines.addLast(line);
       size += line.length() + 1;
       // Drop from the front once well past the cap; redactAndCap trims exactly at the end.
       while (size > WINDOW && lines.size() > 1) {
         size -= lines.removeFirst().length() + 1;
-        dropped = true;
       }
     } finally {
       lock.unlock();
@@ -82,13 +96,10 @@ public final class Recorder {
       if (lines.isEmpty()) {
         return null;
       }
-      String all = String.join("\n", lines);
-      if (!dropped && all.length() <= 2 * Output.OUTPUT_CAP) {
-        return all;
+      if (whole != null) {
+        return whole;
       }
-      return Js.head(String.join("\n", head), Output.OUTPUT_CAP)
-          + "\n"
-          + Js.tail(all, Output.OUTPUT_CAP);
+      return Js.head(String.join("\n", head), Output.OUTPUT_CAP) + "\n" + tail;
     } finally {
       lock.unlock();
     }

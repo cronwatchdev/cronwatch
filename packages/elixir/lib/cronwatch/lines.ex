@@ -5,27 +5,31 @@ defmodule Cronwatch.Lines do
   # job started) is an ETS write, never a message to a busy process.
   #
   # Rows, for a key (a run's id, or {:handle, id}):
-  #   {{key, :meta}, seq, size, head_size, window_start, dropped, metric_seq}
-  #   {{key, seq}, line, length, head?}
+  #   {{key, :meta}, seq, size, head_size, window_start, dropped, metric_seq, raw_size, raw_start}
+  #   {{key, seq}, line, length, head_prefix}
+  #   {{key, :raw, seq}, raw_line, raw_length}
   #   {{key, :metric, name}, order, value}
   #
-  # Lines are dropped from the front once the window holds more than 64 K
-  # code units (the output keeps only the last 16 K); the first 16 K logged
+  # Lines, including single oversized lines, are bounded by the redaction
+  # window in code units (the output keeps only the last 16 K); the first 16 K logged
   # are kept apart for expect, as the SDK's recorder keeps its head.
 
   alias Cronwatch.JS
   alias Cronwatch.JS.Object
 
   @cap 16 * 1024
-  @window 64 * 1024
+  @window @cap + 3 * (@cap + 1024) + 2
+  @raw_window 3 * @cap + 2
+
+  defp tail(s, n), do: if(JS.len16(s) <= n, do: s, else: JS.tail16(s, n))
 
   @doc "Starts collecting for a key."
-  def open(table, key), do: :ets.insert(table, {{key, :meta}, 0, 0, 0, 1, 0, 0})
+  def open(table, key), do: :ets.insert(table, {{key, :meta}, 0, 0, 0, 1, 0, 0, 0, 1})
 
   @doc "Stops collecting for a key and forgets everything it held."
   def close(table, key) do
     :ets.select_delete(table, [
-      {{{key, :_}, :_, :_, :_, :_, :_, :_}, [], [true]},
+      {{{key, :_}, :_, :_, :_, :_, :_, :_, :_, :_}, [], [true]},
       {{{key, :_}, :_, :_, :_}, [], [true]},
       {{{key, :_, :_}, :_, :_}, [], [true]}
     ])
@@ -41,15 +45,26 @@ defmodule Cronwatch.Lines do
 
   @doc "Appends a line. Nothing happens for a key that is closed."
   def log(table, key, line) when is_binary(line) do
-    n = JS.len16(line)
-    [seq, size, head_size] = :ets.update_counter(table, {key, :meta}, [{2, 1}, {3, n + 1}, {4, 0}])
-    head? = head_size < @cap
-    if head?, do: :ets.update_counter(table, {key, :meta}, {4, n + 1})
-    :ets.insert(table, {{key, seq}, line, n, head?})
+    raw_n = JS.len16(line)
+    raw = :binary.copy(tail(line, 2 * @cap + 1))
+    stored = line |> Cronwatch.Output.strip_nul() |> tail(@window - 1) |> :binary.copy()
+    n = JS.len16(stored)
+
+    [seq, size, head_size, raw_size] =
+      :ets.update_counter(table, {key, :meta}, [{2, 1}, {3, n + 1}, {4, raw_n + 1}, {8, JS.len16(raw) + 1}])
+
+    room = max(0, @cap - (head_size - raw_n - 1))
+    head = if room > 0, do: :binary.copy(JS.head16(line, room))
+    :ets.insert(table, [{{key, seq}, stored, n, head}, {{key, :raw, seq}, raw, JS.len16(raw)}])
     # A close between the counter and the insert (a Task logging as its run
     # ends) would leave the line behind for good.
-    unless :ets.member(table, {key, :meta}), do: :ets.delete(table, {key, seq})
+    unless :ets.member(table, {key, :meta}) do
+      :ets.delete(table, {key, seq})
+      :ets.delete(table, {key, :raw, seq})
+    end
+
     if size > @window, do: trim(table, key)
+    if raw_size > @raw_window, do: trim_raw(table, key)
     :ok
   rescue
     ArgumentError -> :ok
@@ -59,12 +74,15 @@ defmodule Cronwatch.Lines do
   # window and more than one line.
   defp trim(table, key) do
     case :ets.lookup(table, {key, :meta}) do
-      [{_, seq, size, _, start, _, _}] when size > @window and seq > start ->
+      [{_, seq, size, _, start, _, _, _, _}] when size > @window and seq > start ->
         at = :ets.update_counter(table, {key, :meta}, {5, 1}) - 1
 
         case :ets.lookup(table, {key, at}) do
-          [{_, _line, len, head?}] ->
-            unless head?, do: :ets.delete(table, {key, at})
+          [{_, _line, len, head}] ->
+            if head == nil,
+              do: :ets.delete(table, {key, at}),
+              else: :ets.update_element(table, {key, at}, [{2, ""}, {3, 0}])
+
             :ets.update_counter(table, {key, :meta}, [{3, -(len + 1)}])
             :ets.update_element(table, {key, :meta}, {6, 1})
 
@@ -73,6 +91,23 @@ defmodule Cronwatch.Lines do
         end
 
         trim(table, key)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp trim_raw(table, key) do
+    case :ets.lookup(table, {key, :meta}) do
+      [{_, seq, _, _, _, _, _, size, start}] when size > @raw_window and seq > start ->
+        at = :ets.update_counter(table, {key, :meta}, {9, 1}) - 1
+
+        case :ets.take(table, {key, :raw, at}) do
+          [{_, _, n}] -> :ets.update_counter(table, {key, :meta}, {8, -(n + 1)})
+          [] -> :ok
+        end
+
+        trim_raw(table, key)
 
       _ ->
         :ok
@@ -108,10 +143,10 @@ defmodule Cronwatch.Lines do
 
   @doc "What was collected: the window's lines, the head's, whether any were dropped, and the metrics."
   def snapshot(table, key) do
-    {start, dropped} =
+    {start, dropped, raw_start} =
       case :ets.lookup(table, {key, :meta}) do
-        [{_, _, _, _, start, dropped, _}] -> {start, dropped == 1}
-        [] -> {1, false}
+        [{_, _, _, head_size, start, _, _, _, raw_start}] -> {start, head_size > 2 * @cap + 1, raw_start}
+        [] -> {1, false, 1}
       end
 
     rows =
@@ -121,18 +156,24 @@ defmodule Cronwatch.Lines do
 
     %{
       lines: for({seq, line, _} <- rows, seq >= start, do: line),
-      head: for({_, line, true} <- rows, do: line),
+      head: for({_, _, head} <- rows, head != nil, do: head),
+      raw:
+        for(
+          {{_, :raw, seq}, text, _} <- Enum.sort(:ets.match_object(table, {{key, :raw, :_}, :_, :_})),
+          seq >= raw_start,
+          do: text
+        ),
       dropped: dropped,
       metrics: metrics(table, key)
     }
   rescue
     # The table went with Cronwatch.Runs, which is restarting, and what the
     # run had collected with it.
-    ArgumentError -> %{lines: [], head: [], dropped: false, metrics: Object.new()}
+    ArgumentError -> %{lines: [], head: [], raw: [], dropped: false, metrics: Object.new()}
   end
 
   @doc """
-  The lines still held (past 64 KB the oldest are let go), joined and not
+  The lines still held (past the bounded redaction window the oldest are let go), joined and not
   yet capped: the run's output is redacted first, then capped
   (`Cronwatch.Output.redact_and_cap/2`). nil when nothing was logged.
   """
@@ -145,7 +186,7 @@ defmodule Cronwatch.Lines do
   """
   def expect_text(%{lines: []}), do: nil
 
-  def expect_text(%{lines: lines, head: head, dropped: dropped}) do
+  def expect_text(%{raw: lines, head: head, dropped: dropped}) do
     all = Enum.join(lines, "\n")
 
     if not dropped and JS.len16(all) <= 2 * @cap do

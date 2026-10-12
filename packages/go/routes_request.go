@@ -260,7 +260,7 @@ func readBody(r *http.Request, data []byte) map[string]string {
 		text = strings.TrimPrefix(text, "\ufeff")
 		v, err := js.Parse(text)
 		if err != nil {
-			return out
+			return nil
 		}
 		switch t := v.(type) {
 		case *js.Object:
@@ -268,15 +268,13 @@ func readBody(r *http.Request, data []byte) map[string]string {
 				value, _ := t.Get(k)
 				out[k] = jsText(value, true)
 			}
-		case []any:
-			for i, value := range t {
-				out[strconv.Itoa(i)] = jsText(value, true)
-			}
+		default:
+			return nil
 		}
 	case strings.Contains(kind, "multipart/form-data"):
 		_, params, err := mime.ParseMediaType(kind)
 		if err != nil || params["boundary"] == "" {
-			return out
+			return nil
 		}
 		reader := multipart.NewReader(strings.NewReader(string(data)), params["boundary"])
 		fields := map[string]string{}
@@ -286,7 +284,7 @@ func readBody(r *http.Request, data []byte) map[string]string {
 				break
 			}
 			if err != nil {
-				return out
+				return nil
 			}
 			name := part.FormName()
 			if name == "" {
@@ -298,7 +296,7 @@ func readBody(r *http.Request, data []byte) map[string]string {
 			}
 			value, err := io.ReadAll(part)
 			if err != nil {
-				return out
+				return nil
 			}
 			fields[name] = js.WellFormed(string(value))
 		}

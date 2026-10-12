@@ -28,7 +28,7 @@ use super::origin::{bare_origin, configured_origin, is_loopback_origin, request_
 use super::pwa::{ShellAsset, static_asset};
 use super::request::{
     body_field, form_encode, header, normalize_path, param, parse_form, read_limited, request_target, safe_decode,
-    strip_base,
+    strip_base, valid_body,
 };
 use super::text::{constant_time_eq, latin1};
 use super::timeline::{BOARD_BEHIND_MS, BOARD_LANES, BOARD_RUNS, LaneInput, week_runs_limit};
@@ -668,7 +668,12 @@ impl Routes {
         // above.
         if !rt.token.is_empty() && method == "POST" && path == "/signin" {
             // A body past the cap carries no token.
-            let data = read_limited(req.take_body()).await.unwrap_or_default();
+            let Ok(data) = read_limited(req.take_body()).await else {
+                return Ok(sign_in_page());
+            };
+            if !valid_body(&said.content_type, &data) {
+                return Ok(page(message_page("Bad request", "Malformed request body", base, false), 400));
+            }
             let sent = body_field(&said.content_type, &data, "token");
             if !sent.is_some_and(|t| constant_time_eq(&t, &rt.token)) {
                 return Ok(sign_in_page());
@@ -793,6 +798,9 @@ impl Routes {
                     let Ok(data) = read_limited(req.take_body()).await else {
                         return Ok(too_large(true, base));
                     };
+                    if !valid_body(&said.content_type, &data) {
+                        return Ok(page(message_page("Not silenced", "Malformed request body", base, false), 400));
+                    }
                     let value = body_field(&said.content_type, &data, "for");
                     let ms = match silence_duration(value.as_deref()) {
                         Ok(ms) => ms,
@@ -876,6 +884,9 @@ impl Routes {
                         let Ok(data) = read_limited(req.take_body()).await else {
                             return Ok(too_large(false, ""));
                         };
+                        if !valid_body(&said.content_type, &data) {
+                            return Ok(api(error_body("Malformed request body"), 400));
+                        }
                         let value = body_field(&said.content_type, &data, "for")
                             .or_else(|| param(&said.query, "for").map(str::to_string));
                         let ms = match silence_duration(value.as_deref()) {

@@ -15,14 +15,16 @@ internal sealed class OutputLines
     /// cap trims exactly at the end, so this only bounds memory: well past the cap, so the kept
     /// tail is whole.
     /// </summary>
-    public const int Window = 64 * 1024;
+    public const int Window = OutputText.OutputCap + OutputText.RedactEdge + 2;
 
     private readonly Lock _lock = new();
     private readonly LinkedList<string> _lines = new();
     private long _size;
     private readonly List<string> _head = [];
     private long _headSize;
-    private bool _dropped;
+    private string? _whole = "";
+    private string _tail = "";
+    private bool _logged;
 
     /// <summary>Whether anything was logged.</summary>
     public bool IsEmpty
@@ -41,10 +43,21 @@ internal sealed class OutputLines
     {
         lock (_lock)
         {
+            string separator = _logged ? "\n" : "";
+            _logged = true;
+            if (_whole != null) { _whole = _whole.Length + separator.Length + line.Length <= 2 * OutputText.OutputCap ? _whole + separator + line : null; }
+            string last = line[^System.Math.Min(line.Length, OutputText.OutputCap)..];
+            string joined = _tail + separator + last;
+            _tail = joined[^System.Math.Min(joined.Length, OutputText.OutputCap)..];
             if (_headSize < OutputText.OutputCap)
             {
-                _head.Add(line);
+                _head.Add(line[..System.Math.Min(line.Length, (int)(OutputText.OutputCap - _headSize))]);
                 _headSize += line.Length + 1;
+            }
+            line = NulText.StripNul(line);
+            if (line.Length >= Window)
+            {
+                line = line[^(Window - 1)..];
             }
             _lines.AddLast(line);
             _size += line.Length + 1;
@@ -53,7 +66,6 @@ internal sealed class OutputLines
             {
                 _size -= _lines.First!.Value.Length + 1;
                 _lines.RemoveFirst();
-                _dropped = true;
             }
         }
     }
@@ -84,12 +96,8 @@ internal sealed class OutputLines
             {
                 return null;
             }
-            string all = string.Join('\n', _lines);
-            if (!_dropped && all.Length <= 2 * OutputText.OutputCap)
-            {
-                return all;
-            }
-            return Js.Head(string.Join('\n', _head), OutputText.OutputCap) + "\n" + Js.Tail(all, OutputText.OutputCap);
+            if (_whole != null) { return _whole; }
+            return Js.Head(string.Join('\n', _head), OutputText.OutputCap) + "\n" + _tail;
         }
     }
 }

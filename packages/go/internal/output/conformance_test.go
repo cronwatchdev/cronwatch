@@ -172,7 +172,7 @@ func TestConformanceExpectText(t *testing.T) {
 			same(t, name+": expect "+needle, result, get(co, "result"))
 		}
 	}
-	if len(cases) != 11 {
+	if len(cases) != 12 {
 		t.Errorf("%d expectText cases", len(cases))
 	}
 }

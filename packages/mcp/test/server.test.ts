@@ -93,7 +93,7 @@ test("tools call the API with the bearer token and summarise", async () => {
   assert.equal(api.calls[1], "GET /cronwatch/api/jobs/nightly?runs=5 auth=Bearer tok");
 
   const check = await client.callTool({ name: "run_check", arguments: {} });
-  assert.match((check.content as { text: string }[])[0]!.text, /Alerts sent: nightly missed/);
+  assert.match((check.content as { text: string }[])[0]!.text, /Alerts sent:\n\s*<job_data[^>]*>\nnightly missed\n\s*<\/job_data>/);
 
   const silence = await client.callTool({ name: "silence_job", arguments: { name: "nightly", for: "2h" } });
   assert.match((silence.content as { text: string }[])[0]!.text, /silenced until 2023-11-16/);

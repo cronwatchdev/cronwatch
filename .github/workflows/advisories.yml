@@ -1,0 +1,96 @@
+name: Dependency advisories
+
+on:
+  workflow_call:
+  schedule:
+    - cron: "23 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ecosystem: [npm, PyPI, RubyGems, Go, crates.io, Hex, Packagist, Maven, NuGet]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        if: matrix.ecosystem == 'RubyGems'
+        with:
+          ruby-version: "3.4"
+      - name: Resolve all supported Rails test bundles
+        if: matrix.ecosystem == 'RubyGems'
+        working-directory: packages/ruby
+        run: |
+          bundle lock
+          for series in 7_2 8_0 8_1; do
+            BUNDLE_GEMFILE="test/rails/gemfiles/rails_${series}.gemfile" bundle lock
+          done
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.ecosystem == 'Go'
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: Use the current Rust toolchain
+        if: matrix.ecosystem == 'crates.io'
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+      - name: Resolve Rust workspace and fuzz dependencies
+        if: matrix.ecosystem == 'crates.io'
+        run: |
+          cargo metadata --locked --format-version 1 --manifest-path packages/rust/Cargo.toml > /dev/null
+          cargo generate-lockfile --manifest-path packages/rust/fuzz/Cargo.toml
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        if: matrix.ecosystem == 'Hex'
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+      - name: Resolve Elixir library and example dependencies
+        if: matrix.ecosystem == 'Hex'
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          for project in packages/elixir packages/elixir/webserver packages/elixir/examples/crontab; do
+            (cd "$project" && MIX_ENV="test" mix deps.get)
+          done
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.37.2
+        if: matrix.ecosystem == 'Packagist'
+        with:
+          php-version: "8.5"
+          tools: composer:v2
+      - name: Resolve PHP test dependencies
+        if: matrix.ecosystem == 'Packagist'
+        working-directory: packages/php
+        run: composer install --no-interaction --no-scripts --no-progress
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        if: matrix.ecosystem == 'Maven'
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Resolve Java runtime, optional, and test dependencies
+        if: matrix.ecosystem == 'Maven'
+        working-directory: packages/java
+        run: >-
+          ./mvnw -B -Dmaven.test.skip=true install
+          org.apache.maven.plugins:maven-dependency-plugin:3.8.1:tree
+          -DoutputType=json -DoutputFile=target/security-dependencies.json
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        if: matrix.ecosystem == 'NuGet'
+        with:
+          dotnet-version: "10.0.x"
+      - name: Resolve .NET runtime and test dependencies
+        if: matrix.ecosystem == 'NuGet'
+        working-directory: packages/dotnet
+        run: dotnet restore
+      - name: Check advisory failure and exception handling
+        run: python3 scripts/audit-dependencies.test.py
+      - name: Scan resolved dependencies, including tests
+        env:
+          ECOSYSTEM: ${{ matrix.ecosystem }}
+        run: python3 scripts/audit-dependencies.py --ecosystem "$ECOSYSTEM"

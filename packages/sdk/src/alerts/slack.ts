@@ -1,5 +1,5 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { drain, errorBody, errorText, postable, urlSecrets } from "./shared.js";
+import { drain, errorBody, errorText, fetchPost, urlSecrets } from "./shared.js";
 
 export interface SlackOptions {
   /** An incoming webhook URL from api.slack.com/messaging/webhooks. */
@@ -22,8 +22,6 @@ const EMOJI: Record<Alert["type"], string> = {
   recovered: ":white_check_mark:",
 };
 
-const TIMEOUT_MS = 10_000;
-
 /** Sends alerts to a Slack channel through an incoming webhook. */
 export function slack(options: SlackOptions): AlertChannel {
   if (!options.webhookUrl) throw new Error("slack() needs a webhookUrl");
@@ -33,12 +31,8 @@ export function slack(options: SlackOptions): AlertChannel {
       const url = options.link?.(alert);
       const title = `${EMOJI[alert.type]} *${escape(alert.title)}*${url ? ` (<${linkTarget(url)}|open>)` : ""}`;
       const body = codeBlockSafe(escape(alert.message)).slice(0, 2900);
-      const response = await fetch(postable(options.webhookUrl), {
-        method: "POST",
+      const response = await fetchPost(options.webhookUrl, {
         headers: { "content-type": "application/json" },
-        // Refused, not followed: a webhook URL is its own credential.
-        redirect: "error",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
         body: JSON.stringify({
           // The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
           text: escape(`${alert.title}\n${alert.message}`),

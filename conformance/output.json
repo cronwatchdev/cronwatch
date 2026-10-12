@@ -2202,8 +2202,8 @@
         "sha256": "6b7f654b59c7ad1c8d8dbc4e2f63251df53562072e72856330ae837ad6081a0f"
       },
       "output": {
-        "length": 65517,
-        "sha256": "9c42f98ae8e4d77d73fc7387f6f09379bdb0915844b65a9351f0527897df4c39"
+        "length": 68592,
+        "sha256": "4602fc4bdb678533902a62b67bd3587d1b9b6b3eab78df299c1506fc06ebd5bc"
       },
       "checks": [
         {
@@ -2213,6 +2213,77 @@
         {
           "expect": "row 2999",
           "result": null
+        },
+        {
+          "expect": "row 1500",
+          "result": "Output did not contain \"row 1500\""
+        },
+        {
+          "expect": "start",
+          "result": "Output did not contain \"start\""
+        },
+        {
+          "expect": "end",
+          "result": "Output did not contain \"end\""
+        },
+        {
+          "expect": "fin",
+          "result": "Output did not contain \"fin\""
+        },
+        {
+          "expect": "tail 19",
+          "result": "Output did not contain \"tail 19\""
+        },
+        {
+          "expect": "0000",
+          "result": "Output did not contain \"0000\""
+        },
+        {
+          "expect": "a",
+          "result": "Output did not contain \"a\""
+        }
+      ]
+    },
+    {
+      "name": "a megabyte line with NULs and a secret",
+      "lines": [
+        {
+          "parts": [
+            [
+              "x",
+              1000000
+            ],
+            [
+              " password=hunter2 ",
+              1
+            ],
+            [
+              "\u0000",
+              100000
+            ],
+            [
+              "done",
+              1
+            ]
+          ]
+        }
+      ],
+      "expectText": {
+        "length": 32769,
+        "sha256": "4ddbfaea760c94684eddf02ff2dc9d30658f3718a201683d51fbd6be9e828661"
+      },
+      "output": {
+        "length": 68609,
+        "sha256": "fd1dde5f39f8a34ff9a11ab6b054c98a114b466097e96c3a107244810bc567ee"
+      },
+      "checks": [
+        {
+          "expect": "Report written",
+          "result": "Output did not contain \"Report written\""
+        },
+        {
+          "expect": "row 2999",
+          "result": "Output did not contain \"row 2999\""
         },
         {
           "expect": "row 1500",
@@ -2261,8 +2332,8 @@
         "sha256": "0a0920158398dbbbbc069e2899c3fef66c987a8ac47e569204f347ea65696ab4"
       },
       "output": {
-        "length": 100000,
-        "sha256": "67a90226cf4a7a1c068d5acd4b95db706e4988eb94a0539365a50ab895102fc3"
+        "length": 68609,
+        "sha256": "798d78aa0a521f0df826c4185be60ede52e08b37d2c527204dcaa2ee26231603"
       },
       "checks": [
         {
@@ -2318,8 +2389,8 @@
         "end"
       ],
       "expectText": {
-        "length": 16388,
-        "sha256": "7d1670f2b6ac9ed954b1de422c38882deb18073b6dd9903a7e71d134b9eccfe3"
+        "length": 32769,
+        "sha256": "24dd4be4bef21394c927551485735add0d0dab2d9ea3f7c18e374559fe1a613c"
       },
       "output": {
         "text": "end"
@@ -2559,8 +2630,8 @@
         "sha256": "f890f5a2f573240e79b8423c00b8558082f8786255fdd10061ed5822ab660525"
       },
       "output": {
-        "length": 64541,
-        "sha256": "305e39699ed7fb2007a7d126e50f3f0b1582175b2b3d8b0fc843f61caa02bdc0"
+        "length": 66623,
+        "sha256": "a4324666dc90123d241886af211ec277a2b0fb8242d0e0d88ef77d66157b8f88"
       },
       "checks": [
         {

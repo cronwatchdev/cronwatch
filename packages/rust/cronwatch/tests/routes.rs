@@ -552,7 +552,8 @@ async fn a_body_nested_deeply_is_refused_not_a_stack_overflow() {
     })
     .await
     .expect("answered, not aborted");
-    status("deep", &res, 200);
+    status("deep", &res, 400);
+    assert_eq!(w.k.summary("s").await.unwrap().silenced_until, None);
 }
 
 #[tokio::test]

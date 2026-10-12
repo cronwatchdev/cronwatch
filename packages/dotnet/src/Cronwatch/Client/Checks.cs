@@ -276,7 +276,7 @@ public sealed partial class CronwatchClient
                 {
                     continue;
                 }
-                alerts.AddRange(await FinishRunAsync(job.Definition, run, now).ConfigureAwait(false));
+                alerts.AddRange(await FinishRunAsync(job.Definition, run, now, pendingOnly: true).ConfigureAwait(false));
             }
             catch (Exception e)
             {

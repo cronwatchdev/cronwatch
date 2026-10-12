@@ -205,6 +205,19 @@ pub(crate) async fn read_limited(body: Body) -> Result<Vec<u8>, TooLarge> {
     }
 }
 
+/// Whether the declared JSON object or multipart form can be parsed.
+pub(crate) fn valid_body(content_type: &str, data: &[u8]) -> bool {
+    if content_type.contains("application/json") {
+        let text = String::from_utf8_lossy(data);
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        return matches!(js::parse(text), Ok(Value::Object(_)));
+    }
+    if content_type.contains("multipart/form-data") {
+        return multipart_fields(content_type, data).is_some();
+    }
+    true
+}
+
 /// A field of a request's form or JSON object, as `String(value)` gives it
 /// in JavaScript; `None` for anything else, or a body that cannot be read
 /// as its type says. The last of several fields of one name wins, as

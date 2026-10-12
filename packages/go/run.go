@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -446,6 +447,11 @@ func (c *Client) recordFinish(ctx context.Context, def *jobDef, run *Run, record
 			return "belongs to job " + js.Quote(stored.Job), nil
 		}
 	}
+	state, err := c.readState(ctx, run.Job)
+	if err != nil {
+		return "", err
+	}
+	tracked := slices.Contains(state.PendingRuns, run.ID)
 	late, ignored, err := c.claimFinish(ctx, *run)
 	if err != nil {
 		return "", err
@@ -454,7 +460,7 @@ func (c *Client) recordFinish(ctx context.Context, def *jobDef, run *Run, record
 		return ignored, nil
 	}
 	if !late || run.Status == StatusOK {
-		c.finishRun(ctx, def.stored, *run, finishedAt)
+		c.finishRunMode(ctx, def.stored, *run, finishedAt, tracked && !late)
 	}
 	return "", nil
 }
@@ -505,10 +511,17 @@ func (c *Client) claimFinish(ctx context.Context, run Run) (late bool, ignored s
 // produces. The alerts are written with that state (see outbox). Never
 // fails: problems go to the error handler.
 func (c *Client) finishRun(ctx context.Context, def Definition, run Run, now int64) []Alert {
+	return c.finishRunMode(ctx, def, run, now, false)
+}
+
+func (c *Client) finishRunMode(ctx context.Context, def Definition, run Run, now int64, pendingOnly bool) []Alert {
 	var history []Run
 	var historyErr error
 	read := false
 	_, out, err := updateState(ctx, c, run.Job, func(previous JobState) (JobState, held, error) {
+		if pendingOnly && !slices.Contains(previous.PendingRuns, run.ID) {
+			return previous, held{}, nil
+		}
 		if !read {
 			history, historyErr = c.history(ctx, run)
 			read = true
@@ -648,7 +661,7 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if run.Status == StatusRunning {
 		return []Alert{}, nil
 	}
-	return c.finishRun(ctx, def.stored, run, c.now()), nil
+	return c.finishRunMode(ctx, def.stored, run, c.now(), true), nil
 }
 
 // recordOver is RecordRun for a run already stored.
@@ -660,6 +673,11 @@ func (c *Client) recordOver(ctx context.Context, def Definition, stored Run, run
 	if (stored.Status != StatusRunning && stored.Status != StatusTimeout) || run.Status == StatusRunning {
 		return []Alert{}, nil
 	}
+	state, err := c.readState(ctx, run.Job)
+	if err != nil {
+		return nil, err
+	}
+	tracked := slices.Contains(state.PendingRuns, run.ID)
 	late, ignored, err := c.claimFinish(ctx, run)
 	if err != nil {
 		return nil, err
@@ -679,5 +697,5 @@ func (c *Client) recordOver(ctx context.Context, def Definition, stored Run, run
 	if late && run.Status != StatusOK {
 		return []Alert{}, nil
 	}
-	return c.finishRun(ctx, def, run, c.now()), nil
+	return c.finishRunMode(ctx, def, run, c.now(), tracked && !late), nil
 }

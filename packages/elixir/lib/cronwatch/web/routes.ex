@@ -518,11 +518,16 @@ defmodule Cronwatch.Web.Routes do
   defp sign_in(req, public_origin, base, {kind, token}) do
     sent = body_field(req, "token")
 
-    if is_binary(sent) and Text.constant_time_eq(sent, token) do
-      back = sign_in_return(Request.header(req, "referer"), public_origin, base)
-      redirect(back, [sign_in_cookie(token, public_origin, base)])
-    else
-      sign_in_page(kind, base)
+    cond do
+      sent == :bad_body ->
+        page("Bad request", "Malformed request body", base, 400)
+
+      is_binary(sent) and Text.constant_time_eq(sent, token) ->
+        back = sign_in_return(Request.header(req, "referer"), public_origin, base)
+        redirect(back, [sign_in_cookie(token, public_origin, base)])
+
+      true ->
+        sign_in_page(kind, base)
     end
   end
 
@@ -633,6 +638,9 @@ defmodule Cronwatch.Web.Routes do
           :too_large ->
             too_large(true, base)
 
+          :bad_body ->
+            page("Not silenced", "Malformed request body", base, 400)
+
           value ->
             case silence_duration(value) do
               {:ok, duration} ->
@@ -659,11 +667,25 @@ defmodule Cronwatch.Web.Routes do
       end
 
     case read do
-      :too_large -> :too_large
-      {:ok, data} when byte_size(data) > @max_body -> :too_large
-      {:ok, data} -> Request.body_field(header_text(req, "content-type") || "", data, name)
-      {:parsed, params} -> Request.parsed_field(params, name)
-      {:error, _} -> nil
+      :too_large ->
+        :too_large
+
+      {:ok, data} when byte_size(data) > @max_body ->
+        :too_large
+
+      {:ok, data} ->
+        type = header_text(req, "content-type") || ""
+        if Request.valid_body?(type, data), do: Request.body_field(type, data, name), else: :bad_body
+
+      {:parsed, params} ->
+        # Plug.Parsers wraps JSON arrays and scalars in its reserved _json field.
+        if String.contains?(header_text(req, "content-type") || "", "application/json") and
+             Map.has_key?(params, "_json"),
+           do: :bad_body,
+           else: Request.parsed_field(params, name)
+
+      {:error, _} ->
+        nil
     end
   end
 
@@ -740,6 +762,9 @@ defmodule Cronwatch.Web.Routes do
             case body_field(req, "for") do
               :too_large ->
                 too_large(false, "")
+
+              :bad_body ->
+                api(error_body("Malformed request body"), 400)
 
               value ->
                 case silence_duration(value || Request.param(said.query, "for")) do

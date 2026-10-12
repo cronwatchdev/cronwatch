@@ -793,12 +793,13 @@ impl Client {
                 }
             }
         }
+        let tracked = self.read_state(&run.job).await?.pending_runs.unwrap_or_default().contains(&run.id);
         let (late, ignored) = self.claim_finish(run).await?;
         if ignored.is_some() {
             return Ok(ignored);
         }
         if !late || run.status == RunStatus::Ok {
-            self.finish_run(&def.stored, run, finished_at).await;
+            self.finish_run_mode(&def.stored, run, finished_at, tracked && !late).await;
         }
         Ok(None)
     }
@@ -846,8 +847,21 @@ impl Client {
     /// alerts are written with that state (see `outbox`). Never fails:
     /// problems go to the error handler.
     pub(crate) async fn finish_run(&self, def: &Definition, run: &Run, now: i64) -> Vec<Alert> {
+        self.finish_run_mode(def, run, now, false).await
+    }
+
+    pub(crate) async fn finish_run_mode(
+        &self,
+        def: &Definition,
+        run: &Run,
+        now: i64,
+        pending_only: bool,
+    ) -> Vec<Alert> {
         let result = self
             .update_state(&run.job, self.history(run), |previous, history: &Vec<Run>| {
+                if pending_only && !previous.pending_runs.as_deref().unwrap_or_default().contains(&run.id) {
+                    return Ok((previous, (Vec::new(), 0)));
+                }
                 let before = release_run(&previous, &run.id);
                 let e = on_run_finish(def, run, &before, history, now).map_err(Error::Other)?;
                 Ok(self.outbox(apply_silence(&before, e, now), def, now))
@@ -959,7 +973,7 @@ impl Client {
         if run.status == RunStatus::Running {
             return Ok(Vec::new());
         }
-        Ok(self.finish_run(&def.stored, &run, self.now()).await)
+        Ok(self.finish_run_mode(&def.stored, &run, self.now(), true).await)
     }
 
     /// `record_run` for a run already stored.
@@ -985,6 +999,7 @@ impl Client {
         if !matches!(stored.status, RunStatus::Running | RunStatus::Timeout) || run.status == RunStatus::Running {
             return Ok(Vec::new());
         }
+        let tracked = self.read_state(&run.job).await?.pending_runs.unwrap_or_default().contains(&run.id);
         let (late, ignored) = self.claim_finish(run).await?;
         if let Some(why) = ignored {
             self.report(
@@ -1005,7 +1020,7 @@ impl Client {
         if late && run.status != RunStatus::Ok {
             return Ok(Vec::new());
         }
-        Ok(self.finish_run(def, run, self.now()).await)
+        Ok(self.finish_run_mode(def, run, self.now(), tracked && !late).await)
     }
 }
 

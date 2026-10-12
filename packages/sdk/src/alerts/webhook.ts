@@ -1,5 +1,5 @@
 import type { AlertChannel } from "../types.js";
-import { drain, postable } from "./shared.js";
+import { drain, fetchPost } from "./shared.js";
 
 export interface WebhookOptions {
   url: string;
@@ -29,8 +29,6 @@ export interface WebhookOptions {
   /** The clock the timestamp is read from, in milliseconds. Default Date.now. */
   now?: () => number;
 }
-
-const TIMEOUT_MS = 10_000;
 
 /**
  * The payload's version, sent as its first field. It goes up only if a
@@ -72,7 +70,7 @@ export function webhook(options: WebhookOptions): AlertChannel {
         setHeader(headers, "x-cronwatch-timestamp-signature", `sha256=${await signature(options.secret, `${timestamp}.${body}`)}`);
       }
       // A redirect is refused, not followed: the headers (and the signature) would go with it.
-      const response = await fetch(postable(options.url), { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const response = await fetchPost(options.url, { headers, body });
       // Only the origin: a webhook URL's path or query often is the credential.
       if (!response.ok) throw new Error(`Webhook ${origin(options.url)} answered ${response.status}`);
       await drain(response);

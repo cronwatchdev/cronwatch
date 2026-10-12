@@ -98,6 +98,12 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Advisory failures are part of CI's conclusion, which the automatic deploy waits for.
+  advisories:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/advisories.yml
+
   # A change to the site alone: the dash check, the site's build, its
   # links, the contact service's tests, and the IndexNow script's, as the
   # test job checks them on a full run. The site needs only marked, and the
@@ -983,10 +989,10 @@ jobs:
         working-directory: packages/rust
         run: |
           if [ "${{ matrix.rust }}" = "stable" ]; then
-            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           else
-            cargo clippy -p cronwatch -p cronwatch-tokio-cron-scheduler --all-targets --all-features -- -D warnings
-            cargo clippy -p cronwatch-apalis --lib -- -D warnings
+            cargo clippy --locked -p cronwatch -p cronwatch-tokio-cron-scheduler --all-targets --all-features -- -D warnings
+            cargo clippy --locked -p cronwatch-apalis --lib -- -D warnings
           fi
       # The workspace's .cargo/config.toml sets TZ=UTC, as the fixtures are made.
       - name: cargo test
@@ -997,12 +1003,12 @@ jobs:
           CRONWATCH_TEST_MARIADB: mysql://root:pw@127.0.0.1:3307/cw
         run: |
           if [ "${{ matrix.rust }}" = "stable" ]; then
-            cargo test --workspace --all-features
+            cargo test --locked --workspace --all-features
           elif [ "${{ matrix.rust }}" = "1.94" ]; then
-            cargo build -p cronwatch-sqlx -p cronwatch-apalis --all-features
-            cargo test -p cronwatch-sqlx -p cronwatch-apalis --all-features
+            cargo build --locked -p cronwatch-sqlx -p cronwatch-apalis --all-features
+            cargo test --locked -p cronwatch-sqlx -p cronwatch-apalis --all-features
           else
-            cargo test -p cronwatch -p cronwatch-tokio-cron-scheduler --all-features
+            cargo test --locked -p cronwatch -p cronwatch-tokio-cron-scheduler --all-features
           fi
       # @cronwatch/mcp's tools against the Rust dashboard, served by
       # packages/rust/webserver (axum) through `cargo run` on this entry's Rust.
@@ -1044,7 +1050,7 @@ jobs:
           rustup default stable
       - name: cargo test
         working-directory: packages/rust
-        run: cargo test --workspace --all-features
+        run: cargo test --locked --workspace --all-features
 
   # What a release rests on beside the tests, on stable: every feature of
   # every crate builds alone and names what it leans on (cargo hack), the
@@ -1070,7 +1076,7 @@ jobs:
         working-directory: packages/rust
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --all-features --no-deps
+        run: cargo doc --locked --workspace --all-features --no-deps
       - name: cargo package
         working-directory: packages/rust
         run: cargo package --workspace --exclude cronwatch-webserver --exclude cronwatch-example-crontab

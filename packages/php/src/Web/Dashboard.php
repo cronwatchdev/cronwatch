@@ -373,7 +373,11 @@ final class Dashboard
         // The sign-in form posts the token here, in the body, so it stays out of
         // the URL and every access log. Cross-site posts were refused above.
         if ($this->token !== null && $method === 'POST' && $path === '/signin') {
-            $sent = $request->bodyTooLarge() ? null : (self::readBody($request)['token'] ?? null);
+            $body = $request->bodyTooLarge() ? [] : self::readBody($request);
+            if ($body === null) {
+                return self::html(Html::messagePage('Bad request', 'Malformed request body', $base, head: $this->head), 400);
+            }
+            $sent = $body['token'] ?? null;
             if (!is_string($sent) || !self::secretMatches($sent, $this->token)) {
                 return $this->signInPage($base);
             }
@@ -475,7 +479,11 @@ final class Dashboard
                     return self::html(Html::messagePage('Not silenced', 'The request was too large.', $base, head: $this->head), 413);
                 }
                 try {
-                    $duration = self::silenceDuration(self::readBody($request)['for'] ?? null);
+                    $body = self::readBody($request);
+                    if ($body === null) {
+                        return self::html(Html::messagePage('Not silenced', 'Malformed request body', $base, head: $this->head), 400);
+                    }
+                    $duration = self::silenceDuration($body['for'] ?? null);
                 } catch (\InvalidArgumentException $error) {
                     return self::html(Html::messagePage('Not silenced', $error->getMessage(), $base, head: $this->head), 400);
                 }
@@ -532,6 +540,9 @@ final class Dashboard
                     return self::api(['ok' => false, 'error' => 'Request body too large'], 413);
                 }
                 $body = self::readBody($request);
+                if ($body === null) {
+                    return self::api(['ok' => false, 'error' => 'Malformed request body'], 400);
+                }
                 try {
                     $duration = self::silenceDuration(array_key_exists('for', $body) ? $body['for'] : $request->param('for'));
                 } catch (\InvalidArgumentException $error) {
@@ -767,9 +778,9 @@ final class Dashboard
      * gives it in JavaScript. JSON is read as request.json() reads it: bytes
      * that are not UTF-8 become U+FFFD, and a leading byte order mark is dropped.
      *
-     * @return array<string, string>
+     * @return array<string, string>|null
      */
-    private static function readBody(Request $request): array
+    private static function readBody(Request $request): ?array
     {
         $type = strtolower($request->header('content-type') ?? '');
         try {
@@ -779,14 +790,14 @@ final class Dashboard
                     $text = substr($text, 3);
                 }
                 $data = json_decode($text, false, 512, JSON_THROW_ON_ERROR);
-                if ($data instanceof \stdClass || is_array($data)) {
+                if ($data instanceof \stdClass) {
                     $out = [];
-                    foreach (is_array($data) ? $data : get_object_vars($data) as $key => $value) {
+                    foreach (get_object_vars($data) as $key => $value) {
                         $out[(string) $key] = self::jsString($value);
                     }
                     return $out;
                 }
-                return [];
+                return null;
             }
             if (str_contains($type, 'application/x-www-form-urlencoded') || str_contains($type, 'multipart/form-data')) {
                 if ($request->form !== null) {
@@ -806,7 +817,7 @@ final class Dashboard
                 return $out;
             }
         } catch (\Throwable) {
-            return [];
+            return null;
         }
         return [];
     }

@@ -97,7 +97,7 @@ class FormatConformanceTest {
     JsObject o = Fixtures.load("output");
     Fixtures.Failures fails = new Fixtures.Failures();
     List<JsObject> cases = Fixtures.objects(o, "expectText");
-    assertEquals(11, cases.size(), "expectText cases");
+    assertEquals(12, cases.size(), "expectText cases");
     for (JsObject c : cases) {
       String name = Fixtures.string(c, "name");
       Recorder rec = new Recorder();

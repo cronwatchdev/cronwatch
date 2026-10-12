@@ -109,7 +109,7 @@ public class OutputConformanceTests
     public void Expect_text()
     {
         var cases = Fixtures.Objects(Fixture, "expectText");
-        Assert.Equal(11, cases.Count);
+        Assert.Equal(12, cases.Count);
         var failures = new Fixtures.Failures();
         foreach (var c in cases)
         {

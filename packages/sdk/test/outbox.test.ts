@@ -223,6 +223,24 @@ test("a pending run the store no longer has is let go, and a run stored unjudged
   assert.deepEqual(sent.types(), []);
 });
 
+test("two clients recover one pending failure once, including after a CAS retry", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const options = { store, now: c.now, alerts: [sent], cronSecret: null };
+  const a = cronwatch(options), b = cronwatch(options);
+  await store.upsertJob({ name: "pending", failuresBeforeAlert: 2 }, c.now());
+  await store.insertRun({ id: "lost", job: "pending", status: "failed", startedAt: c.now(), finishedAt: c.now(), durationMs: 0, error: "failed", output: null, metrics: {}, trigger: "start" });
+  await store.setState({ job: "pending", open: {}, consecutiveFailures: 0, silencedUntil: null, lastAlertAt: null, pendingRuns: ["lost"] });
+  c.advance(SEND_LEASE_MS + MIN);
+  await Promise.all([a.check(), b.check()]);
+  const state = (await store.getState("pending"))!;
+  assert.equal(state.consecutiveFailures, 1);
+  assert.equal(state.pendingRuns, undefined);
+  assert.deepEqual(state.open, {});
+  assert.deepEqual(sent.types(), []);
+});
+
 /** A channel that refuses while `down.value` is true, and records what it took. */
 function switchable(name: string) {
   const down = { value: false };
@@ -321,4 +339,54 @@ test("the first send has the whole run; the copy held in state, and so a retry, 
   c.advance(MIN);
   await cw.check();
   assert.deepEqual(sent[1]!.run, held.run, "the retry sends the held copy");
+});
+
+test("a recovery check that beats the finishing process evaluates a tracked run only once", async () => {
+  const c = clock();
+  const shared = memory();
+  const checker = cronwatch({ store: shared, now: c.now, cronSecret: null });
+  const store: Store = { ...shared, updateRunIf: async (run, statuses) => {
+    const written = await shared.updateRunIf!(run, statuses);
+    if (written) await checker.check();
+    return written;
+  } };
+  const runner = cronwatch({ store, now: c.now, cronSecret: null });
+  const job = runner.job("race", { failuresBeforeAlert: 2 });
+  await assert.rejects(job.run(async () => { c.advance(SEND_LEASE_MS + MIN); throw new Error("failed"); }));
+  assert.equal((await shared.getState("race"))!.consecutiveFailures, 1);
+  assert.deepEqual((await shared.getState("race"))!.open, {});
+});
+
+test("a timeout that consumes the pending marker while finishing still recovers on late success", async () => {
+  const c = clock();
+  const shared = memory();
+  const sent = capture();
+  const checker = cronwatch({ store: shared, now: c.now, cronSecret: null, alerts: [sent] });
+  let checked = false;
+  const store: Store = { ...shared, updateRunIf: async (run, statuses) => {
+    if (!checked && run.status === "ok") { checked = true; await checker.check(); }
+    return shared.updateRunIf!(run, statuses);
+  } };
+  const runner = cronwatch({ store, now: c.now, cronSecret: null, alerts: [sent] });
+  await runner.job("late", { timeout: "1m" }).run(() => { c.advance(2 * MIN); });
+  assert.deepEqual(sent.types(), ["stuck", "recovered"]);
+  assert.deepEqual((await shared.getState("late"))!.open, {});
+});
+
+test("a recovered pending run finished through recordRun is evaluated once", async () => {
+  const c = clock();
+  const shared = memory();
+  const checker = cronwatch({ store: shared, now: c.now, cronSecret: null });
+  const store: Store = { ...shared, updateRunIf: async (run, statuses) => {
+    const written = await shared.updateRunIf!(run, statuses);
+    if (written) await checker.check();
+    return written;
+  } };
+  const runner = cronwatch({ store, now: c.now, cronSecret: null });
+  const handle = await runner.job("external", { failuresBeforeAlert: 2 }).start();
+  const run = (await shared.getRun(handle.id))!;
+  c.advance(SEND_LEASE_MS + MIN);
+  await runner.recordRun({ ...run, status: "failed", finishedAt: c.now() - SEND_LEASE_MS - 1, error: "failed" });
+  assert.equal((await shared.getState("external"))!.consecutiveFailures, 1);
+  assert.deepEqual((await shared.getState("external"))!.open, {});
 });

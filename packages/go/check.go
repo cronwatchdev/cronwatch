@@ -261,7 +261,7 @@ func (c *Client) evaluatePending(ctx context.Context, job StoredJob, recent []Ru
 			if run.Status == StatusRunning || run.FinishedAt == nil || *run.FinishedAt > now-sendLeaseMs {
 				return nil
 			}
-			alerts = append(alerts, c.finishRun(ctx, job.Definition, run.clone(), now)...)
+			alerts = append(alerts, c.finishRunMode(ctx, job.Definition, run.clone(), now, true)...)
 			return nil
 		}()
 		if err != nil {

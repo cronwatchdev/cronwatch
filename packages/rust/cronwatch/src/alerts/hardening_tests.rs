@@ -464,13 +464,16 @@ async fn a_panic_while_texting_is_a_failure_not_a_crash() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tls_is_verified() {
     use tokio_rustls::rustls::{self, pki_types};
-    let made = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
-    let key = pki_types::PrivateKeyDer::Pkcs8(pki_types::PrivatePkcs8KeyDer::from(made.key_pair.serialize_der()));
+    // Public test fixture, never a key used outside this local untrusted server.
+    let cert = pki_types::CertificateDer::from(include_bytes!("testdata/untrusted.der").to_vec());
+    let key = pki_types::PrivateKeyDer::Pkcs8(pki_types::PrivatePkcs8KeyDer::from(
+        include_bytes!("testdata/untrusted-key.der").to_vec(),
+    ));
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(vec![made.cert.der().clone()], key)
+        .with_single_cert(vec![cert], key)
         .unwrap();
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     let server = Server::start_with(Arc::new(|_: &Seen| Reply::Answer(200, vec![], vec![])), Some(acceptor)).await;

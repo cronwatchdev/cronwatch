@@ -100,7 +100,7 @@ module Cronwatch
   class RunRecorder
     # Lines are dropped from the front once the output is well past the cap;
     # Output.redact_and_cap trims it exactly at the end.
-    KEEP = 64 * 1024
+    KEEP = Output::CAP + Output::REDACT_EDGE + 2
 
     attr_reader :context, :signal
 
@@ -111,7 +111,9 @@ module Cronwatch
       # dropped from @lines: what expect_text needs once the output runs long.
       @head = []
       @head_size = 0
-      @dropped = false
+      @whole = ""
+      @tail = ""
+      @logged = false
       @metrics = {}
       @lock = Mutex.new
       @signal = AbortSignal.new(timeout_ms)
@@ -121,15 +123,26 @@ module Cronwatch
     def log(line)
       length = JS.length16(line)
       @lock.synchronize do
+        separator = @logged ? "\n" : ""
+        @logged = true
+        if @whole
+          @whole = JS.length16(@whole) + separator.length + length <= 2 * Output::CAP ? @whole + separator + line : nil
+        end
+        @tail = JS.tail16(@tail + separator + JS.tail16(line, Output::CAP), Output::CAP).dup
         if @head_size < Output::CAP
-          @head << line
+          @head << JS.head16(line, Output::CAP - @head_size).dup
           @head_size += length + 1
+        end
+        line = Output.strip_nul(line)
+        length = JS.length16(line)
+        if length >= KEEP
+          line = JS.tail16(line, KEEP - 1).dup
+          length = JS.length16(line)
         end
         @lines << line
         @size += length + 1
         while @size > KEEP && @lines.length > 1
           @size -= JS.length16(@lines.shift) + 1
-          @dropped = true
         end
       end
     end
@@ -138,7 +151,7 @@ module Cronwatch
       @lock.synchronize { @metrics[name] = value }
     end
 
-    # The lines still held (past 64 KB the oldest are let go), joined and not
+    # The lines still held (past the bounded redaction window the oldest are let go), joined and not
     # yet capped: the client redacts them first, then caps them
     # (Output.redact_and_cap).
     def output
@@ -152,10 +165,9 @@ module Cronwatch
       @lock.synchronize do
         next nil if @lines.empty?
 
-        all = @lines.join("\n")
-        next all if !@dropped && JS.length16(all) <= 2 * Output::CAP
+        next @whole if @whole
 
-        "#{JS.head16(@head.join("\n"), Output::CAP)}\n#{JS.tail16(all, Output::CAP)}"
+        "#{JS.head16(@head.join("\n"), Output::CAP)}\n#{@tail}"
       end
     end
 

@@ -1648,6 +1648,7 @@ function outputCases() {
     { name: "exactly twice the cap", lines: [numbered("", 32, 1023)] },
     { name: "one over twice the cap", lines: [numbered("", 31, 1023), long(["q", 1024])] },
     { name: "past the rolling window, with the done line first", lines: ["Report written: /tmp/r.pdf", numbered("row ", 3000, 40)] },
+    { name: "a megabyte line with NULs and a secret", lines: [long(["x", 1_000_000], [" password=hunter2 ", 1], ["\u0000", 100_000], ["done", 1])] },
     { name: "one huge line", lines: [long(["h", 100_000])] },
     { name: "a huge line after a small one", lines: ["start", long(["h", 100_000]), "end"] },
     { name: "the head crosses the cap inside a line", lines: [numbered("", 15, 1000), long(["m", 3000]), numbered("tail ", 20, 2000)] },

@@ -264,6 +264,7 @@ module Cronwatch
       # the URL and every access log. Cross-site posts were refused above.
       if @token && method == "POST" && path == "/signin"
         body = read_body(request)
+        return html(HTML.message_page("Bad request", "Malformed request body", base), 400) if body.equal?(BAD_BODY)
         # A body too large is no token at all.
         sent = body.equal?(TOO_LARGE) ? nil : body["token"]
         return sign_in_page(base) if sent.nil? || !HTTP.constant_time_equal?(sent, @token)
@@ -341,6 +342,7 @@ module Cronwatch
         if action == "silence"
           body = read_body(request)
           return html(HTML.message_page("Not silenced", "The request was too large.", base), 413) if body.equal?(TOO_LARGE)
+          return html(HTML.message_page("Not silenced", "Malformed request body", base), 400) if body.equal?(BAD_BODY)
 
           begin
             duration = silence_duration(body["for"])
@@ -388,6 +390,7 @@ module Cronwatch
         if rest[2] == "silence"
           body = read_body(request)
           return api({ ok: false, error: "Request body too large" }, 413) if body.equal?(TOO_LARGE)
+          return api({ ok: false, error: "Malformed request body" }, 400) if body.equal?(BAD_BODY)
 
           begin
             duration = silence_duration(body.key?("for") ? body["for"] : request.query("for"))
@@ -530,7 +533,8 @@ module Cronwatch
 
     # A request body past Request::MAX_BODY, which read_body answers with.
     TOO_LARGE = Object.new.freeze
-    private_constant :TOO_LARGE
+    BAD_BODY = Object.new.freeze
+    private_constant :TOO_LARGE, :BAD_BODY
 
     # The form fields or JSON object of a request, each value as String(value)
     # gives it in JavaScript, or TOO_LARGE for a body past Request::MAX_BODY.
@@ -546,13 +550,13 @@ module Cronwatch
       if json
         data = JSON.parse(Output.utf8(request.body).delete_prefix("﻿"))
         return data.to_h { |k, v| [k.to_s, js_string(v)] } if data.is_a?(Hash)
-        return data.each_with_index.to_h { |v, i| [i.to_s, js_string(v)] } if data.is_a?(Array)
+        return BAD_BODY
       else
         return request.form.transform_values { |v| form_value(v) }
       end
       {}
     rescue StandardError
-      {}
+      BAD_BODY
     end
 
     # String(value) for a parsed JSON value.

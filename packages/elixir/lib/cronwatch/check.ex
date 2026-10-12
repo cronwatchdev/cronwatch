@@ -134,7 +134,7 @@ defmodule Cronwatch.Check do
             []
 
           true ->
-            Core.finish_run(c, stored.definition, run, now)
+            Core.finish_run(c, stored.definition, run, now, true)
         end
       rescue
         e ->
@@ -437,7 +437,7 @@ defmodule Cronwatch.Check do
                 {Evaluate.start_run(definition, run, before, Core.now(c)), nil}
               end)
 
-              if run.status == "running", do: [], else: Core.finish_run(c, definition, run, Core.now(c))
+              if run.status == "running", do: [], else: Core.finish_run(c, definition, run, Core.now(c), true)
             else
               []
             end
@@ -463,6 +463,8 @@ defmodule Cronwatch.Check do
         []
 
       true ->
+        tracked = run.id in (Core.read_state!(c, run.job).pending_runs || [])
+
         case Core.claim_finish!(c, run) do
           {:ignored, why} ->
             Core.report(c, Error.other("run #{run.id} of #{run.job} #{why}; ignored"), "recording #{run.job}")
@@ -477,7 +479,7 @@ defmodule Cronwatch.Check do
           {:ok, late} ->
             if late and run.status != "ok",
               do: [],
-              else: Core.finish_run(c, definition, run, Core.now(c))
+              else: Core.finish_run(c, definition, run, Core.now(c), tracked and not late)
         end
     end
   end

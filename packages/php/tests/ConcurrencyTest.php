@@ -45,8 +45,8 @@ final class ConcurrencyTest extends TestCase
         $reads = 0;
         $storeA->hooks['getState'] = function (\Closure $next, array $args) use (&$reads, $two) {
             $state = $next(...$args);
-            // The evaluation of the failure (the second read of the run): the other process fails meanwhile.
-            if (++$reads === 2) {
+            // The evaluation of the failure (after the start and pending-marker reads): the other process fails meanwhile.
+            if (++$reads === 3) {
                 try {
                     $two->run('shared', function (): never {
                         throw new \RuntimeException('two');

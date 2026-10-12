@@ -144,7 +144,7 @@ fn lines(spec: &[Value]) -> Vec<String> {
 #[test]
 fn conformance_expect_text() {
     let cases = list(&load(), "expectText").clone();
-    assert_eq!(cases.len(), 11, "expectText cases");
+    assert_eq!(cases.len(), 12, "expectText cases");
     for c in &cases {
         let o = c.as_object().expect("a case");
         let name = o.get("name").and_then(Value::as_str).expect("a name");
