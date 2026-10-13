@@ -210,6 +210,7 @@ ${index ? `<meta property="og:url" content="${canonical}">\n` : ""}<meta propert
 <script src="${assets.js}" defer></script>
 <script src="${assets.search}" data-index="${assets.index}" defer></script>
 <script defer src="https://t.cronwatch.dev/script.js" data-website-id="4a5d2570-de1e-4c31-b2ad-18a5107ac7f5"></script>
+<script defer src="https://analytics.joncp.dev/s.js?site=cronwatch.dev" data-site="cronwatch.dev"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
