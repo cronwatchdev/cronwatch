@@ -2,6 +2,11 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## Unreleased
+
+### Fixed
+- Updated library fixes preserve imported run evaluation across transient storage failures and retry failed pg_cron imports within the source process.
+
 ## 0.14.1 - 2026-10-12
 
 ### Fixed

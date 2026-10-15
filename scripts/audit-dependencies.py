@@ -118,6 +118,19 @@ def scan(entries, exceptions, today):
             raise ValueError("advisory exception needs a reason")
     for exception in exceptions:
         key = (exception["ecosystem"], exception["name"], exception["version"])
+        if key in entries:
+            for required in exception.get("required_dependencies", []):
+                minimum = tuple(map(int, required["minimum_version"].split(".")))
+                for source in set(exception["sources"]) & entries[key]:
+                    versions = [
+                        version for (ecosystem, name, version), sources in entries.items()
+                        if ecosystem == required["ecosystem"] and name == required["name"] and source in sources
+                    ]
+                    if not versions or any(
+                        not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+                        or tuple(map(int, version.split("."))) < minimum for version in versions
+                    ):
+                        raise ValueError(f"advisory exception requires {required['name']} >= {required['minimum_version']} in {source}")
         if key in entries and exception.get("absent_import_prefixes"):
             for source in exception["sources"]:
                 imports = subprocess.check_output(

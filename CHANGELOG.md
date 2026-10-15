@@ -2,6 +2,21 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Fixed
+
+- Every language: completed imports remain retryable when writing their evaluation marker fails, without evaluating historical imports or counting concurrent imports twice. Checks no longer time out completed imports awaiting that marker.
+- Every language: pg_cron retries failed writes within the source process, even after newer runs advance its cursor, and preserves whether the failed import was historical backfill.
+- Ruby: alert requests enforce the overall deadline when a server trickles response headers.
+- Python: alert request deadlines close the connection during TLS handshakes and response reads.
+- Rust: updated rustls to 0.23.46 to address four security advisories.
+- Elixir and .NET: corrected HTTP test connection handling and synchronized fake-clock timeout tests.
+
+### Changed
+
+- The privacy page describes Runlight analytics and its opt-out, and the import documentation explains retry behavior and its process-lifetime limitation.
+
 ## 0.14.1 - 2026-10-12
 
 ### Fixed

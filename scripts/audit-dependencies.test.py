@@ -46,6 +46,25 @@ class Exceptions(unittest.TestCase):
         with patch.object(audit.subprocess, "check_output", return_value="golang.org/x/crypto/ssh\n"):
             self.assertEqual(0, self.run_scan())
 
+    def test_mitigation_dependency_must_be_patched_and_in_the_same_inventory(self):
+        self.exception["required_dependencies"] = [{"ecosystem": "Hex", "name": "cowboy", "minimum_version": "2.16.0"}]
+        with self.assertRaisesRegex(ValueError, "requires cowboy"):
+            self.run_scan()
+        for version, source, accepted in [
+            ("2.15.0", self.source, False),
+            ("2.16.0-rc.1", self.source, False),
+            ("2.20.0", "another/mix.lock", False),
+            ("2.16.0", self.source, True),
+            ("2.20.0", self.source, True),
+        ]:
+            entries = {self.key: {self.source}, ("Hex", "cowboy", version): {source}}
+            with patch.object(audit, "query", return_value=[]), contextlib.redirect_stdout(io.StringIO()):
+                if accepted:
+                    self.assertEqual(0, audit.scan(entries, [self.exception], self.today))
+                else:
+                    with self.assertRaisesRegex(ValueError, "requires cowboy"):
+                        audit.scan(entries, [self.exception], self.today)
+
     def test_expiry_cannot_silently_ignore_findings(self):
         with self.assertRaisesRegex(ValueError, "expired"):
             audit.scan({self.key: {self.source}}, [self.exception], datetime.date(2027, 1, 10))
