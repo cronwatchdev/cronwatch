@@ -260,6 +260,37 @@ class AlertsTest < Minitest::Test
     server&.close
   end
 
+  def test_the_deadline_is_cancelled_before_connection_cleanup
+    # Deterministically cross the deadline in finish after reading
+    # an answer. The timeout must already be cancelled, even on a slow close.
+    conn = Object.new
+    conn.singleton_class.attr_accessor :open_timeout, :read_timeout, :write_timeout
+    response = Object.new
+    response.define_singleton_method(:code) { "500" }
+    response.define_singleton_method(:read_body) { |&block| block.call("reason") }
+    conn.define_singleton_method(:request) { |_request, &block| block.call(response) }
+    cleaned = false
+    started = false
+    conn.define_singleton_method(:start) do |&block|
+      started = true
+      block.call(self) if block
+    ensure
+      finish if block
+    end
+    conn.define_singleton_method(:started?) { started }
+    conn.define_singleton_method(:finish) do
+      sleep 0.15
+      cleaned = true
+      started = false
+    end
+    http = Cronwatch::HTTP::NetHTTP.new(timeout: 0.05)
+    http.define_singleton_method(:connection) { |_uri| conn }
+    answer = http.post("http://example.test/", "{}", {})
+    assert cleaned, "the deadline must not interrupt connection cleanup"
+    assert_equal 500, answer.status
+    assert_equal "reason", answer.body
+  end
+
   # A server that answers `status` and then sends body bytes as fast as it
   # can, without end, until the client goes.
   def flooding_server(status)
