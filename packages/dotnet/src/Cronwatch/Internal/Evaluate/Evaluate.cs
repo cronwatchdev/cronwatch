@@ -1092,7 +1092,7 @@ internal static class Evaluate
     /// <summary>Whether a running run has gone on longer than the job's timeout.</summary>
     public static bool IsStuck(Definition def, Run run, long now)
     {
-        if (run.Status != RunStatus.Running)
+        if (run.Status != RunStatus.Running || run.FinishedAt != null)
         {
             return false;
         }

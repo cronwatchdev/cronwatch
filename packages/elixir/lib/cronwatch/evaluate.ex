@@ -929,7 +929,7 @@ defmodule Cronwatch.Evaluate do
 
   @doc "Whether a running run has gone on longer than the job's timeout."
   def stuck?(def, %Run{} = run, now) do
-    if run.status != "running" do
+    if run.status != "running" or run.finished_at != nil do
       {:ok, false}
     else
       with {:ok, timeout} <- timeout_ms(def), do: {:ok, now - run.started_at > timeout}

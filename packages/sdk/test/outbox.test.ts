@@ -390,3 +390,76 @@ test("a recovered pending run finished through recordRun is evaluated once", asy
   assert.equal((await shared.getState("external"))!.consecutiveFailures, 1);
   assert.deepEqual((await shared.getState("external"))!.open, {});
 });
+
+
+test("an evaluated import retries after its pending marker write fails, without evaluating historical imports", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const cas = store.compareAndSetState!.bind(store);
+  let fail = true;
+  store.compareAndSetState = async (...args) => {
+    if (fail) { fail = false; throw new Error("state unavailable"); }
+    return cas(...args);
+  };
+  const cw = cronwatch({ store, now: c.now, alerts: [sent] });
+  cw.job("imported");
+  const run = { id: "failed-import", job: "imported", status: "failed" as const, startedAt: c.now(), finishedAt: c.now(), durationMs: 0, error: "failed", output: null, metrics: {}, trigger: "source" };
+  await assert.rejects(cw.recordRun(run), /state unavailable/);
+  assert.equal((await store.getRun(run.id))!.status, "running");
+  await cw.recordRun(run);
+  await cw.recordRun(run);
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  assert.deepEqual(sent.types(), ["failed"]);
+  assert.equal((await store.getState(run.job))!.consecutiveFailures, 1);
+  assert.equal((await store.getState(run.job))!.pendingRuns, undefined);
+
+  cw.job("history");
+  await cw.recordRun({ ...run, id: "history", job: "history" }, { evaluate: false });
+  await cw.recordRun({ ...run, id: "history", job: "history" });
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  assert.deepEqual(sent.types(), ["failed"]);
+});
+
+test("concurrent finished imports install evaluation intent and evaluate once", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const clients = Array.from({ length: 4 }, () => cronwatch({ store, now: c.now, alerts: [sent], onError: () => {} }));
+  for (const cw of clients) cw.job("imported");
+  const run = { id: "concurrent-import", job: "imported", status: "failed" as const, startedAt: c.now(), finishedAt: c.now(), durationMs: 0, error: "failed", output: null, metrics: {}, trigger: "source" };
+  await Promise.all(clients.map((cw) => cw.recordRun(run)));
+  c.advance(SEND_LEASE_MS + MIN);
+  await Promise.all(clients.map((cw) => cw.check()));
+  assert.deepEqual(sent.types(), ["failed"]);
+  assert.equal((await store.getState(run.job))!.consecutiveFailures, 1);
+  assert.equal((await store.getState(run.job))!.pendingRuns, undefined);
+});
+
+test("a concurrent check does not time out a completed import awaiting its marker", async () => {
+  const store = memory();
+  const c = clock();
+  const sent = capture();
+  let release!: () => void;
+  let staged!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { staged = resolve; });
+  const insert = store.insertRun.bind(store);
+  store.insertRun = async (run) => { await insert(run); staged(); await gate; };
+  const importer = cronwatch({ store, now: c.now, alerts: [sent] });
+  const checker = cronwatch({ store, now: c.now, alerts: [sent] });
+  importer.job("old", { timeout: "1m" });
+  const importing = importer.recordRun({ id: "old-success", job: "old", status: "ok", startedAt: c.now() - 60 * MIN, finishedAt: c.now() - 59 * MIN, durationMs: MIN, error: null, output: null, metrics: {}, trigger: "source" });
+  await ready;
+  try {
+    await checker.check();
+    assert.deepEqual(sent.types(), []);
+  } finally {
+    release();
+    await importing;
+  }
+  assert.equal((await store.getRun("old-success"))!.status, "ok");
+  assert.deepEqual(sent.types(), []);
+});

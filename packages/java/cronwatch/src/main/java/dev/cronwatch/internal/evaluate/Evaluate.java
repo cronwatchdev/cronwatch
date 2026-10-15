@@ -1103,7 +1103,7 @@ public final class Evaluate {
 
   /** Whether a running run has gone on longer than the job's timeout. */
   public static boolean isStuck(Definition def, Run run, long now) {
-    if (!run.status().equals(RunStatus.RUNNING)) {
+    if (!run.status().equals(RunStatus.RUNNING) || run.finishedAt() != null) {
       return false;
     }
     return (double) saturatingSub(now, run.startedAt()) > timeoutMs(def);

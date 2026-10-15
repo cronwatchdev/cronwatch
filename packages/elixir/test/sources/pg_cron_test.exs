@@ -178,6 +178,35 @@ defmodule Cronwatch.Sources.PgCronTest do
   # The errors that are not about settings or row level security.
   defp others(k), do: Enum.reject(messages(k.errors), &(&1 =~ "cron." or &1 =~ "row level"))
 
+  test "failed imports retry with their original evaluation mode" do
+    for historical <- [false, true] do
+      cron = FakeCron.new()
+      FakeCron.job(cron, 1, "nightly", "0 * * * *")
+      shared = Cronwatch.Test.Wrap.memory(Cronwatch.Test.More.shared_memory())
+      refuse = :atomics.new(1, [])
+
+      store =
+        Cronwatch.Test.Wrap.spec(
+          inner: shared,
+          before: %{insert_run: fn -> if :atomics.get(refuse, 1) == 1, do: raise("store down") end}
+        )
+
+      k = make(store: store, sources: [{PgCron, query: FakeCron.query(cron)}])
+      unless historical, do: check(k)
+      id = FakeCron.add(cron, 1, "failed", @t0 - 1000, @t0, "ERROR: disk full")
+      if historical, do: FakeCron.add(cron, 1, "succeeded", @t0 + 1, @t0 + 2, "ok")
+      if historical, do: FakeCron.add(cron, 1, "succeeded", @t0, @t0 + 1, "ok")
+      :atomics.put(refuse, 1, 1)
+      check(k)
+      assert run(k, pid(id)) == nil
+      :atomics.put(refuse, 1, 0)
+      check(k)
+      check(k)
+      assert run(k, pid(id)).status == "failed"
+      assert Enum.count(Capture.types(k.alerts), &(&1 == "failed")) == if(historical, do: 0, else: 1)
+    end
+  end
+
   test "conformance/pgcron.json" do
     f = Conformance.fixture("pgcron")
     failures = Conformance.failures()

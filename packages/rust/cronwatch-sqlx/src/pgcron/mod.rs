@@ -455,6 +455,7 @@ fn guarded<T>(what: &str, f: impl FnOnce() -> T) -> Result<T, String> {
 struct State {
     /// The newest runid read for each jobid, once known.
     cursors: HashMap<i64, i64>,
+    retry: HashMap<i64, bool>,
     /// The start of the newest run copied for each jobid: where a restart
     /// row with no times is put.
     last_at: HashMap<i64, i64>,
@@ -592,8 +593,10 @@ impl PgCron {
         now: i64,
         alerts: &mut Vec<Alert>,
     ) {
+        let evaluate = st.retry.get(&row.run_id).copied().unwrap_or(evaluate);
         let Some(name) = st.pending.get(&row.run_id).or_else(|| names.get(&row.job_id)).cloned() else {
             st.held.remove(&row.run_id);
+            st.retry.remove(&row.run_id);
             return;
         };
         // A run copied under a name this sync no longer uses, which was then
@@ -603,6 +606,7 @@ impl PgCron {
             st.pending.remove(&row.run_id);
             st.held.remove(&row.run_id);
             st.retired.remove(&name);
+            st.retry.remove(&row.run_id);
             return;
         }
         let run = if row.start_time.is_none() && !finished(&row.status) {
@@ -623,11 +627,13 @@ impl PgCron {
         let (status, started_at) = (run.status.clone(), run.started_at);
         match host.record_run(run, options).await {
             Err(err) => {
+                st.retry.insert(row.run_id, evaluate);
                 host.report_error(err, &format!("source pg_cron: run {}", row.run_id));
                 return;
             }
             Ok(sent) => alerts.extend(sent),
         }
+        st.retry.remove(&row.run_id);
         if status == RunStatus::Running {
             st.pending.insert(row.run_id, name);
         } else {
@@ -888,6 +894,7 @@ impl PgCron {
         }
         let mut open: BTreeSet<i64> = st.pending.keys().copied().collect();
         open.extend(st.held.keys().copied());
+        open.extend(st.retry.keys().copied());
         let mut complete = false;
         for _ in 0..MAX_PAGES {
             let afters: Vec<i64> = order.iter().map(|j| st.cursors.get(j).copied().unwrap_or(0)).collect();
@@ -920,6 +927,7 @@ impl PgCron {
             for id in open {
                 st.pending.remove(&id);
                 st.held.remove(&id);
+                st.retry.remove(&id);
             }
         }
         Ok(alerts)

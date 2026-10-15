@@ -752,8 +752,11 @@ class Cronwatch:
         stored = self.store.get_run(run.id)
         if stored is not None:
             return self._record_over(definition, stored, run, evaluate)
+        inserted = run.copy()
+        if evaluate:
+            inserted.status = RunStatus.RUNNING
         try:
-            self.store.insert_run(run)
+            self.store.insert_run(inserted)
         except Exception:
             # Another process recorded it first.
             try:
@@ -765,10 +768,7 @@ class Cronwatch:
             raise
         if not evaluate:
             return []
-        self._update_state(run.job, lambda before: (hold_run(on_run_start(definition, run, before, self.now()), run.id), None))
-        if run.status == RunStatus.RUNNING:
-            return []
-        return self._finish_run(definition, run, self.now(), pending_only=True)
+        return self._record_over(definition, inserted, run, True)
 
     def on_error(self, error: BaseException, where: str) -> None:
         """Hands an error to on_error, as a source reports what went wrong."""
@@ -1540,7 +1540,17 @@ class Cronwatch:
         if stored.job != run.job:
             self._report(RuntimeError(f'run {run.id} of {run.job} belongs to job "{stored.job}"; ignored'), f"recording {run.job}")
             return []
-        if stored.status not in (RunStatus.RUNNING, RunStatus.TIMEOUT) or run.status == RunStatus.RUNNING:
+        if stored.status not in (RunStatus.RUNNING, RunStatus.TIMEOUT):
+            return []
+        if evaluate and stored.status == RunStatus.RUNNING:
+            def hold(before: JobState) -> tuple[JobState, None]:
+                # Recheck each CAS attempt so a concurrent finish cannot resurrect its marker.
+                current = self.store.get_run(run.id)
+                if current is None or current.job != run.job or current.status != RunStatus.RUNNING or run.id in (before.pending_runs or []):
+                    return before, None
+                return hold_run(on_run_start(definition, run, before, self.now()), run.id), None
+            self._update_state(run.job, hold)
+        if run.status == RunStatus.RUNNING:
             return []
         tracked = run.id in (self._read_state(run.job).pending_runs or [])
         late, ignored = self._claim_finish(run)

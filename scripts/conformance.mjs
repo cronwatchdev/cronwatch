@@ -1222,6 +1222,8 @@ function healthCases() {
     [state(), state({ open: { missed: T0 }, pendingRecovery: ["failed"], consecutiveFailures: 3 })],
   ].map(([previous, next]) => ({ previous, next, muted: clone(muteOpens(previous, next)) }));
   const stuck = [
+    // A completed import is provisionally running while its pending marker is written.
+    [{ timeout: "5m" }, { ...r("importing", "running", T0 - HOUR, null), finishedAt: T0 - HOUR + 1000, durationMs: 1000 }],
     [{ timeout: "5m" }, r("a", "running", T0 - 5 * MIN, null)],
     [{ timeout: "5m" }, r("a", "running", T0 - 5 * MIN - 1, null)],
     [{ timeout: "5m" }, r("a", "ok", T0 - HOUR)],

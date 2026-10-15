@@ -1017,7 +1017,8 @@ final class Evaluate
     /** Whether a running run has gone on longer than the job's timeout. */
     public static function isStuck(JobDefinition $def, Run $run, int|float $now): bool
     {
-        return $run->status === RunStatus::RUNNING && $now - $run->startedAt > self::timeoutMs($def);
+        // A completed import stages a running row while its pending marker is written.
+        return $run->status === RunStatus::RUNNING && $run->finishedAt === null && $now - $run->startedAt > self::timeoutMs($def);
     }
 
     /**

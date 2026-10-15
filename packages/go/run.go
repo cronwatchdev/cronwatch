@@ -642,7 +642,12 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if stored != nil {
 		return c.recordOver(ctx, def.stored, *stored, run, evaluate)
 	}
-	if err := c.store.InsertRun(ctx, run.clone()); err != nil {
+	// Keep evaluated imports retryable until their pending marker is durable.
+	inserted := run.clone()
+	if evaluate {
+		inserted.Status = StatusRunning
+	}
+	if err := c.store.InsertRun(ctx, inserted); err != nil {
 		// Another process recorded it first.
 		again, gerr := c.store.GetRun(ctx, run.ID)
 		if gerr == nil && again != nil {
@@ -653,15 +658,7 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if !evaluate {
 		return []Alert{}, nil
 	}
-	if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) {
-		return holdRun(onRunStart(def.stored, run, s, c.now()), run.ID), struct{}{}, nil
-	}); err != nil {
-		return nil, err
-	}
-	if run.Status == StatusRunning {
-		return []Alert{}, nil
-	}
-	return c.finishRunMode(ctx, def.stored, run, c.now(), true), nil
+	return c.recordOver(ctx, def.stored, inserted, run, true)
 }
 
 // recordOver is RecordRun for a run already stored.
@@ -670,7 +667,26 @@ func (c *Client) recordOver(ctx context.Context, def Definition, stored Run, run
 		c.report(fmt.Errorf("run %s of %s belongs to job %s; ignored", run.ID, run.Job, js.Quote(stored.Job)), "recording "+run.Job)
 		return []Alert{}, nil
 	}
-	if (stored.Status != StatusRunning && stored.Status != StatusTimeout) || run.Status == StatusRunning {
+	if stored.Status != StatusRunning && stored.Status != StatusTimeout {
+		return []Alert{}, nil
+	}
+	if evaluate && stored.Status == StatusRunning {
+		if _, _, err := updateState(ctx, c, run.Job, func(s JobState) (JobState, struct{}, error) {
+			// Re-read on each CAS attempt so a completed evaluation cannot
+			// have its pending marker resurrected by another importer.
+			current, err := c.store.GetRun(ctx, run.ID)
+			if err != nil {
+				return s, struct{}{}, err
+			}
+			if current == nil || current.Job != run.Job || current.Status != StatusRunning || slices.Contains(s.PendingRuns, run.ID) {
+				return s, struct{}{}, nil
+			}
+			return holdRun(onRunStart(def, run, s, c.now()), run.ID), struct{}{}, nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if run.Status == StatusRunning {
 		return []Alert{}, nil
 	}
 	state, err := c.readState(ctx, run.Job)

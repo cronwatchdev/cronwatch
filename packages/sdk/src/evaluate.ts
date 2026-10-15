@@ -689,7 +689,8 @@ export function onCheck(
 
 /** Whether a running run has gone on longer than the job's timeout. */
 export function isStuck(def: Pick<JobDefinition, "timeout">, run: Run, now: number): boolean {
-  return run.status === "running" && now - run.startedAt > timeoutMs(def);
+  // A completed import keeps its finish while its evaluation intent is written.
+  return run.status === "running" && run.finishedAt === null && now - run.startedAt > timeoutMs(def);
 }
 
 /**

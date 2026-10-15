@@ -84,7 +84,10 @@ class SourcesTest < Minitest::Test
     # Between this client's read and its insert, another process inserts the run.
     racing = Class.new(Cronwatch::Stores::Memory) do
       def insert_run(run)
-        super
+        # The competing importer has already finished its provisional row.
+        finished = run.dup
+        finished.status = :failed
+        super(finished)
         raise "duplicate key"
       end
     end.new

@@ -904,7 +904,7 @@ pub(crate) fn on_check(
 
 /// Whether a running run has gone on longer than the job's timeout.
 pub(crate) fn is_stuck(def: &Definition, run: &Run, now: i64) -> Result<bool, String> {
-    if run.status != RunStatus::Running {
+    if run.status != RunStatus::Running || run.finished_at.is_some() {
         return Ok(false);
     }
     Ok(now.saturating_sub(run.started_at) as f64 > timeout_ms(def)?)

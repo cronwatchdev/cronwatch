@@ -415,4 +415,28 @@ class OutboxTest < Minitest::Test
     cw.check
     assert_empty sent.types
   end
+  def test_import_retries_marker_failure_without_a_false_stuck_alert
+    store = Cronwatch::Stores::Memory.new
+    original = store.method(:compare_and_set_state)
+    refused = true
+    store.define_singleton_method(:compare_and_set_state) do |state, version|
+      raise "state unavailable" if refused
+      original.call(state, version)
+    end
+    clock, sent = Clock.new, Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], on_error: ->(*) {})
+    cw.job("imported", timeout: "1s")
+    run = { id: "external", job: "imported", status: "failed", started_at: clock.now - 10 * MIN,
+            finished_at: clock.now - MIN, duration_ms: 9 * MIN, error: "failed", metrics: {}, trigger: "source" }
+    assert_raises(RuntimeError) { cw.record_run(run) }
+    assert_equal :running, store.get_run("external").status
+    refused = false
+    cw.check
+    assert_empty sent.types
+    2.times { cw.record_run(run) }
+    assert_equal [:failed], sent.types
+    assert_equal :failed, store.get_run("external").status
+    assert_nil store.get_state("imported").pending_runs
+  end
+
 end

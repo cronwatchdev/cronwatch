@@ -98,6 +98,8 @@ final class PgCron implements Source
     private array $pending = [];
     /** @var array<int, int|float> Runs read before they started, by runid, with when they were first seen. */
     private array $held = [];
+    /** @var array<int, bool> Failed imports, preserving whether historical runs should be evaluated. */
+    private array $retry = [];
     /** @var array<int, array{string, array<string, mixed>}> Each job's name and definition as last declared, by jobid. */
     private array $known = [];
     /** @var array<string, string> The last definition declared for each name, so an unchanged job is not declared again. */
@@ -636,10 +638,11 @@ final class PgCron implements Source
     private function record(Cronwatch $host, array $names, array $row, bool $evaluate, array &$alerts, int|float $now): void
     {
         $runid = (int) $row['runid'];
+        $evaluate = $this->retry[$runid] ?? $evaluate;
         $jobid = (int) $row['jobid'];
         $name = $this->pending[$runid] ?? $names[$jobid] ?? null;
         if ($name === null || !isset($this->recordable[$name])) {
-            unset($this->pending[$runid], $this->held[$runid]);
+            unset($this->pending[$runid], $this->held[$runid], $this->retry[$runid]);
             if ($name !== null) {
                 unset($this->retired[$name]);
             }
@@ -662,9 +665,11 @@ final class PgCron implements Source
         try {
             array_push($alerts, ...$host->recordRun($run, evaluate: $evaluate));
         } catch (\Throwable $error) {
+            $this->retry[$runid] = $evaluate;
             $host->onError($error, "source pg_cron: run {$runid}");
             return;
         }
+        unset($this->retry[$runid]);
         if ($run->status === RunStatus::RUNNING) {
             $this->pending[$runid] = $name;
         } else {
@@ -733,7 +738,7 @@ final class PgCron implements Source
                 $this->pending[$id] = $run->job;
             }
         }
-        $open = array_fill_keys(array_keys($this->pending), true) + array_fill_keys(array_keys($this->held), true);
+        $open = array_fill_keys(array_keys($this->pending), true) + array_fill_keys(array_keys($this->held), true) + array_fill_keys(array_keys($this->retry), true);
         $complete = false;
         for ($page = 0; $page < self::MAX_PAGES; $page++) {
             $jobids = array_keys($names);
@@ -756,7 +761,7 @@ final class PgCron implements Source
         // Every row was read and these were not among them: pg_cron no longer has them.
         if ($complete) {
             foreach (array_keys($open) as $runid) {
-                unset($this->pending[$runid], $this->held[$runid]);
+                unset($this->pending[$runid], $this->held[$runid], $this->retry[$runid]);
             }
         }
     }

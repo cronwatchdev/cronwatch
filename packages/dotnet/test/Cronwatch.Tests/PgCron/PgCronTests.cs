@@ -39,6 +39,34 @@ public class PgCronTests
 
     private static async Task<List<string>> StoredNames(IStore store) => (await store.ListJobsAsync()).Select(j => j.Name).ToList();
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_imports_are_retried_with_their_original_evaluation_mode(bool historical)
+    {
+        var cron = new FakeCron();
+        cron.AddJob(1, "nightly", "0 * * * *");
+        var store = new Wrapped();
+        await using var k = Kit(cron.Source(), store);
+        if (!historical)
+        {
+            await k.Cw.CheckAsync();
+        }
+        FakeCron.Detail row = cron.Add(1, "failed", T0 - 1000, T0, "ERROR: disk full");
+        if (historical)
+        {
+            cron.Add(1, "succeeded", T0, T0 + 1, "ok");
+        }
+        store.Break("insertRun");
+        await k.Cw.CheckAsync();
+        Assert.Null(await store.Inner.GetRunAsync("pgcron:" + row.RunId));
+        store.Mend("insertRun");
+        await k.Cw.CheckAsync();
+        await k.Cw.CheckAsync();
+        Assert.Equal(RunStatus.Failed, (await GetRun(k, "pgcron:" + row.RunId)).Status);
+        Assert.Equal(historical ? 0 : 1, k.Alerts.Types().Count(t => t == "failed"));
+    }
+
     [Fact]
     public void Pg_cron_schedules_become_cronwatch_schedules()
     {

@@ -956,7 +956,12 @@ impl Client {
         if let Some(stored) = store.get_run(&run.id).await.map_err(Error::store)? {
             return self.record_over(&def.stored, &stored, &run, evaluate).await;
         }
-        if let Err(err) = store.insert_run(&run).await {
+        // Keep an evaluated import retryable until its pending marker is durable.
+        let mut inserted = run.clone();
+        if evaluate {
+            inserted.status = RunStatus::Running;
+        }
+        if let Err(err) = store.insert_run(&inserted).await {
             // Another process recorded it first.
             return match store.get_run(&run.id).await {
                 Ok(Some(again)) => self.record_over(&def.stored, &again, &run, evaluate).await,
@@ -966,14 +971,7 @@ impl Client {
         if !evaluate {
             return Ok(Vec::new());
         }
-        self.update_state(&run.job, async { Ok(()) }, |s, _| {
-            Ok((hold_run(&on_run_start(&def.stored, &run, &s, self.now()), &run.id), ()))
-        })
-        .await?;
-        if run.status == RunStatus::Running {
-            return Ok(Vec::new());
-        }
-        Ok(self.finish_run_mode(&def.stored, &run, self.now(), true).await)
+        self.record_over(&def.stored, &inserted, &run, true).await
     }
 
     /// `record_run` for a run already stored.
@@ -996,7 +994,13 @@ impl Client {
             );
             return Ok(Vec::new());
         }
-        if !matches!(stored.status, RunStatus::Running | RunStatus::Timeout) || run.status == RunStatus::Running {
+        if !matches!(stored.status, RunStatus::Running | RunStatus::Timeout) {
+            return Ok(Vec::new());
+        }
+        if evaluate && stored.status == RunStatus::Running {
+            self.hold_imported_run(def, run).await?;
+        }
+        if run.status == RunStatus::Running {
             return Ok(Vec::new());
         }
         let tracked = self.read_state(&run.job).await?.pending_runs.unwrap_or_default().contains(&run.id);

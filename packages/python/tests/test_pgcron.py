@@ -817,3 +817,29 @@ def test_against_a_real_pg_cron_through_a_connection_string_and_a_postgres_store
         store.close()
         admin.execute(f"DROP TABLE IF EXISTS {prefix}jobs, {prefix}runs, {prefix}state")
         admin.close()
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_failed_import_is_retried_after_cursor_advances(history: bool) -> None:
+    cron, clock, sent = FakeCron(), Clock(), Capture()
+    cron.job(1, "nightly", "0 3 * * *")
+    cw = client(cron, clock, capture=sent)
+    if not history:
+        cw.check()
+    detail = cron.add(1, "failed", T0, T0, "broken")
+    if history:
+        cron.add(1, "succeeded", T0 + 1, T0 + 1)
+    original = cw.record_run
+    blocked = [True]
+    def record(run: Any, *, evaluate: bool = True) -> Any:
+        if blocked[0]:
+            raise RuntimeError("store unavailable")
+        return original(run, evaluate=evaluate)
+    cw.record_run = record
+    cw.check()
+    assert cw.store.get_run(f"pgcron:{detail.runid}") is None
+    blocked[0] = False
+    cw.check()
+    cw.check()
+    assert cw.store.get_run(f"pgcron:{detail.runid}").status == "failed"
+    assert sent.types() == ([] if history else ["failed"])

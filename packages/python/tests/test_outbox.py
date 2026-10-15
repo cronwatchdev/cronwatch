@@ -359,3 +359,27 @@ def test_a_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged
     c.advance(SEND_LEASE_MS + MIN)
     cw.check()
     assert sent.types() == []
+
+
+def test_import_retries_marker_failure_without_a_false_stuck_alert() -> None:
+    shared = MemoryStore()
+    refused = [True]
+    def cas(state: Any, version: Any) -> bool:
+        if refused[0]:
+            raise RuntimeError("state unavailable")
+        return shared.compare_and_set_state(state, version)
+    c, sent = Clock(), Capture()
+    cw = Cronwatch(store=Wrapped(shared, compare_and_set_state=cas), now=c.now, alerts=[sent], on_error=lambda *_: None)
+    cw.job("imported", timeout="1s")
+    run = {"id": "external", "job": "imported", "status": "failed", "startedAt": c.now() - 10 * MIN, "finishedAt": c.now() - MIN, "durationMs": 9 * MIN, "error": "failed", "metrics": {}, "trigger": "source"}
+    with pytest.raises(RuntimeError, match="state unavailable"):
+        cw.record_run(run)
+    assert shared.get_run("external").status == "running"
+    refused[0] = False
+    cw.check()
+    assert sent.types() == []
+    cw.record_run(run)
+    cw.record_run(run)
+    assert sent.types() == ["failed"]
+    assert shared.get_run("external").status == "failed"
+    assert shared.get_state("imported").pending_runs is None

@@ -17,6 +17,24 @@ namespace Cronwatch.Tests;
 /// </summary>
 public class OutboxTests
 {
+    [Fact]
+    public async Task A_finished_import_retries_after_its_pending_marker_write_fails()
+    {
+        var store = new Wrapped();
+        await using var k = Make(store: store);
+        k.Cw.Job("imported");
+        var run = Run.Running("external", "imported", T0, "x") with { Status = RunStatus.Failed, FinishedAt = T0, DurationMs = 0, Error = "disk full" };
+        store.Break("compareAndSetState");
+        await Assert.ThrowsAsync<CronwatchException>(() => k.Cw.RecordRunAsync(run));
+        Assert.Equal(RunStatus.Running, (await store.Inner.GetRunAsync(run.Id))!.Status);
+        store.Mend("compareAndSetState");
+        await k.Cw.RecordRunAsync(run);
+        await k.Cw.RecordRunAsync(run);
+        Assert.Equal(["failed"], k.Alerts.Types());
+        Assert.Equal(RunStatus.Failed, (await store.Inner.GetRunAsync(run.Id))!.Status);
+        Assert.Null((await store.Inner.GetStateAsync(run.Job))!.PendingRuns);
+    }
+
     private const long Min = 60_000;
 
     /// <summary>

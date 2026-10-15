@@ -965,7 +965,8 @@ func cloneRun(r *Run) *Run {
 
 // isStuck reports whether a running run has gone on longer than the job's timeout.
 func isStuck(def Definition, run Run, now int64) (bool, error) {
-	if run.Status != StatusRunning {
+	// Completed imports retain their finish while their evaluation intent is written.
+	if run.Status != StatusRunning || run.FinishedAt != nil {
 		return false, nil
 	}
 	timeout, err := timeoutMs(def)

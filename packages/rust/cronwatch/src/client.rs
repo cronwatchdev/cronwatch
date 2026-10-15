@@ -703,6 +703,37 @@ impl Client {
         }
     }
 
+    /// Makes an import's evaluation durable before its row is finished. Read the
+    /// row again on every CAS attempt so a completed evaluation is not resurrected.
+    pub(crate) async fn hold_imported_run(&self, def: &Definition, run: &crate::types::Run) -> Result<(), Error> {
+        let job_lock = self.job_lock(&run.job);
+        let _turn = job_lock.lock().await;
+        for attempt in 1..=STATE_ATTEMPTS {
+            let before = self.read_state(&run.job).await?;
+            let current = self.inner.store.get_run(&run.id).await.map_err(Error::store)?;
+            let Some(_) = current.filter(|r| r.job == run.job && r.status == crate::types::RunStatus::Running) else {
+                return Ok(());
+            };
+            if before.pending_runs.as_ref().is_some_and(|ids| ids.contains(&run.id)) {
+                return Ok(());
+            }
+            let mut next =
+                crate::evaluate::hold_run(&crate::evaluate::on_run_start(def, run, &before, self.now()), &run.id);
+            let version = before.counted_version();
+            next.version = Some(version + 1);
+            if self.write_state(&next, version).await? {
+                return Ok(());
+            }
+            if attempt == STATE_ATTEMPTS {
+                return Err(Error::Other(format!(
+                    "the state of {} changed under {STATE_ATTEMPTS} attempts in a row to update it; gave up",
+                    run.job
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// A conditional write, or for a store without `compare_and_set_state`,
     /// a plain one that always succeeds.
     async fn write_state(&self, state: &JobState, expected: i64) -> Result<bool, Error> {

@@ -166,6 +166,33 @@ final class PgCronTest extends TestCase
         return array_values(array_filter($errors, fn (string $e) => !str_contains($e, 'cron.') && !str_contains($e, 'row level')));
     }
 
+    public function testFailedWritesAreRetriedWithoutEvaluatingQuietHistory(): void
+    {
+        foreach ([false, true] as $history) {
+            $clock = new Clock();
+            $cron = new FakeCron();
+            $cron->job(1, 'nightly', '0 * * * *');
+            $store = new \Cronwatch\Tests\Support\FlakyStore(new MemoryStore());
+            $capture = new Capture();
+            $cw = self::client($cron, $clock, $store, capture: $capture);
+            if (!$history) {
+                $cw->check();
+            }
+            $cron->add(1, 'failed', self::T0 - 2000, self::T0 - 1000, 'boom');
+            if ($history) {
+                $cron->add(1, 'succeeded', self::T0 - 500, self::T0, 'done');
+            }
+            $store->breaks(['insertRun']);
+            $cw->check();
+            $this->assertNull($store->getRun('pgcron:1'));
+            $store->broken = [];
+            $cw->check();
+            $cw->check();
+            $this->assertSame('failed', $store->getRun('pgcron:1')->status);
+            $this->assertSame($history ? [] : ['failed'], $capture->types());
+        }
+    }
+
     public function testJobsAreDeclaredHistoryIsCopiedQuietlyAndImportsAreIdempotent(): void
     {
         $clock = new Clock();

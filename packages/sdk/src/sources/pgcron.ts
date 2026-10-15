@@ -179,6 +179,8 @@ export function pgCron(db: Queryable, options: PgCronOptions = {}): Source {
   const pending = new Map<number, string>();
   /** Runs read before they started, by runid, with when they were first seen. */
   const held = new Map<number, number>();
+  /** Failed writes are retried by id, preserving whether they were historical backfill. */
+  const retry = new Map<number, boolean>();
   /** Each job's name and definition as last declared, by jobid. */
   let known = new Map<number, { name: string; definition: JobOptions }>();
   /** The last definition declared for each name, so an unchanged job is not declared again. */
@@ -380,11 +382,13 @@ export function pgCron(db: Queryable, options: PgCronOptions = {}): Source {
       /** Copies one row. A row that cannot be recorded is reported and skipped; it never stops the others. */
       const record = async (row: DetailRow, evaluate: boolean): Promise<void> => {
         const runid = Number(row.runid);
+        evaluate = retry.get(runid) ?? evaluate;
         const jobid = Number(row.jobid);
         const name = pending.get(runid) ?? names.get(jobid);
         if (!name || (declaredNow !== null && !inUse.has(name) && !declaredNow.has(name))) {
           pending.delete(runid);
           held.delete(runid);
+          retry.delete(runid);
           if (name) retired.delete(name);
           return;
         }
@@ -404,9 +408,11 @@ export function pgCron(db: Queryable, options: PgCronOptions = {}): Source {
         try {
           alerts.push(...(await host.recordRun(run, { evaluate })));
         } catch (e) {
+          retry.set(runid, evaluate);
           host.onError(e, `source pg_cron: run ${runid}`);
           return;
         }
+        retry.delete(runid);
         if (run.status === "running") pending.set(runid, name);
         else pending.delete(runid);
         if (run.startedAt > (lastAt.get(jobid) ?? -Infinity)) lastAt.set(jobid, run.startedAt);
@@ -442,7 +448,7 @@ export function pgCron(db: Queryable, options: PgCronOptions = {}): Source {
         const id = runIdOf(run.id);
         if (id !== null && watched.has(run.job)) pending.set(id, run.job);
       }
-      const open = new Set([...pending.keys(), ...held.keys()]);
+      const open = new Set([...pending.keys(), ...held.keys(), ...retry.keys()]);
       let complete = false;
       for (let page = 0; page < MAX_PAGES; page++) {
         const jobids = [...names.keys()];
@@ -465,6 +471,7 @@ export function pgCron(db: Queryable, options: PgCronOptions = {}): Source {
         for (const runid of open) {
           pending.delete(runid);
           held.delete(runid);
+          retry.delete(runid);
         }
       }
       return alerts;

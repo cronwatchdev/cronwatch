@@ -1,12 +1,12 @@
 ---
 title: Privacy
 description: What cronwatch.dev collects, which is very little, and what happens to it.
-updated: 2026-09-27
+updated: 2026-10-15
 ---
 
 # Privacy
 
-cronwatch.dev is the documentation site for an open source library. It has no accounts, no analytics, no advertising, and no tracking. This page lists everything it does collect.
+cronwatch.dev is the documentation site for an open source library. It has no visitor accounts or advertising. It uses Runlight analytics, hosted by the maintainer at analytics.joncp.dev, to understand how people use the site. This page explains what the site collects.
 
 ## The library keeps its data with you
 
@@ -14,9 +14,17 @@ CronWatch runs inside your own application and stores job runs, output, and aler
 
 ## Cookies and local storage
 
-The site sets no cookies. If you switch between light and dark paper, your choice is saved in your browser's local storage under one key, `cronwatch-theme`, so the next page opens the same way. It never leaves your browser, and clearing your site data removes it.
+The site sets no analytics cookies. If you switch between light and dark paper, your choice is saved in your browser's local storage under `cronwatch-theme`, so the next page opens the same way. If you opt out of analytics using the link below, `runlight_ignore` stores that choice. These preferences stay in your browser, and clearing your site data removes them.
 
-The pages load their styles and scripts from cronwatch.dev itself. The fonts come from Adobe Fonts (use.typekit.net), which sees your IP address and browser when it serves them; nothing else is loaded from another site.
+Most styles and scripts load from cronwatch.dev. The analytics script loads from analytics.joncp.dev. The fonts come from Adobe Fonts (use.typekit.net), which sees your IP address and browser when it serves them.
+
+## Site analytics
+
+Runlight receives the page URL and title, referring URL, browser language, and screen size. It also records time spent viewing a page, scroll depth, outbound link clicks, and file download clicks. Page URLs sent to the analytics service include query parameters, so avoid putting private information in a URL.
+
+The analytics server briefly processes your IP address and browser's user agent to make a daily visitor hash and derive approximate location, browser, operating system, and device information. Runlight stores neither raw IP addresses nor raw user agents in its analytics records and does not maintain a persistent visitor identifier across days. Server access logs are separate, as described below. Analytics data stays on the maintainer's service and is used to understand site usage, not for advertising. See [Runlight's privacy documentation](https://runlight.sh/docs/privacy/) for how visitor counting works.
+
+You can [stop analytics for this browser](/?runlight=ignore) or [enable it again](/?runlight=track). The opt-out applies to this site and browser and lasts until you enable analytics again or clear local storage.
 
 ## Server logs
 

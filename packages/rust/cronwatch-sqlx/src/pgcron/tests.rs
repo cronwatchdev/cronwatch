@@ -836,3 +836,118 @@ fn the_helpers_read_as_the_sdk_does() {
     let job = PgCronJob { job_id: 3, job_name: name("  --weird name!! v2 "), ..Default::default() };
     assert_eq!(default_name(&job), "weird-name-v2-");
 }
+
+/// A store whose inserts can fail while reads and other jobs keep working.
+#[derive(Default)]
+struct FailedInserts {
+    inner: MemoryStore,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl Store for FailedInserts {
+    fn init<'a>(&'a self) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.init()
+    }
+    fn upsert_job<'a>(
+        &'a self,
+        definition: &'a cronwatch::Definition,
+        now: i64,
+    ) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.upsert_job(definition, now)
+    }
+    fn get_job<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> cronwatch::BoxFuture<'a, Result<Option<cronwatch::StoredJob>, cronwatch::BoxError>> {
+        self.inner.get_job(name)
+    }
+    fn list_jobs<'a>(&'a self) -> cronwatch::BoxFuture<'a, Result<Vec<cronwatch::StoredJob>, cronwatch::BoxError>> {
+        self.inner.list_jobs()
+    }
+    fn delete_job<'a>(&'a self, name: &'a str) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.delete_job(name)
+    }
+    fn update_run<'a>(&'a self, run: &'a Run) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.update_run(run)
+    }
+    fn get_run<'a>(&'a self, id: &'a str) -> cronwatch::BoxFuture<'a, Result<Option<Run>, cronwatch::BoxError>> {
+        self.inner.get_run(id)
+    }
+    fn list_runs<'a>(
+        &'a self,
+        job: &'a str,
+        limit: usize,
+    ) -> cronwatch::BoxFuture<'a, Result<Vec<Run>, cronwatch::BoxError>> {
+        self.inner.list_runs(job, limit)
+    }
+    fn running_runs<'a>(&'a self) -> cronwatch::BoxFuture<'a, Result<Vec<Run>, cronwatch::BoxError>> {
+        self.inner.running_runs()
+    }
+    fn get_state<'a>(
+        &'a self,
+        job: &'a str,
+    ) -> cronwatch::BoxFuture<'a, Result<Option<cronwatch::JobState>, cronwatch::BoxError>> {
+        self.inner.get_state(job)
+    }
+    fn set_state<'a>(
+        &'a self,
+        state: &'a cronwatch::JobState,
+    ) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.set_state(state)
+    }
+    fn prune<'a>(&'a self, before: i64) -> cronwatch::BoxFuture<'a, Result<u64, cronwatch::BoxError>> {
+        self.inner.prune(before)
+    }
+    fn close<'a>(&'a self) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        self.inner.close()
+    }
+    fn update_run_if<'a>(
+        &'a self,
+        run: &'a Run,
+        from: &'a [RunStatus],
+    ) -> cronwatch::BoxFuture<'a, Result<bool, cronwatch::BoxError>> {
+        self.inner.update_run_if(run, from)
+    }
+    fn compare_and_set_state<'a>(
+        &'a self,
+        state: &'a cronwatch::JobState,
+        expected: i64,
+    ) -> cronwatch::BoxFuture<'a, Result<bool, cronwatch::BoxError>> {
+        self.inner.compare_and_set_state(state, expected)
+    }
+    fn insert_run<'a>(&'a self, run: &'a Run) -> cronwatch::BoxFuture<'a, Result<(), cronwatch::BoxError>> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            Box::pin(async { Err("store down".into()) })
+        } else {
+            self.inner.insert_run(run)
+        }
+    }
+}
+
+#[tokio::test]
+async fn failed_imports_retry_with_their_original_evaluation_mode() {
+    for historical in [false, true] {
+        let cron = FakeCron::new();
+        cron.job(1, name("nightly"), "0 * * * *", true);
+        let store = Arc::new(FailedInserts::default());
+        let k = Kit::new(&cron, Some(&Clock::new(T0)), Some(store.clone()), PgCronOptions::default());
+        if !historical {
+            k.check().await;
+        }
+        let id = cron.add(1, "failed", T0 - 1000, T0, Some("ERROR: disk full"));
+        if historical {
+            cron.add(1, "succeeded", T0, T0 + 1, Some("ok"));
+        }
+        store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        k.check().await;
+        assert!(store.inner.get_run(&pid(id)).await.unwrap().is_none());
+        store.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        k.check().await;
+        k.check().await;
+        assert_eq!(k.run(&pid(id)).await.unwrap().status, RunStatus::Failed);
+        assert_eq!(
+            k.alerts.list().iter().filter(|a| a.alert_type == AlertType::Failed).count(),
+            if historical { 0 } else { 1 }
+        );
+    }
+}

@@ -11,11 +11,13 @@ import hashlib
 import hmac
 import json
 import socket
+import ssl
 import threading
 import time
 import urllib.parse
 from collections.abc import Callable
 from typing import Any
+from pathlib import Path
 
 import pytest
 
@@ -795,6 +797,64 @@ def test_the_deadline_covers_a_status_line_and_headers_sent_a_line_at_a_time() -
     finally:
         gone.set()
         server.close()
+
+
+@pytest.mark.parametrize("phase", ["headers", "body", "handshake"])
+def test_https_deadline_survives_tls_socket_wrapping(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timer must shut the live TLS connection, not its detached raw socket."""
+    fixtures = Path(__file__).parent / "fixtures"
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(fixtures / "localhost-test-cert.pem", fixtures / "localhost-test-key.pem")
+    # These credentials are a test fixture for a loopback server only.
+    monkeypatch.setattr(ssl, "_create_default_https_context", ssl._create_unverified_context)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    done = threading.Event()
+
+    def serve() -> None:
+        try:
+            raw, _ = listener.accept()
+            with raw:
+                if phase == "handshake":
+                    done.wait(4)
+                    return
+                with context.wrap_socket(raw, server_side=True) as conn:
+                    data = b""
+                    while b"\r\n\r\n" not in data:
+                        chunk = conn.recv(65536)
+                        if not chunk:
+                            return
+                        data += chunk
+                    conn.sendall(b"HTTP/1.1 500 Oops\r\n")
+                    if phase == "body":
+                        conn.sendall(b"Content-Length: 100\r\n\r\n")
+                    for i in range(60):
+                        if done.wait(0.05):
+                            return
+                        conn.sendall(b"x" if phase == "body" else f"X-Pace-{i}: x\r\n".encode())
+                    conn.sendall(b"\r\n")
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        started = time.monotonic()
+        transport = UrllibHTTP(timeout=0.5)
+        url = f"https://localhost:{listener.getsockname()[1]}/"
+        if phase == "body":
+            response = transport.post(url, "{}", {})
+            assert response.status == 500
+            assert 0 < len(response.body) < 60
+        else:
+            with pytest.raises(RequestTimeout):
+                transport.post(url, "{}", {})
+        assert time.monotonic() - started < 2
+    finally:
+        done.set()
+        listener.close()
+        thread.join(5)
 
 
 @pytest.mark.parametrize(("status", "most"), [(500, 65_536), (200, 1_048_576)])

@@ -810,10 +810,12 @@ final class Runs {
     if (stored != null) {
       return recordOver(def.stored(), stored, run, evaluate);
     }
+    // Keep an evaluated import retryable until its pending marker is durable.
+    Run inserted = evaluate ? run.withStatus(RunStatus.RUNNING) : run;
     try {
       Core.call(
           () -> {
-            core.store.insertRun(toWrite);
+            core.store.insertRun(inserted);
             return null;
           });
     } catch (CronwatchException e) {
@@ -832,18 +834,7 @@ final class Runs {
     if (!evaluate) {
       return List.of();
     }
-    Run recorded = run;
-    core.updateState(
-        run.job(),
-        s ->
-            new Core.Changed<>(
-                Evaluate.holdRun(
-                    Evaluate.onRunStart(def.stored(), recorded, s, core.now()), recorded.id()),
-                Boolean.TRUE));
-    if (run.status().equals(RunStatus.RUNNING)) {
-      return List.of();
-    }
-    return finishRun(def.stored(), run, core.now(), true);
+    return recordOver(def.stored(), inserted, run, true);
   }
 
   /** {@code recordRun} for a run already stored. */
@@ -863,7 +854,27 @@ final class Runs {
     }
     boolean open =
         stored.status().equals(RunStatus.RUNNING) || stored.status().equals(RunStatus.TIMEOUT);
-    if (!open || run.status().equals(RunStatus.RUNNING)) {
+    if (!open) {
+      return List.of();
+    }
+    if (evaluate && stored.status().equals(RunStatus.RUNNING)) {
+      core.updateState(
+          run.job(),
+          before -> {
+            // Recheck on every CAS attempt so a completed evaluation stays consumed.
+            Run current = Core.call(() -> core.store.getRun(run.id()));
+            if (current == null
+                || !current.job().equals(run.job())
+                || !current.status().equals(RunStatus.RUNNING)
+                || (before.pendingRuns() != null && before.pendingRuns().contains(run.id()))) {
+              return new Core.Changed<>(before, Boolean.TRUE);
+            }
+            return new Core.Changed<>(
+                Evaluate.holdRun(Evaluate.onRunStart(def, run, before, core.now()), run.id()),
+                Boolean.TRUE);
+          });
+    }
+    if (run.status().equals(RunStatus.RUNNING)) {
       return List.of();
     }
     JobState state = core.readState(run.job());
