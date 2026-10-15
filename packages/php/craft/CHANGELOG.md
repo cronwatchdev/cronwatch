@@ -1,6 +1,6 @@
 # Release Notes for CronWatch
 
-## Unreleased
+## 0.14.2 - 2026-10-15
 
 ### Fixed
 - Updated library fixes preserve imported run evaluation across transient storage failures and retry failed pg_cron imports within the source process.
