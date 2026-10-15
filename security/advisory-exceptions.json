@@ -29,5 +29,26 @@
       "golang.org/x/crypto/openpgp"
     ],
     "reason": "This advisory covers only the unmaintained OpenPGP packages and has no patched module release. The unpublished examples do not import OpenPGP, directly or transitively. The scanner verifies that absence before accepting this exception."
+  },
+  {
+    "ecosystem": "Hex",
+    "name": "cowlib",
+    "version": "2.21.0",
+    "sources": [
+      "packages/elixir/mix.lock"
+    ],
+    "advisories": [
+      "EEF-CVE-2026-43966",
+      "GHSA-w4f7-4cxr-rv3c"
+    ],
+    "expires": "2027-01-10",
+    "required_dependencies": [
+      {
+        "ecosystem": "Hex",
+        "name": "cowboy",
+        "minimum_version": "2.16.0"
+      }
+    ],
+    "reason": "Test-only Phoenix server dependency. No patched Cowlib release exists. The upstream advisory identifies Cowboy 2.16.0 or newer as protected by its default invalid_response_headers=error_terminate behavior; this fixture leaves that default intact. The scanner requires that protected Cowboy version in the same inventory. Published packages do not depend on Cowboy or Cowlib."
   }
 ]

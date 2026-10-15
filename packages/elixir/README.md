@@ -129,7 +129,7 @@ It finds its base path from where the router mounted it. The token is `CRONWATCH
 forward "/cron/nightly", Cronwatch.Handler, job: "nightly-report", run: {MyApp.Reports, :nightly, []}
 ```
 
-`MyApp.Reports.nightly(job, conn)` runs as a recorded run with the trigger `"handler"`, and the request is answered with `{"ok","job","run","status","durationMs"}`, 200 or 500; a `%Plug.Conn{}` it returns is the answer instead, and fails the run at 400 or more. `secret:` sets a secret of its own, and `secret: false` lets anyone in. Without any secret, outside development, it answers 503.
+`MyApp.Reports.nightly(job, conn)` runs as a recorded run with the trigger `"handler"`, and the request is answered with `{"ok","job","run","status","durationMs"}`, 200 or 500; a `%Plug.Conn{}` it returns is the answer instead, and fails the run at 400 or more. If the function calls `Plug.Conn.read_body/2` or another function that updates the connection, return the latest conn. A conn without a response gets the default JSON answer; discarding the updated conn leaves the handler with a stale connection. `secret:` sets a secret of its own, and `secret: false` lets anyone in. Without any secret, outside development, it answers 503.
 
 ### Oban
 

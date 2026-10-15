@@ -31,10 +31,9 @@ defmodule Cronwatch.Web.GoldenTest do
   @hour 3_600_000
   @day 24 * @hour
 
-  # What Bandit adds to every answer: its date, the connection's close (the
-  # test's client asks for it), and the vary its response compression
-  # sends.
-  @server_headers ["date", "connection", "vary"]
+  # Headers the server adds: its date, the connection's close (the test's
+  # client asks for it), compression's vary, and Cowboy's server identity.
+  @server_headers ["date", "connection", "vary", "server"]
 
   @golden Path.expand("../../../ruby/test/web/golden.json", __DIR__)
   @external_resource @golden

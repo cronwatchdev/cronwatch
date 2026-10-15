@@ -23,8 +23,14 @@ public class ThreadsTests
     {
         await using var m = Make();
         var job = m.Cw.Job("runaway", new JobOptions { Timeout = "1m" });
-        var running = job.RunAsync((j, ct) => Task.Delay(Timeout.Infinite, ct));
-        await Eventually("the run to start", async () => (await m.Cw.RunsAsync("runaway", 1)).Count == 1);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = job.RunAsync((j, ct) =>
+        {
+            started.SetResult();
+            return Task.Delay(Timeout.Infinite, ct);
+        });
+        // The row is written before the timeout is armed. The callback starts after it.
+        await started.Task;
         m.Clock.Advance(Min);
         var e = await Assert.ThrowsAsync<TaskCanceledException>(() => running);
         Assert.Equal("A task was canceled.", e.Message);
@@ -40,14 +46,16 @@ public class ThreadsTests
         await using var m = Make();
         var job = m.Cw.Job("patient", new JobOptions { Timeout = "1m" });
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken seen = default;
         var running = job.RunAsync(async (j, ct) =>
         {
             seen = ct;
+            started.SetResult();
             await release.Task;
             return ct.IsCancellationRequested;
         });
-        await Eventually("the run to start", async () => (await m.Cw.RunsAsync("patient", 1)).Count == 1);
+        await started.Task;
         m.Clock.Advance(Min);
         await Eventually("the token to be cancelled", () => seen.IsCancellationRequested);
         release.SetResult();

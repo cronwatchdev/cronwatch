@@ -30,7 +30,10 @@ if Code.ensure_loaded?(Plug.Conn) do
         `{:error, reason}`, or `:error` fails the run, as for any run. A
         `%Plug.Conn{}` it returns is the answer (sent as it is, or with the
         status it set), and a status of 400 or more fails the run with
-        `HTTP <status> <reason>`.
+        `HTTP <status> <reason>`. If the function reads the body or calls
+        another Plug function that updates the connection, it must return
+        the latest conn. A conn without a response still gets the default
+        JSON answer; discarding it leaves the handler with a stale conn.
       * `:secret` - the secret requests must carry, in place of the
         instance's cron secret; `""` or a string of only whitespace counts as
         unset, `{:system, "VAR"}` reads a variable on each request, and

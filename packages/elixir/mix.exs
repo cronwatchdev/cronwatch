@@ -59,6 +59,9 @@ defmodule Cronwatch.MixProject do
       {:myxql, "~> 0.7", only: :test},
       {:stream_data, "~> 1.1", only: :test},
       {:bandit, "~> 1.5", only: :test},
+      {:plug_cowboy, "~> 2.7", only: :test},
+      # Reject unsafe response headers even while Cowlib awaits its patched release.
+      {:cowboy, "~> 2.16", only: :test},
       {:phoenix, "~> 1.7", only: :test},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

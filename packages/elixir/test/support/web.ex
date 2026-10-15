@@ -100,9 +100,9 @@ defmodule Cronwatch.Test.Jobs do
   @moduledoc "Functions the handler tests run, given the run's context and the conn."
 
   def served(job, conn) do
-    {:ok, body, _conn} = Plug.Conn.read_body(conn)
+    {:ok, body, conn} = Plug.Conn.read_body(conn)
     Cronwatch.log(job, "#{conn.method} #{conn.request_path} #{body}")
-    :ok
+    conn
   end
 end
 
@@ -161,7 +161,11 @@ defmodule Cronwatch.Test.Endpoint do
   @doc "Starts the endpoint on a free loopback port, as a test's child, and answers the port."
   def serve do
     Application.put_env(:cronwatch, __MODULE__,
-      adapter: Bandit.PhoenixAdapter,
+      # Plug 1.20.3 loses the updated conn on JSON parse errors, and Phoenix
+      # 1.8.15 renders with that stale conn. Bandit 1.13 correctly rejects it.
+      # Exercise Phoenix's error rendering on Cowboy until upstream fixes
+      # that path; the plain router and handler still run on patched Bandit.
+      adapter: Phoenix.Endpoint.Cowboy2Adapter,
       http: [ip: {127, 0, 0, 1}, port: 0],
       server: true,
       secret_key_base: String.duplicate("k", 64),

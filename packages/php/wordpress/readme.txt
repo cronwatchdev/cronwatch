@@ -137,6 +137,9 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 
 == Changelog ==
 
+= Unreleased =
+* Updated library fixes preserve imported run evaluation across transient storage failures and retry failed pg_cron imports within the source process.
+
 = 0.14.1 =
 * Updated library fixes prevent duplicate failure counts during recovery, bound oversized output lines, and reject malformed dashboard JSON without changing silence state.
 
