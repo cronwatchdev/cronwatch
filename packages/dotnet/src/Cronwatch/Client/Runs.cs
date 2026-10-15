@@ -695,9 +695,11 @@ public sealed partial class CronwatchClient
         {
             return await RecordOverAsync(def.Stored, stored, run, evaluate).ConfigureAwait(false);
         }
+        // Keep an evaluated import retryable until its pending marker is durable.
+        Run inserted = evaluate ? run with { Status = RunStatus.Running } : run;
         try
         {
-            await CallAsync(() => _store.InsertRunAsync(toWrite)).ConfigureAwait(false);
+            await CallAsync(() => _store.InsertRunAsync(inserted)).ConfigureAwait(false);
         }
         catch (CronwatchException)
         {
@@ -722,12 +724,32 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        await UpdateStateAsync(run.Job, s => (Evaluate.HoldRun(Evaluate.OnRunStart(def.Stored, run, s, Now()), run.Id), true)).ConfigureAwait(false);
-        if (run.Status == RunStatus.Running)
+        return await RecordOverAsync(def.Stored, inserted, run, true).ConfigureAwait(false);
+    }
+
+    // Read the row again on every CAS attempt, so a finished evaluation's marker stays consumed.
+    private async Task HoldImportedRunAsync(Definition def, Run run)
+    {
+        using var turn = await Queues.EnterAsync(run.Job).ConfigureAwait(false);
+        for (int attempt = 1; ; attempt++)
         {
-            return [];
+            JobState before = await ReadStateAsync(run.Job).ConfigureAwait(false);
+            Run? current = await CallAsync(() => _store.GetRunAsync(run.Id)).ConfigureAwait(false);
+            if (current == null || current.Job != run.Job || current.Status != RunStatus.Running || (before.PendingRuns?.Contains(run.Id) ?? false))
+            {
+                return;
+            }
+            JobState next = Evaluated(() => Evaluate.HoldRun(Evaluate.OnRunStart(def, run, before, Now()), run.Id));
+            long version = before.CountedVersion;
+            if (await WriteStateAsync(next with { Version = version + 1 }, version).ConfigureAwait(false))
+            {
+                return;
+            }
+            if (attempt >= StateAttempts)
+            {
+                throw new CronwatchException("the state of " + run.Job + " changed under " + StateAttempts + " attempts in a row to update it; gave up");
+            }
         }
-        return await FinishRunAsync(def.Stored, run, Now(), pendingOnly: true).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<Alert>> RecordOverAsync(Definition def, Run stored, Run run, bool evaluate)
@@ -739,7 +761,15 @@ public sealed partial class CronwatchClient
             return [];
         }
         bool open = stored.Status == RunStatus.Running || stored.Status == RunStatus.Timeout;
-        if (!open || run.Status == RunStatus.Running)
+        if (!open)
+        {
+            return [];
+        }
+        if (evaluate && stored.Status == RunStatus.Running)
+        {
+            await HoldImportedRunAsync(def, run).ConfigureAwait(false);
+        }
+        if (run.Status == RunStatus.Running)
         {
             return [];
         }

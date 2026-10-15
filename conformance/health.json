@@ -2343,6 +2343,25 @@
         "timeout": "5m"
       },
       "run": {
+        "id": "importing",
+        "job": "j",
+        "status": "running",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767601801000,
+        "durationMs": 1000,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stuck": false
+    },
+    {
+      "definition": {
+        "timeout": "5m"
+      },
+      "run": {
         "id": "a",
         "job": "j",
         "status": "running",

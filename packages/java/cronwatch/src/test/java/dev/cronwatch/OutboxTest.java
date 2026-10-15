@@ -82,6 +82,50 @@ class OutboxTest {
   // type this release does not know had its details rewritten as a failure's) on the next state
   // write, and a retry sent it without them. The SDK carries queued alerts as plain objects.
   @Test
+  void aFinishedImportRetriesAfterItsPendingMarkerWriteFails() throws Exception {
+    MemoryStore shared = new MemoryStore();
+    AtomicBoolean refuse = new AtomicBoolean(true);
+    Store contested =
+        (Store)
+            Proxy.newProxyInstance(
+                Store.class.getClassLoader(),
+                new Class<?>[] {Store.class},
+                (proxy, method, args) -> {
+                  if (refuse.get() && method.getName().equals("compareAndSetState")) return false;
+                  try {
+                    return method.invoke(shared, args);
+                  } catch (InvocationTargetException e) {
+                    throw e.getCause();
+                  }
+                });
+    Capture capture = new Capture();
+    try (Cronwatch cw =
+        Support.builder(new Clock(), capture, new Errors()).store(contested).build()) {
+      cw.job("imported");
+      Run run =
+          Run.of(
+              "external",
+              "imported",
+              RunStatus.FAILED,
+              T0,
+              T0,
+              0L,
+              "disk full",
+              null,
+              Metrics.empty(),
+              "x");
+      assertThrows(CronwatchException.class, () -> cw.recordRun(run));
+      assertEquals(RunStatus.RUNNING, Objects.requireNonNull(shared.getRun(run.id())).status());
+      refuse.set(false);
+      cw.recordRun(run);
+      cw.recordRun(run);
+      assertEquals(List.of("failed"), capture.types());
+      assertEquals(RunStatus.FAILED, Objects.requireNonNull(shared.getRun(run.id())).status());
+      assertNull(shared.getState(run.job()).pendingRuns());
+    }
+  }
+
+  @Test
   void queuedAlertsKeepWhatANewerWriterAddedThroughWritesAndRetries() throws Exception {
     AtomicBoolean down = new AtomicBoolean(true);
     List<String> bodies = new CopyOnWriteArrayList<>();

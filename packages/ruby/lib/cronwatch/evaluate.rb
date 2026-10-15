@@ -688,7 +688,7 @@ module Cronwatch
 
     # Whether a running run has gone on longer than the job's timeout.
     def stuck?(definition, run, now)
-      run.status == :running && now - run.started_at > timeout_ms(definition)
+      run.status == :running && run.finished_at.nil? && now - run.started_at > timeout_ms(definition)
     end
 
     # While a job is silenced nothing new is recorded as an incident: conditions

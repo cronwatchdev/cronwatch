@@ -410,8 +410,10 @@ module Cronwatch
       stored = @store.get_run(run.id)
       return record_over(definition, stored, run, evaluate) if stored
 
+      inserted = run.dup
+      inserted.status = :running if evaluate
       begin
-        @store.insert_run(run)
+        @store.insert_run(inserted)
       rescue StandardError
         # Another process recorded it first.
         again = begin
@@ -425,10 +427,7 @@ module Cronwatch
       end
       return [] unless evaluate
 
-      update_state(run.job) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
-      return [] if run.status == :running
-
-      finish_run(definition, run, now, pending_only: true)
+      record_over(definition, inserted, run, true)
     end
 
     # Hands an error to on_error, as a source reports what went wrong. See #report.
@@ -917,7 +916,19 @@ module Cronwatch
         report(RuntimeError.new("run #{run.id} of #{run.job} belongs to job \"#{stored.job}\"; ignored"), "recording #{run.job}")
         return []
       end
-      return [] if !%i[running timeout].include?(stored.status) || run.status == :running
+      return [] unless %i[running timeout].include?(stored.status)
+
+      if evaluate && stored.status == :running
+        update_state(run.job) do |before|
+          # Recheck each CAS attempt so a concurrent finish cannot resurrect its marker.
+          current = @store.get_run(run.id)
+          if current.nil? || current.job != run.job || current.status != :running || (before.pending_runs || []).include?(run.id)
+            next [before, nil]
+          end
+          [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil]
+        end
+      end
+      return [] if run.status == :running
 
       tracked = (read_state(run.job).pending_runs || []).include?(run.id)
       late, ignored = claim_finish(run)

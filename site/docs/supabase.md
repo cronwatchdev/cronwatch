@@ -75,6 +75,8 @@ Imports are idempotent. Each run is stored under `pgcron:<runid>`, so reading a 
 
 The first time a job is seen, its twenty newest runs are copied for history (durations, the dashboard), but only the newest finished one is judged, so a history of old failures does not arrive as a burst of alerts. From then on only runs newer than those are read, and every run is judged as it arrives.
 
+If a store write fails, the source reports it through `onError` and retries that run on a later check, preserving whether it was quiet history. These retry IDs live in memory. Restarting the source before a retry succeeds can lose a gap behind a newer stored run; this is not a persistent delivery queue.
+
 Run ids starting with `pgcron:` belong to the reader: `job.start({ id })` and `job.resume(id)` refuse them, and a run of one job is never finished under another.
 
 ## Where the check runs

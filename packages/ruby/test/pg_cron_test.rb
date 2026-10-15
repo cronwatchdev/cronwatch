@@ -73,6 +73,30 @@ class PgCronTest < Minitest::Test
     result.jobs.find { |j| j.name == name }
   end
 
+  def test_failed_import_is_retried_after_cursor_advances
+    [false, true].each do |history|
+      cron, clock, sent = FakeCron.new, Clock.new, Capture.new
+      cron.job(1, "nightly", "0 3 * * *")
+      cw = Cronwatch.new(store: Cronwatch::Stores::Memory.new, now: clock.to_proc, alerts: [sent],
+                         sources: [PgCron.new(cron)], on_error: ->(*) {})
+      cw.check unless history
+      detail = cron.add(1, "failed", T0, T0, "broken")
+      cron.add(1, "succeeded", T0 + 1, T0 + 1) if history
+      original = cw.method(:record_run)
+      blocked = true
+      cw.define_singleton_method(:record_run) do |run, evaluate: true|
+        raise "store unavailable" if blocked
+        original.call(run, evaluate: evaluate)
+      end
+      cw.check
+      assert_nil cw.store.get_run("pgcron:#{detail.runid}")
+      blocked = false
+      2.times { cw.check }
+      assert_equal :failed, cw.store.get_run("pgcron:#{detail.runid}").status
+      assert_equal(history ? [] : [:failed], sent.types)
+    end
+  end
+
   def test_schedules_and_names
     assert_equal "every 30s", PgCron.schedule("30 seconds")
     assert_equal "every 1s", PgCron.schedule("1 second")

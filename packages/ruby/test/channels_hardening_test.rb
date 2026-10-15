@@ -73,6 +73,35 @@ class ChannelsHardeningTest < Minitest::Test
     ["http://127.0.0.1:#{server.addr[1]}", seen, server]
   end
 
+  def test_http_deadline_covers_headers_arriving_between_read_timeouts
+    server = TCPServer.new("127.0.0.1", 0)
+    sender = Thread.new do
+      client = server.accept
+      head = +""
+      head << client.gets until head.end_with?("\r\n\r\n")
+      client.read(head[/content-length: (\d+)/i, 1].to_i)
+      client.write("HTTP/1.1 200 OK\r\n")
+      60.times do |i|
+        sleep 0.05
+        client.write("X-Pace-#{i}: x\r\n")
+      end
+      client.write("Content-Length: 0\r\n\r\n")
+    rescue IOError, SystemCallError
+      nil
+    ensure
+      client&.close
+    end
+    started = Cronwatch::HTTP.monotonic
+    assert_raises(Cronwatch::HTTP::TimeoutError) do
+      Cronwatch::HTTP::NetHTTP.new(timeout: 0.5).post("http://127.0.0.1:#{server.addr[1]}/", "{}", {})
+    end
+    assert_operator Cronwatch::HTTP.monotonic - started, :<, 2
+  ensure
+    server&.close
+    sender&.kill
+    sender&.join
+  end
+
   # Net::HTTP never follows a redirect, so a 307 is an answer outside 2xx:
   # an error, and the credentials go nowhere else. The SDK asks fetch for
   # the same with redirect: "error".

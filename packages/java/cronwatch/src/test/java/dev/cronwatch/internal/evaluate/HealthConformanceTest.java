@@ -286,7 +286,7 @@ class HealthConformanceTest {
           Evaluate.silenceEnd(Fixtures.integer(c, "now"), ms),
           c.get("silencedUntil"));
     }
-    assertTrue(cases == 198, "health.json cases: " + cases);
+    assertTrue(cases == 199, "health.json cases: " + cases);
     fails.check("health");
   }
 

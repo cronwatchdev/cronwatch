@@ -79,6 +79,8 @@ final class PgCronSource implements Source {
   /** The newest runid read for each jobid, once known. */
   private final Map<Long, Long> cursors = new HashMap<>();
 
+  private final Map<Long, Boolean> retry = new HashMap<>();
+
   /** The start of the newest run copied for each jobid: where a restart row with no times goes. */
   private final Map<Long, Long> lastAt = new HashMap<>();
 
@@ -517,6 +519,7 @@ final class PgCronSource implements Source {
     }
     Set<Long> open = new TreeSet<>(pending.keySet());
     open.addAll(held.keySet());
+    open.addAll(retry.keySet());
     boolean complete = false;
     for (int page = 0; page < MAX_PAGES; page++) {
       List<Long> jobIds = new ArrayList<>(names.keySet());
@@ -545,6 +548,7 @@ final class PgCronSource implements Source {
       for (long runId : open) {
         pending.remove(runId);
         held.remove(runId);
+        retry.remove(runId);
       }
     }
     return alerts;
@@ -628,11 +632,13 @@ final class PgCronSource implements Source {
       long now,
       List<Alert> alerts) {
     long runId = row.runId();
+    evaluate = retry.getOrDefault(runId, evaluate);
     long jobId = row.jobId();
     String name = pending.containsKey(runId) ? pending.get(runId) : names.get(jobId);
     if (name == null || !recordable.contains(name)) {
       pending.remove(runId);
       held.remove(runId);
+      retry.remove(runId);
       if (name != null) {
         retired.remove(name);
       }
@@ -661,9 +667,11 @@ final class PgCronSource implements Source {
     try {
       alerts.addAll(host.recordRun(run, evaluate));
     } catch (RuntimeException e) {
+      retry.put(runId, evaluate);
       host.reportError(e, "source pg_cron: run " + runId);
       return;
     }
+    retry.remove(runId);
     if (run.status().equals(RunStatus.RUNNING)) {
       pending.put(runId, name);
     } else {

@@ -150,3 +150,42 @@ func TestAPendingRunGoneIsLetGoAndOneStoredUnjudgedIsNotEvaluated(t *testing.T) 
 	checkNow(t, cw)
 	eq(t, "not evaluated", len(sent.List()), 0)
 }
+
+func TestImportedFinishRetriesPendingMarkerFailure(t *testing.T) {
+	clock := storetest.NewClock(T0)
+	shared := cronwatch.NewMemoryStore()
+	store := newTestStore()
+	store.inner = shared
+	fail := true
+	store.cas = func(s cronwatch.JobState, version int64) (bool, error) {
+		if fail {
+			fail = false
+			return false, errors.New("state unavailable")
+		}
+		return shared.CompareAndSetState(bg, s, version)
+	}
+	sent := &storetest.Capture{}
+	cw := cronwatch.MustNew(cronwatch.WithStore(store), cronwatch.WithClock(clock.Now), cronwatch.WithAlerts(sent), cronwatch.WithErrorHandler(quiet))
+	cw.MustJob("imported")
+	run := cronwatch.Run{ID: "failed-import", Job: "imported", Status: cronwatch.StatusFailed, StartedAt: T0, FinishedAt: ptr(T0), DurationMs: ptr(int64(0)), Error: ptr("failed"), Metrics: cronwatch.Metrics{}, Trigger: "source"}
+	if _, err := cw.RecordRun(bg, run); err == nil {
+		t.Fatal("expected state write failure")
+	}
+	eq(t, "retryable", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusRunning)
+	clock.Advance(24 * 60 * MIN)
+	checkNow(t, cw)
+	eq(t, "completed import is not stuck", len(sent.List()), 0)
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))
+	clock.Advance(sendLease + MIN)
+	checkNow(t, cw)
+	sameList(t, "evaluated once", alertTypes(sent.List()), []string{"failed"})
+	eq(t, "released", must[*cronwatch.JobState](t)(shared.GetState(bg, run.Job)).PendingRuns == nil, true)
+	cw.MustJob("history")
+	run.ID, run.Job = "history", "history"
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run, cronwatch.WithoutEvaluation()))
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))
+	clock.Advance(sendLease + MIN)
+	checkNow(t, cw)
+	sameList(t, "history stays quiet", alertTypes(sent.List()), []string{"failed"})
+}

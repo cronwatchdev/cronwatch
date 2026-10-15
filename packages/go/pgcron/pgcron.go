@@ -300,6 +300,8 @@ type Source struct {
 	// held are runs read before they started, by runid, with when they
 	// were first seen.
 	held map[int64]int64
+	// retry preserves the evaluation flag of failed imports.
+	retry map[int64]bool
 	// known is each job's name and definition as last declared, by jobid.
 	known map[int64]declared
 	// declaredKeys is the last definition declared for each name, so an
@@ -321,7 +323,7 @@ var _ cronwatch.Source = (*Source)(nil)
 func New(db Querier, o Options) *Source {
 	return &Source{
 		db: db, o: o, idPrefix: "pgcron:" + o.Prefix,
-		cursors: map[int64]int64{}, lastAt: map[int64]int64{}, pending: map[int64]string{}, held: map[int64]int64{},
+		cursors: map[int64]int64{}, lastAt: map[int64]int64{}, pending: map[int64]string{}, held: map[int64]int64{}, retry: map[int64]bool{},
 		known: map[int64]declared{}, declaredKeys: map[string]string{}, retired: map[string]bool{}, warned: map[string]bool{},
 		failing: map[int64]bool{},
 	}
@@ -707,6 +709,9 @@ func (s *Source) Sync(ctx context.Context, host cronwatch.SourceHost) ([]cronwat
 	alerts := []cronwatch.Alert{}
 	// record copies one row. A row that cannot be recorded is reported and skipped; it never stops the others.
 	record := func(row Row, evaluate bool) {
+		if original, ok := s.retry[row.RunID]; ok {
+			evaluate = original
+		}
 		name, ok := s.pending[row.RunID]
 		if !ok {
 			name, ok = names[row.JobID]
@@ -717,6 +722,7 @@ func (s *Source) Sync(ctx context.Context, host cronwatch.SourceHost) ([]cronwat
 		if !ok || (canTell && !inUse[name] && !declares.Declares(name)) {
 			delete(s.pending, row.RunID)
 			delete(s.held, row.RunID)
+			delete(s.retry, row.RunID)
 			if ok {
 				delete(s.retired, name)
 			}
@@ -752,9 +758,11 @@ func (s *Source) Sync(ctx context.Context, host cronwatch.SourceHost) ([]cronwat
 		}
 		sent, err := host.RecordRun(ctx, *run, options...)
 		if err != nil {
+			s.retry[row.RunID] = evaluate
 			host.ReportError(err, "source pg_cron: run "+strconv.FormatInt(row.RunID, 10))
 			return
 		}
+		delete(s.retry, row.RunID)
 		alerts = append(alerts, sent...)
 		if run.Status == "running" {
 			s.pending[row.RunID] = name
@@ -851,6 +859,9 @@ func (s *Source) Sync(ctx context.Context, host cronwatch.SourceHost) ([]cronwat
 	for id := range s.held {
 		open[id] = true
 	}
+	for id := range s.retry {
+		open[id] = true
+	}
 	complete := false
 	for p := 0; p < maxPages; p++ {
 		afters := make([]int64, len(order))
@@ -880,6 +891,7 @@ func (s *Source) Sync(ctx context.Context, host cronwatch.SourceHost) ([]cronwat
 		for id := range open {
 			delete(s.pending, id)
 			delete(s.held, id)
+			delete(s.retry, id)
 		}
 	}
 	return alerts, nil

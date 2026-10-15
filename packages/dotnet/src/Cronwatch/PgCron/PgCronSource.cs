@@ -80,6 +80,7 @@ public sealed class PgCronSource : ISource
 
     /// <summary>The newest runid read for each jobid, once known.</summary>
     private readonly Dictionary<long, long> _cursors = [];
+    private readonly Dictionary<long, bool> _retry = [];
 
     /// <summary>The start of the newest run copied for each jobid: where a restart row with no times goes.</summary>
     private readonly Dictionary<long, long> _lastAt = [];
@@ -692,6 +693,7 @@ public sealed class PgCronSource : ISource
         }
         var open = new SortedSet<long>(_pending.Keys);
         open.UnionWith(_held.Keys);
+        open.UnionWith(_retry.Keys);
         bool complete = false;
         for (int page = 0; page < MaxPages; page++)
         {
@@ -721,6 +723,7 @@ public sealed class PgCronSource : ISource
             {
                 _pending.Remove(runId);
                 _held.Remove(runId);
+                _retry.Remove(runId);
             }
         }
         return alerts;
@@ -800,12 +803,14 @@ public sealed class PgCronSource : ISource
     private async Task RecordAsync(CronwatchClient host, Dictionary<long, string> names, HashSet<string> keep, PgCronRow row, bool evaluate, long now, List<Alert> alerts, CancellationToken ct)
     {
         long runId = row.RunId;
+        evaluate = _retry.GetValueOrDefault(runId, evaluate);
         long jobId = row.JobId;
         string? name = _pending.TryGetValue(runId, out string? p) ? p : names.GetValueOrDefault(jobId);
         if (name == null || !keep.Contains(name))
         {
             _pending.Remove(runId);
             _held.Remove(runId);
+            _retry.Remove(runId);
             if (name != null)
             {
                 _retired.Remove(name);
@@ -838,9 +843,11 @@ public sealed class PgCronSource : ISource
         }
         catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
         {
+            _retry[runId] = evaluate;
             host.ReportError(e, "source pg_cron: run " + runId.ToString(CultureInfo.InvariantCulture));
             return;
         }
+        _retry.Remove(runId);
         if (run.Status == RunStatus.Running)
         {
             _pending[runId] = name;

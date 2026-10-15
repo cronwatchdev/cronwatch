@@ -306,6 +306,7 @@ class PgCron:
         self._pending: dict[int, str] = {}
         # Runs read before they started, by runid, with when they were first seen.
         self._held: dict[int, int] = {}
+        self._retry: dict[int, bool] = {}
         # Each job's name and definition as last declared, by jobid.
         self._known: dict[int, tuple[str, dict[str, Any]]] = {}
         # The last definition declared for each name, so an unchanged job is not declared again.
@@ -539,11 +540,13 @@ class PgCron:
         reported and skipped; it never stops the others."""
         runid = int(row["runid"])
         jobid = int(row["jobid"])
+        evaluate = self._retry.get(runid, evaluate)
         name = self._pending.get(runid) or names.get(jobid)
         declared_now = self._declared_now
         if not name or (declared_now is not None and name not in names.values() and name not in declared_now):
             self._pending.pop(runid, None)
             self._held.pop(runid, None)
+            self._retry.pop(runid, None)
             if name:
                 self._retired.discard(name)
             return
@@ -561,8 +564,10 @@ class PgCron:
         try:
             alerts.extend(host.record_run(found, evaluate=evaluate))
         except Exception as error:
+            self._retry[runid] = evaluate
             host.on_error(error, f"source pg_cron: run {runid}")
             return
+        self._retry.pop(runid, None)
         if found.status == RunStatus.RUNNING:
             self._pending[runid] = name
         else:
@@ -604,7 +609,7 @@ class PgCron:
             runid = self._run_id_of(stored.id)
             if runid is not None and stored.job in watched:
                 self._pending[runid] = stored.job
-        still_open = {*self._pending, *self._held}
+        still_open = {*self._pending, *self._held, *self._retry}
         complete = False
         for _ in range(_MAX_PAGES):
             jobids = list(names)
@@ -625,6 +630,7 @@ class PgCron:
             for runid in still_open:
                 self._pending.pop(runid, None)
                 self._held.pop(runid, None)
+                self._retry.pop(runid, None)
 
 
 #: Internal names, still answering under their old public names (each

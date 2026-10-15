@@ -303,6 +303,52 @@ final class OutboxTest extends TestCase
         $this->assertSame(['failed'], $sent->types());
     }
 
+    public function testAConcurrentCheckDoesNotMarkACompletedImportStuck(): void
+    {
+        $shared = new MemoryStore();
+        $store = new FlakyStore($shared);
+        $clock = new Clock();
+        $sent = new Capture();
+        $watcher = new Cronwatch(store: $shared, now: $clock, alerts: [$sent], cronSecret: null);
+        $watcher->job('imported', ['timeout' => '1m']);
+        $store->hooks['insertRun'] = function (\Closure $next, array $args) use ($watcher): void {
+            $next(...$args);
+            $watcher->check();
+        };
+        $cw = new Cronwatch(store: $store, now: $clock, alerts: [$sent], cronSecret: null);
+        $cw->job('imported', ['timeout' => '1m']);
+        $cw->recordRun(new \Cronwatch\Run('external-old', 'imported', 'ok', $clock() - 60 * self::MIN, $clock() - 60 * self::MIN + 1000, 1000));
+        $this->assertSame('ok', $shared->getRun('external-old')->status);
+        $this->assertSame([], $sent->types());
+    }
+
+    public function testImportedFinishCanRetryAfterItsPendingMarkerWriteFails(): void
+    {
+        $shared = new MemoryStore();
+        $store = new FlakyStore($shared);
+        $clock = new Clock();
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $store, now: $clock, alerts: [$sent], cronSecret: null);
+        $cw->job('imported');
+        $run = new \Cronwatch\Run('external-1', 'imported', 'failed', $clock(), $clock(), 0, 'boom');
+        $store->breaks(['compareAndSetState']);
+        try {
+            $cw->recordRun($run);
+            $this->fail('expected the state write to fail');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('store down: compareAndSetState', $error->getMessage());
+        }
+        $this->assertSame('running', $shared->getRun($run->id)->status);
+        $store->broken = [];
+        $cw->recordRun($run);
+        $cw->recordRun($run);
+        $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
+        $cw->check();
+        $this->assertSame('failed', $shared->getRun($run->id)->status);
+        $this->assertSame(['failed'], $sent->types());
+        $this->assertNull($shared->getState('imported')->pendingRuns);
+    }
+
     public function testAPendingRunTheStoreNoLongerHasIsLetGoAndARunStoredUnjudgedOnPurposeIsNotEvaluated(): void
     {
         $shared = new MemoryStore();

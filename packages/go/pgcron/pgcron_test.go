@@ -9,6 +9,7 @@ package pgcron_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -655,4 +656,51 @@ func TestUnscheduledKeepsTheBudgetAndFloor(t *testing.T) {
 	def := cronwatch.DescribeJob("x", cronwatch.Schedule("0 2 * * *"), cronwatch.Grace("5m"), cronwatch.Budget("cost", 2), cronwatch.Floor("rows", 1), cronwatch.FailuresBeforeAlert(2))
 	again := cronwatch.DescribeJob("x", pgcron.Unscheduled(def)...)
 	same(t, "kept", js.Stringify(again), `{"grace":"5m","budget":{"cost":2},"floor":{"rows":1},"failuresBeforeAlert":2,"name":"x"}`)
+}
+
+type failingImportStore struct {
+	*cronwatch.MemoryStore
+	broken map[string]bool
+}
+
+func (s *failingImportStore) InsertRun(ctx context.Context, run cronwatch.Run) error {
+	if s.broken[run.ID] {
+		return fmt.Errorf("insert unavailable")
+	}
+	return s.MemoryStore.InsertRun(ctx, run)
+}
+
+func TestRetryFailedImportsPreservesHistoricalEvaluation(t *testing.T) {
+	clock := storetest.NewClock(T0)
+	cron := newFakeCron()
+	cron.job(1, name("imported"), "0 * * * *", true)
+	old := cron.add(1, "failed", T0-HOUR, T0-HOUR+1000, "old failure")
+	cron.add(1, "succeeded", T0-MIN, T0-MIN+1000)
+	id := func(d *detail) string { return "pgcron:" + strconv.FormatInt(d.runid, 10) }
+	store := &failingImportStore{MemoryStore: cronwatch.NewMemoryStore(), broken: map[string]bool{id(old): true}}
+	k := newKit(t, cron, clock, store, pgcron.Options{})
+	k.check(t)
+	if r, _ := store.GetRun(bg, id(old)); r != nil {
+		t.Fatal("failed insertion was stored")
+	}
+	delete(store.broken, id(old))
+	k.check(t)
+	if r, _ := store.GetRun(bg, id(old)); r == nil || r.Status != cronwatch.StatusFailed {
+		t.Fatal("history was not retried")
+	}
+	if len(k.alerts.List()) != 0 {
+		t.Fatal("historical retry alerted")
+	}
+	failed := cron.add(1, "failed", T0, T0, "new failure")
+	store.broken[id(failed)] = true
+	k.check(t)
+	delete(store.broken, id(failed))
+	k.check(t)
+	k.check(t)
+	if r, _ := store.GetRun(bg, id(failed)); r == nil || r.Status != cronwatch.StatusFailed {
+		t.Fatal("new failure was not retried")
+	}
+	if got := k.alerts.List(); len(got) != 1 || got[0].Type != cronwatch.AlertFailed {
+		t.Fatalf("expected one failure alert, got %v", got)
+	}
 }

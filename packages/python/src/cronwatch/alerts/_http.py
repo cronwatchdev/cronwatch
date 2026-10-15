@@ -133,7 +133,10 @@ class _Deadline:
     def watch(self, sock: socket.socket) -> None:
         with self._lock:
             if not self._expired:
-                self._sockets.append(sock)
+                # TLS detaches this socket when it wraps it. A duplicate keeps
+                # a handle to the same connection through the handshake and
+                # all later SSL reads, without owning the caller's socket.
+                self._sockets.append(sock.dup())
                 return
         _shut(sock)
 
@@ -142,16 +145,23 @@ class _Deadline:
             if self._finished:
                 return
             self._expired = True
-            sockets = list(self._sockets)
+            sockets, self._sockets = self._sockets, []
         for sock in sockets:
-            _shut(sock)
+            try:
+                _shut(sock)
+            finally:
+                sock.close()
 
     def finish(self) -> bool:
         """Ends the watch: True when the request ended before the deadline."""
         self._timer.cancel()
         with self._lock:
             self._finished = True
-            return not self._expired
+            sockets, self._sockets = self._sockets, []
+            in_time = not self._expired
+        for sock in sockets:
+            sock.close()
+        return in_time
 
 
 def _shut(sock: socket.socket) -> None:

@@ -835,7 +835,7 @@ def on_check(definition: JobDefinition, stored: StoredJob, last_run: Run | None,
 
 def is_stuck(definition: JobDefinition, run: Run, now: int) -> bool:
     """Whether a running run has gone on longer than the job's timeout."""
-    return run.status == RunStatus.RUNNING and now - run.started_at > timeout_ms(definition)
+    return run.status == RunStatus.RUNNING and run.finished_at is None and now - run.started_at > timeout_ms(definition)
 
 
 def mute_opens(previous: JobState, following: JobState) -> JobState:

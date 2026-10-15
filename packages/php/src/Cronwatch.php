@@ -366,8 +366,13 @@ final class Cronwatch
         if ($stored !== null) {
             return $this->recordOver($definition, $stored, $run, $evaluate);
         }
+        // Keep evaluated imports retryable until their pending marker is durable.
+        $inserted = clone $run;
+        if ($evaluate) {
+            $inserted->status = RunStatus::RUNNING;
+        }
         try {
-            $this->store->insertRun($run);
+            $this->store->insertRun($inserted);
         } catch (\Throwable $error) {
             // Another process recorded it first.
             $again = $this->tryGetRun($run->id);
@@ -379,11 +384,7 @@ final class Cronwatch
         if (!$evaluate) {
             return [];
         }
-        $this->updateState($run->job, fn (JobState $before) => [Evaluate::holdRun(Evaluate::onRunStart($definition, $run, $before, $this->now()), $run->id), null]);
-        if ($run->status === RunStatus::RUNNING) {
-            return [];
-        }
-        return $this->finishRun($definition, $run, $this->now(), pendingOnly: true);
+        return $this->recordOver($definition, $inserted, $run, true);
     }
 
     /**
@@ -1379,7 +1380,20 @@ final class Cronwatch
             $this->report(new \RuntimeException("run {$run->id} of {$run->job} belongs to job \"{$stored->job}\"; ignored"), "recording {$run->job}");
             return [];
         }
-        if (!in_array($stored->status, [RunStatus::RUNNING, RunStatus::TIMEOUT], true) || $run->status === RunStatus::RUNNING) {
+        if (!in_array($stored->status, [RunStatus::RUNNING, RunStatus::TIMEOUT], true)) {
+            return [];
+        }
+        if ($evaluate && $stored->status === RunStatus::RUNNING) {
+            $this->updateState($run->job, function (JobState $before) use ($definition, $run): array {
+                // Recheck on every CAS attempt so a competing finish cannot resurrect a consumed marker.
+                $current = $this->store->getRun($run->id);
+                if ($current === null || $current->job !== $run->job || $current->status !== RunStatus::RUNNING || in_array($run->id, $before->pendingRuns ?? [], true)) {
+                    return [$before, null];
+                }
+                return [Evaluate::holdRun(Evaluate::onRunStart($definition, $run, $before, $this->now()), $run->id), null];
+            });
+        }
+        if ($run->status === RunStatus::RUNNING) {
             return [];
         }
         $tracked = in_array($run->id, $this->readState($run->job)->pendingRuns ?? [], true);

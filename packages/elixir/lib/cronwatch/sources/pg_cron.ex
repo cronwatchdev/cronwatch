@@ -463,6 +463,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     defmodule State do
       @moduledoc false
       defstruct cursors: %{},
+                retry: %{},
                 last_at: %{},
                 pending: %{},
                 held: %{},
@@ -894,7 +895,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
         update_st(&%{&1 | pending: Map.put(&1.pending, id, run.job)})
       end
 
-      open = MapSet.new(Map.keys(st().pending) ++ Map.keys(st().held))
+      open = MapSet.new(Map.keys(st().pending) ++ Map.keys(st().held) ++ Map.keys(st().retry))
       page = %{o: o, c: c, order: order, names: names, id_prefix: id_prefix, now: now}
       {alerts, open, complete} = pages(page, alerts, open, 0)
 
@@ -902,7 +903,12 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       # has them.
       if complete do
         update_st(fn s ->
-          %{s | pending: Map.drop(s.pending, MapSet.to_list(open)), held: Map.drop(s.held, MapSet.to_list(open))}
+          %{
+            s
+            | pending: Map.drop(s.pending, MapSet.to_list(open)),
+              held: Map.drop(s.held, MapSet.to_list(open)),
+              retry: Map.drop(s.retry, MapSet.to_list(open))
+          }
         end)
       end
 
@@ -995,12 +1001,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     # cannot be recorded is reported and skipped; it never stops the others.
     defp record(c, names, row, evaluate, now, id_prefix) do
       runid = int(row["runid"])
+      evaluate = Map.get(st().retry, runid, evaluate)
       jobid = int(row["jobid"])
       name = Map.get(st().pending, runid) || Map.get(names, jobid)
 
       cond do
         name == nil ->
-          update_st(&%{&1 | held: Map.delete(&1.held, runid)})
+          update_st(&%{&1 | held: Map.delete(&1.held, runid), retry: Map.delete(&1.retry, runid)})
           []
 
         # A run copied under a retired name that was then forgotten (the
@@ -1012,7 +1019,8 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
               &1
               | pending: Map.delete(&1.pending, runid),
                 held: Map.delete(&1.held, runid),
-                retired: MapSet.delete(&1.retired, name)
+                retired: MapSet.delete(&1.retired, name),
+                retry: Map.delete(&1.retry, runid)
             }
           )
 
@@ -1053,12 +1061,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
                   do: Map.put(s.last_at, jobid, run.started_at),
                   else: s.last_at
 
-              %{s | pending: pending, last_at: last_at}
+              %{s | pending: pending, last_at: last_at, retry: Map.delete(s.retry, runid)}
             end)
 
             sent
 
           {:error, e} ->
+            update_st(&%{&1 | retry: Map.put(&1.retry, runid, evaluate)})
             Core.report(c, e, "source pg_cron: run #{runid}")
             []
         end

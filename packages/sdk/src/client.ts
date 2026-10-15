@@ -1080,8 +1080,12 @@ export class Cronwatch {
 
     const stored = await this.store.getRun(run.id);
     if (stored) return this.recordOver(definition, stored, run, evaluate);
+    // An evaluated import stays retryable until its durable evaluation marker
+    // is written. A finished row alone cannot distinguish lost evaluation
+    // from history deliberately imported without evaluation.
+    const inserted: Run = evaluate ? { ...run, status: "running" } : run;
     try {
-      await this.store.insertRun(run);
+      await this.store.insertRun(inserted);
     } catch (e) {
       // Another process recorded it first.
       const again = await this.store.getRun(run.id).catch(() => null);
@@ -1089,9 +1093,7 @@ export class Cronwatch {
       throw e;
     }
     if (!evaluate) return [];
-    await this.updateState(run.job, (before) => ({ state: holdRun(onRunStart(definition, run, before, this.now()), run.id), result: undefined }));
-    if (run.status === "running") return [];
-    return this.finishRun(definition, run, this.now(), true);
+    return this.recordOver(definition, inserted, run, true);
   }
 
   /** recordRun() for a run already stored. */
@@ -1100,7 +1102,17 @@ export class Cronwatch {
       this.report(new Error(`run ${run.id} of ${run.job} belongs to job "${stored.job}"; ignored`), `recording ${run.job}`);
       return [];
     }
-    if ((stored.status !== "running" && stored.status !== "timeout") || run.status === "running") return [];
+    if (stored.status !== "running" && stored.status !== "timeout") return [];
+    if (evaluate && stored.status === "running") {
+      await this.updateState(run.job, async (before) => {
+        // Recheck inside every CAS attempt: another importer may have
+        // finished and consumed the marker since this row was first read.
+        const current = await this.store.getRun(run.id);
+        if (!current || current.job !== run.job || current.status !== "running" || before.pendingRuns?.includes(run.id)) return { state: before, result: undefined };
+        return { state: holdRun(onRunStart(definition, run, before, this.now()), run.id), result: undefined };
+      });
+    }
+    if (run.status === "running") return [];
     const tracked = (await this.readState(run.job)).pendingRuns?.includes(run.id) ?? false;
     const claim = await this.claimFinish(run);
     if ("ignored" in claim) {

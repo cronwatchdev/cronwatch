@@ -109,6 +109,7 @@ module Cronwatch
         @pending = {}
         # Runs read before they started, by runid, with when they were first seen.
         @held = {}
+        @retry = {}
         # Each job's name and definition as last declared, by jobid.
         @known = {}
         # The last definition declared for each name, so an unchanged job is not declared again.
@@ -493,10 +494,12 @@ module Cronwatch
       def record(host, names, row, evaluate, alerts, now)
         runid = Integer(row["runid"])
         jobid = Integer(row["jobid"])
+        evaluate = @retry.fetch(runid, evaluate)
         name = @pending[runid] || names[jobid]
         if name.nil? || (@declared_now && !names.value?(name) && !@declared_now.include?(name))
           @pending.delete(runid)
           @held.delete(runid)
+          @retry.delete(runid)
           @retired.delete(name) if name
           return
         end
@@ -516,9 +519,11 @@ module Cronwatch
         begin
           alerts.concat(host.record_run(run, evaluate: evaluate))
         rescue StandardError => e
+          @retry[runid] = evaluate
           host.on_error(e, "source pg_cron: run #{runid}")
           return
         end
+        @retry.delete(runid)
         if run.status == :running
           @pending[runid] = name
         else
@@ -561,7 +566,7 @@ module Cronwatch
           id = run_id_of(run.id)
           @pending[id] = run.job if id && watched.include?(run.job)
         end
-        open = (@pending.keys + @held.keys).to_set
+        open = (@pending.keys + @held.keys + @retry.keys).to_set
         complete = false
         MAX_PAGES.times do
           jobids = names.keys
@@ -585,6 +590,7 @@ module Cronwatch
         open.each do |runid|
           @pending.delete(runid)
           @held.delete(runid)
+          @retry.delete(runid)
         end
       end
     end

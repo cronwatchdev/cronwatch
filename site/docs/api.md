@@ -128,6 +128,8 @@ The development sign-in line names the host only when `origin` is set or the fir
 - `evaluate: false` stores it without judging it, for history imported on first sight.
 - It resolves to the alerts it sent.
 
+If a store write throws, retry with the same run and id. An evaluated import can remain provisionally `running` until its pending evaluation marker and finish are written. A completed import retains its finish time during that step so a concurrent check does not mark it stuck. Imports deliberately stored with `evaluate: false` are not evaluated by a retry.
+
 ## Exports
 
 `@cronwatch/sdk`: `cronwatch`, `Cronwatch` (the client class, and its options type `CronwatchOptions`; the former spellings `CronWatch` and `CronWatchOptions` still work through 1.x, deprecated), `memory`, `custom`, `consoleChannel`, `parseDuration`, `formatDuration`, `parseSchedule`, `nextFire` (the next time a parsed schedule fires after a given time), `composeAlert`, and every type they use, including `Alert`, `AlertDraft`, `AlertDetails`, `ParsedSchedule`, `JobContext`, `RunHandle`, `StartOptions`, `RunOutcome`, `RecordRunOptions`, `Source` and `SourceHost` (the interface a source is given: `job()`, `recordRun()`, `store`, `now`, and `onError`), and `FetchHandler`, `Routes`, and `RoutesOptions`.

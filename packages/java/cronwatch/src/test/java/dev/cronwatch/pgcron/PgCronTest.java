@@ -132,6 +132,46 @@ class PgCronTest {
   }
 
   @Test
+  void failedImportsRetryWithTheirOriginalEvaluationMode() throws Exception {
+    for (boolean historical : new boolean[] {false, true}) {
+      FakeCron cron = new FakeCron();
+      cron.job(1, "nightly", "0 * * * *", true);
+      MemoryStore shared = new MemoryStore();
+      java.util.concurrent.atomic.AtomicBoolean refuse =
+          new java.util.concurrent.atomic.AtomicBoolean(false);
+      Store wrapped =
+          (Store)
+              java.lang.reflect.Proxy.newProxyInstance(
+                  Store.class.getClassLoader(),
+                  new Class<?>[] {Store.class},
+                  (proxy, method, args) -> {
+                    if (refuse.get() && method.getName().equals("insertRun"))
+                      throw new IllegalStateException("store down");
+                    try {
+                      return method.invoke(shared, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                      throw e.getCause();
+                    }
+                  });
+      try (Kit k =
+          kit(wrapped, new AtomicLong(T0), PgCron.source(cron, PgCronOptions.defaults()))) {
+        if (!historical) k.cw.check();
+        FakeCron.Detail row = cron.add(1, "failed", T0 - 1000, T0, "ERROR: disk full");
+        if (historical) cron.add(1, "succeeded", T0, T0 + 1, "ok");
+        refuse.set(true);
+        k.cw.check();
+        assertNull(shared.getRun("pgcron:" + row.runId));
+        refuse.set(false);
+        k.cw.check();
+        k.cw.check();
+        assertEquals(RunStatus.FAILED, getRun(k, "pgcron:" + row.runId).status());
+        assertEquals(
+            historical ? 0L : 1L, k.types().stream().filter(t -> t.equals("failed")).count());
+      }
+    }
+  }
+
+  @Test
   void pgCronSchedulesBecomeCronwatchSchedules() {
     assertEquals("every 30s", PgCron.schedule("30 seconds"));
     assertEquals("every 1s", PgCron.schedule("1 second"));

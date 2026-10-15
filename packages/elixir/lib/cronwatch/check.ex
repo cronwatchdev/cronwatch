@@ -410,9 +410,12 @@ defmodule Cronwatch.Check do
 
     case Core.store!(c, :get_run, [run.id]) do
       nil ->
+        # Keep an evaluated import retryable until its pending marker is durable.
+        staged = if evaluate?, do: %{run | status: "running"}, else: run
+
         inserted =
           try do
-            Core.store!(c, :insert_run, [run])
+            Core.store!(c, :insert_run, [staged])
             :inserted
           rescue
             e in Error ->
@@ -433,11 +436,7 @@ defmodule Cronwatch.Check do
 
           :inserted ->
             if evaluate? do
-              Core.update_state!(c, run.job, fn before ->
-                {Evaluate.start_run(definition, run, before, Core.now(c)), nil}
-              end)
-
-              if run.status == "running", do: [], else: Core.finish_run(c, definition, run, Core.now(c), true)
+              record_over(c, definition, staged, run, true)
             else
               []
             end
@@ -459,28 +458,48 @@ defmodule Cronwatch.Check do
 
         []
 
-      stored.status not in ["running", "timeout"] or run.status == "running" ->
+      stored.status not in ["running", "timeout"] ->
         []
 
       true ->
-        tracked = run.id in (Core.read_state!(c, run.job).pending_runs || [])
+        if evaluate? and stored.status == "running" do
+          Core.update_state!(c, run.job, fn before ->
+            # Recheck on every CAS attempt so a completed evaluation stays consumed.
+            current = Core.store!(c, :get_run, [run.id])
 
-        case Core.claim_finish!(c, run) do
-          {:ignored, why} ->
-            Core.report(c, Error.other("run #{run.id} of #{run.job} #{why}; ignored"), "recording #{run.job}")
-            []
-
-          {:ok, _late} when not evaluate? ->
-            # Stored unjudged on purpose: a check must not evaluate it as one
-            # whose evaluation was lost.
-            Core.release_run(c, run.job, run.id)
-            []
-
-          {:ok, late} ->
-            if late and run.status != "ok",
-              do: [],
-              else: Core.finish_run(c, definition, run, Core.now(c), tracked and not late)
+            if current != nil and current.job == run.job and current.status == "running" and
+                 run.id not in (before.pending_runs || []) do
+              {Evaluate.start_run(definition, run, before, Core.now(c)), nil}
+            else
+              {before, nil}
+            end
+          end)
         end
+
+        record_import_finish(c, definition, run, evaluate?)
+    end
+  end
+
+  defp record_import_finish(_c, _definition, %{status: "running"}, _evaluate?), do: []
+
+  defp record_import_finish(c, definition, run, evaluate?) do
+    tracked = run.id in (Core.read_state!(c, run.job).pending_runs || [])
+
+    case Core.claim_finish!(c, run) do
+      {:ignored, why} ->
+        Core.report(c, Error.other("run #{run.id} of #{run.job} #{why}; ignored"), "recording #{run.job}")
+        []
+
+      {:ok, _late} when not evaluate? ->
+        # Stored unjudged on purpose: a check must not evaluate it as one
+        # whose evaluation was lost.
+        Core.release_run(c, run.job, run.id)
+        []
+
+      {:ok, late} ->
+        if late and run.status != "ok",
+          do: [],
+          else: Core.finish_run(c, definition, run, Core.now(c), tracked and not late)
     end
   end
 end

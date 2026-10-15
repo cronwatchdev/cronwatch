@@ -318,3 +318,23 @@ async fn a_pending_run_the_store_no_longer_has_is_let_go_and_one_stored_unjudged
     k.check().await;
     assert!(k.types().is_empty());
 }
+
+#[tokio::test]
+async fn a_finished_import_retries_after_its_pending_marker_write_fails() {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    k.cw.job("imported", JobOptions::new()).unwrap();
+    let mut run = Run::new("external", "imported", RunStatus::Failed, T0);
+    run.finished_at = Some(T0);
+    run.duration_ms = Some(0);
+    run.error = Some("disk full".into());
+    store.breaks(&["compare_and_set_state"]);
+    assert!(k.cw.record_run(run.clone(), RecordOptions::new()).await.is_err());
+    assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Running);
+    store.mends(&[]);
+    k.cw.record_run(run.clone(), RecordOptions::new()).await.unwrap();
+    k.cw.record_run(run.clone(), RecordOptions::new()).await.unwrap();
+    assert_eq!(k.types(), ["failed"]);
+    assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Failed);
+    assert_eq!(state(&store.inner, "imported").await.pending_runs, None);
+}

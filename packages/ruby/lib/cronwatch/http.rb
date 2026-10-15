@@ -55,16 +55,21 @@ module Cronwatch
         # name lookup: it can be interrupted from Ruby 3.3. On Ruby 3.2 a lookup
         # that hangs is cut off only by the client's channel deadline.
         http.open_timeout = HTTP.remaining(deadline)
-        http.start do |conn|
-          remaining = HTTP.remaining(deadline)
-          conn.read_timeout = remaining
-          conn.write_timeout = remaining
-          conn.request(request) do |response|
-            status = response.code.to_i
-            # Returning from inside the block leaves the rest unread; the connection closes after.
-            return Response.new(status: status, body: "") if status >= 200 && status < 300
+        # Net::HTTP's read and write timeouts restart for each socket operation.
+        # Bound the entire exchange too, including a status line or headers
+        # arriving one byte at a time. The connection is private to this call.
+        Timeout.timeout(HTTP.remaining(deadline), TimeoutError, "The operation was aborted due to timeout") do
+          http.start do |conn|
+            remaining = HTTP.remaining(deadline)
+            conn.read_timeout = remaining
+            conn.write_timeout = remaining
+            conn.request(request) do |response|
+              status = response.code.to_i
+              # Returning from inside the block leaves the rest unread; the connection closes after.
+              return Response.new(status: status, body: "") if status >= 200 && status < 300
 
-            return Response.new(status: status, body: read_body(conn, response, deadline))
+              return Response.new(status: status, body: read_body(conn, response, deadline))
+            end
           end
         end
       rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout

@@ -657,3 +657,37 @@ test("pg_cron against a real pg_cron: a role that may not read cron settings nev
     await admin.end();
   }
 });
+
+
+test("pg_cron retries failed writes after advancing its cursor and keeps historical retries quiet", async () => {
+  const c = clock();
+  const cron = fakeCron();
+  cron.jobs.push(job(1, "imported", "0 * * * *"));
+  const historical = cron.add(1, "failed", T0 - HOUR, T0 - HOUR + 1000, "old failure");
+  cron.add(1, "succeeded", T0 - MIN, T0 - MIN + 1000);
+  const store = memory();
+  const insert = store.insertRun.bind(store);
+  const broken = new Set([`pgcron:${historical.runid}`]);
+  store.insertRun = async (run) => {
+    if (broken.has(run.id)) throw new Error("insert unavailable");
+    return insert(run);
+  };
+  const sent = capture();
+  const cw = cronwatch({ store, sources: [pgCron(cron.db)], now: c.now, alerts: [sent], onError: () => {} });
+  await cw.check();
+  assert.equal(await cw.getRun(`pgcron:${historical.runid}`), null);
+  broken.clear();
+  await cw.check();
+  assert.equal((await cw.getRun(`pgcron:${historical.runid}`))!.status, "failed");
+  assert.deepEqual(sent.types(), []);
+
+  const failed = cron.add(1, "failed", c.now(), c.now(), "new failure");
+  broken.add(`pgcron:${failed.runid}`);
+  await cw.check();
+  assert.equal(await cw.getRun(`pgcron:${failed.runid}`), null);
+  broken.clear();
+  await cw.check();
+  await cw.check();
+  assert.equal((await cw.getRun(`pgcron:${failed.runid}`))!.status, "failed");
+  assert.deepEqual(sent.types(), ["failed"]);
+});

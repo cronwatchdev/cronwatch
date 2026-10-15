@@ -290,6 +290,35 @@ defmodule Cronwatch.OutboxTest do
     assert Capture.types(alerts) == ["failed"]
   end
 
+  test "a finished import retries after its pending marker write fails" do
+    shared = Wrap.memory(shared_memory())
+    refuse = :atomics.new(1, [])
+    store = Wrap.spec(inner: shared, refuse_cas_when: fn -> :atomics.get(refuse, 1) == 1 end)
+    %{cw: cw, alerts: alerts} = make(store: store)
+    Cronwatch.job!("imported", instance: cw)
+
+    run = %Cronwatch.Run{
+      id: "external",
+      job: "imported",
+      status: "failed",
+      started_at: @t0,
+      finished_at: @t0,
+      duration_ms: 0,
+      error: "disk full",
+      trigger: "x"
+    }
+
+    :atomics.put(refuse, 1, 1)
+    assert {:error, _} = Cronwatch.record_run(run, instance: cw)
+    assert Cronwatch.get_run!(run.id, instance: cw).status == "running"
+    :atomics.put(refuse, 1, 0)
+    Cronwatch.record_run!(run, instance: cw)
+    Cronwatch.record_run!(run, instance: cw)
+    assert Capture.types(alerts) == ["failed"]
+    assert Cronwatch.get_run!(run.id, instance: cw).status == "failed"
+    assert state(shared, "imported").pending_runs == nil
+  end
+
   test "a pending run the store no longer has is let go, and a run stored unjudged on purpose is not evaluated" do
     clock = Clock.new()
     shared = Wrap.memory(shared_memory())
