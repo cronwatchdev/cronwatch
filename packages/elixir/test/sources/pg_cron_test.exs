@@ -140,8 +140,10 @@ defmodule Cronwatch.Sources.PgCronTest do
   alias Cronwatch.Test.Clock
   alias Cronwatch.Test.Conformance
   alias Cronwatch.Test.FakeCron
+  alias Cronwatch.Test.More
   alias Cronwatch.Test.Repo
   alias Cronwatch.Test.Stores
+  alias Cronwatch.Test.Wrap
 
   @t0 Clock.t0()
   @min 60_000
@@ -182,11 +184,11 @@ defmodule Cronwatch.Sources.PgCronTest do
     for historical <- [false, true] do
       cron = FakeCron.new()
       FakeCron.job(cron, 1, "nightly", "0 * * * *")
-      shared = Cronwatch.Test.Wrap.memory(Cronwatch.Test.More.shared_memory())
+      shared = Wrap.memory(More.shared_memory())
       refuse = :atomics.new(1, [])
 
       store =
-        Cronwatch.Test.Wrap.spec(
+        Wrap.spec(
           inner: shared,
           before: %{insert_run: fn -> if :atomics.get(refuse, 1) == 1, do: raise("store down") end}
         )
