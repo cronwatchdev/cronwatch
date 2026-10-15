@@ -58,22 +58,30 @@ module Cronwatch
         # Net::HTTP's read and write timeouts restart for each socket operation.
         # Bound the entire exchange too, including a status line or headers
         # arriving one byte at a time. The connection is private to this call.
+        answer = nil
         Timeout.timeout(HTTP.remaining(deadline), TimeoutError, "The operation was aborted due to timeout") do
-          http.start do |conn|
-            remaining = HTTP.remaining(deadline)
-            conn.read_timeout = remaining
-            conn.write_timeout = remaining
-            conn.request(request) do |response|
-              status = response.code.to_i
-              # Returning from inside the block leaves the rest unread; the connection closes after.
-              return Response.new(status: status, body: "") if status >= 200 && status < 300
+          http.start
+          remaining = HTTP.remaining(deadline)
+          http.read_timeout = remaining
+          http.write_timeout = remaining
+          http.request(request) do |response|
+            status = response.code.to_i
+            answer = Response.new(status: status, body: "".b)
+            # Returning from inside the block leaves the rest unread; the connection closes after.
+            return answer if status >= 200 && status < 300
 
-              return Response.new(status: status, body: read_body(conn, response, deadline))
-            end
+            read_body(http, response, deadline, answer.body)
+            return answer
           end
         end
-      rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout
+      rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, TimeoutError
+        return answer if answer
+
         raise TimeoutError
+      ensure
+        # Timeout has cancelled its timer before this cleanup runs. A timeout
+        # during close must not replace an answer or interrupt socket cleanup.
+        http.finish if http&.started?
       end
 
       # A connection that gives up after ten seconds, as the SDK's requests do.
@@ -90,8 +98,7 @@ module Cronwatch
 
       # The body, read in chunks until it ends or MAX_BODY bytes have come,
       # whichever is first; what had come when the deadline passes first.
-      def read_body(conn, response, deadline)
-        body = "".b
+      def read_body(conn, response, deadline, body)
         conn.read_timeout = HTTP.remaining(deadline)
         response.read_body do |chunk|
           raise TimeoutError if HTTP.monotonic >= deadline
