@@ -1,5 +1,10 @@
 # Release Notes for CronWatch
 
+## 0.14.3 - 2026-10-24
+
+### Changed
+- Updated to the library's 0.14.3.
+
 ## 0.14.2 - 2026-10-15
 
 ### Fixed

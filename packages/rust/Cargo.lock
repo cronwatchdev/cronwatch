@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "axum",
  "bytes",
@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch-apalis"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "apalis",
  "apalis-core",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch-example-crontab"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "cronwatch",
  "cronwatch-sqlx",
@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch-sqlx"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "axum",
  "cronwatch",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch-tokio-cron-scheduler"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "cronwatch-webserver"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "axum",
  "cronwatch",
