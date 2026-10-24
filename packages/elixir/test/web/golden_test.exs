@@ -42,7 +42,7 @@ defmodule Cronwatch.Web.GoldenTest do
     golden = JS.parse!(File.read!(@golden))
     assert Object.get(golden, "t0") == @t0, "golden.json's t0"
     captures = Object.get(golden, "captures")
-    assert length(captures) == 98, "golden.json's captures"
+    assert length(captures) == 105, "golden.json's captures"
 
     Enum.map(captures, fn c ->
       %{

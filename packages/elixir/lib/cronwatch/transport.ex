@@ -47,6 +47,13 @@ defmodule Cronwatch.Transport do
   @typedoc "A transport as given: a module, `{module, opts}`, or nil for the default."
   @type spec :: module() | {module(), term()} | nil
 
+  @doc """
+  Sends the request and answers `{:ok, response}` whatever the status, or
+  `{:error, reason}` when there was no answer. A body given as a function,
+  and `close`, are called only in the process that called this, which may
+  keep what they need in its own process dictionary (the default transport
+  does).
+  """
   @callback post(opts :: term(), Request.t()) :: {:ok, Response.t()} | {:error, term()}
 
   @doc false

@@ -4,7 +4,8 @@ defmodule Cronwatch.Alerts.HardeningTest do
   hardening tests): a redirect refused by every channel, one deadline for
   the whole request, the answer read to 1 MiB at most, URLs and headers
   refused without quoting them, only the origin in an error, TLS verified,
-  a secret straddling the cut, and a cut body keeping its lone surrogate.
+  a secret straddling the cut, Slack's cut keeping whole escapes and
+  characters, and Discord's cut body keeping its lone surrogate.
   Not async: one test shortens the POST deadline for the whole package.
   """
   use ExUnit.Case, async: false
@@ -314,19 +315,28 @@ defmodule Cronwatch.Alerts.HardeningTest do
     assert String.starts_with?(cut, String.duplicate("y", 10) <> "[redacted]")
   end
 
+  test "Slack cuts its escaped text without splitting an entity or a surrogate pair" do
+    rec = Rec.start()
+    slack = {Slack, webhook_url: "https://hooks.slack.example/T/B/secret", transport: Rec.spec(rec)}
+    a = %{sample() | message: String.duplicate("a", 2897) <> "<<<", triage: String.duplicate("b", 2989) <> "😀<"}
+    assert send!(slack, a) == :ok
+    [%{body: body}] = Rec.taken(rec)
+    {:ok, payload} = JS.parse(body)
+
+    [_, code, triage] =
+      for block <- JS.Object.get(payload, "blocks"), do: block |> JS.Object.get("text") |> JS.Object.get("text")
+
+    assert code == "```" <> String.duplicate("a", 2897) <> "```"
+    assert triage == "_Triage:_ " <> String.duplicate("b", 2989)
+
+    assert send!(slack, %{a | message: String.duplicate("a", 2899) <> "😀 and on", triage: nil}) == :ok
+    %{body: body} = List.last(Rec.taken(rec))
+    assert body =~ String.duplicate("a", 2899) <> "```"
+  end
+
   test "a JSON body cut through a surrogate pair keeps the lone half" do
     rec = Rec.start()
-    a = %{sample() | message: String.duplicate("a", 2899) <> "😀 and on", triage: String.duplicate("b", 2989) <> "😀"}
-
-    assert send!(
-             {Slack, webhook_url: "https://hooks.slack.example/T/B/secret", transport: Rec.spec(rec)},
-             a
-           ) == :ok
-
-    [%{body: body}] = Rec.taken(rec)
-    assert body =~ String.duplicate("a", 2899) <> "\\ud83d```"
-    assert body =~ String.duplicate("b", 2989) <> "\\ud83d\""
-    assert {:ok, %JS.Object{}} = JS.parse(body)
+    a = %{sample() | message: "c", triage: nil}
 
     Rec.answer_with(rec, 204, "")
     # The message's block and a full triage do not both fit in Discord's
@@ -377,6 +387,22 @@ defmodule Cronwatch.Alerts.HardeningTest do
       refute shown =~ "proxy-pass", shown
       refute shown =~ "tls-pass", shown
     end
+  end
+
+  test "the default transport's body is read in the process that posted, and closed from any" do
+    server = HTTPServer.start(fn _ -> {200, [], "answer"} end)
+    {:ok, res} = HTTP.post([], %Request{url: server.url <> "/x", body: "{}"})
+    assert Task.await(Task.async(res.body)) == {:error, :other_process}
+    assert res.body.() == {:ok, "answer"}
+    assert res.body.() == :done
+
+    drip = HTTPServer.start(fn _ -> {:drip, 200, [], List.duplicate("x", 100), 50} end)
+    {:ok, res} = HTTP.post([], %Request{url: drip.url <> "/x", body: "{}"})
+    Task.await(Task.async(res.close))
+    started = System.monotonic_time(:millisecond)
+    drain = fn drain -> if match?({:ok, _}, res.body.()), do: drain.(drain), else: :ok end
+    drain.(drain)
+    assert System.monotonic_time(:millisecond) - started < 1_000, "the socket was closed"
   end
 
   test "a transport given as an option is checked" do

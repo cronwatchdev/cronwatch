@@ -103,4 +103,15 @@ defmodule Cronwatch.Alerts.PostTest do
     refute Keyword.has_key?(HTTP.ssl("127.0.0.1", []), :server_name_indication)
     refute Keyword.has_key?(HTTP.ssl("[::1]", []), :server_name_indication)
   end
+
+  test "a system without trusted roots is an error that names cacerts:" do
+    for loader <- [fn -> :erlang.error({:failed_load_cacerts, :enoent}) end, fn -> [] end] do
+      assert {:error, message} = HTTP.read_system_cacerts(loader)
+      assert message =~ "the system's trusted root certificates could not be read"
+      assert message =~ "pass cacerts: to Cronwatch.Transport.HTTP"
+    end
+
+    assert HTTP.read_system_cacerts(fn -> [<<1>>] end) == {:ok, [<<1>>]}
+    assert HTTP.cacerts(cacerts: [<<2>>]) == {:ok, [<<2>>]}
+  end
 end

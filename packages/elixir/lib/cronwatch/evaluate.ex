@@ -937,6 +937,19 @@ defmodule Cronwatch.Evaluate do
   end
 
   @doc """
+  Whether a finished import was left as its placeholder (the SDK's
+  `isStranded`): `record_run/2` writes one as running, with `finished_at`
+  set to when it was written, and the finish that follows never landed (the
+  importer stopped, or a store write failed and it was not retried). A
+  check closes one `send_lease_ms/0` after it was written, as it closes a
+  stuck run.
+  """
+  @spec stranded?(Run.t(), number()) :: boolean()
+  def stranded?(%Run{} = run, now) do
+    run.status == "running" and is_number(run.finished_at) and now - run.finished_at > @send_lease_ms
+  end
+
+  @doc """
   `next` with nothing opened that was not open in `previous`: while a job is
   silenced, conditions may close but none may open.
   """

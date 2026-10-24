@@ -19,7 +19,9 @@ defmodule Cronwatch.Transport.HTTP do
       compressed answer cannot grow in memory.
     * TLS is always verified: `verify: :verify_peer` against the system's
       roots (`:public_key.cacerts_get/0`), the host checked as HTTPS checks
-      it. A host name is sent as SNI and checked against the certificate;
+      it. A system without them (a slim or distroless image) fails each
+      https request with an error that says so and names `cacerts:`, found
+      once and remembered. A host name is sent as SNI and checked against the certificate;
       an IP address is never sent as SNI (the protocol has no place for
       one) and the certificate is checked against the address, because
       `server_name_indication: :disable` would turn `:ssl`'s hostname check
@@ -28,7 +30,13 @@ defmodule Cronwatch.Transport.HTTP do
       read, so what the URL names and what is reached cannot differ.
 
   `Post` holds the whole request to its deadline, killing the process that
-  runs it, and the socket goes with that process. `timeout:` (30 seconds by
+  runs it, and the socket goes with that process. The answer's `body` and
+  `close` keep the connection's state in the dictionary of the process
+  that called `post/2`, so they are called in that process, as
+  `Cronwatch.Transport` asks: a `body` called from any other process answers
+  `{:error, :other_process}`, and a `close` from one closes the socket. A
+  transport of the app's own that wraps this one reads the body where it
+  called it. `timeout:` (30 seconds by
   default) is a backstop for a transport called outside `Post`.
 
   Options: `cacerts:` (DER certificates to trust in place of the system's,
@@ -73,9 +81,20 @@ defmodule Cronwatch.Transport.HTTP do
           {:error, reason}
 
         _ ->
+          # The connection's state is kept in this process's dictionary, so
+          # the body is read here, as Cronwatch.Transport asks; called from
+          # another process it fails rather than answer an empty body, and
+          # a close from there closes the socket all the same.
           key = {__MODULE__, make_ref()}
+          owner = self()
           Process.put(key, state)
-          {:ok, %Response{status: status, body: fn -> next(key) end, close: fn -> finish(key) end}}
+
+          {:ok,
+           %Response{
+             status: status,
+             body: fn -> if self() == owner, do: next(key), else: {:error, :other_process} end,
+             close: fn -> if self() == owner, do: finish(key), else: close(sock) end
+           }}
       end
     end
   end
@@ -113,9 +132,64 @@ defmodule Cronwatch.Transport.HTTP do
   defp connect(%URL{} = u, opts, deadline) do
     port = u.port || if(u.scheme == "https", do: 443, else: 80)
 
-    with {:ok, addresses} <- addresses(u.host, deadline) do
+    with {:ok, opts} <- with_cacerts(u, opts),
+         {:ok, addresses} <- addresses(u.host, deadline) do
       try_addresses(addresses, u, port, opts, deadline, :nxdomain)
     end
+  end
+
+  # The roots an https request is verified against, found before anything
+  # is resolved or connected, so a system without any fails at once.
+  defp with_cacerts(%URL{scheme: "https"}, opts) do
+    with {:ok, certs} <- cacerts(opts), do: {:ok, Keyword.put(opts, :cacerts, certs)}
+  end
+
+  defp with_cacerts(_u, opts), do: {:ok, opts}
+
+  @doc false
+  # The roots to trust: those given as `cacerts:`, else the system's.
+  def cacerts(opts) do
+    case Keyword.get(opts, :cacerts) do
+      nil -> system_cacerts()
+      certs -> {:ok, certs}
+    end
+  end
+
+  # :public_key keeps the system's roots once it has read them; a system
+  # with none (a slim or distroless image) is remembered too, so each
+  # request after the first fails at once without reading the disk again.
+  defp system_cacerts do
+    case :persistent_term.get({__MODULE__, :no_cacerts}, nil) do
+      nil ->
+        case read_system_cacerts(&:public_key.cacerts_get/0) do
+          {:ok, certs} ->
+            {:ok, certs}
+
+          {:error, message} ->
+            :persistent_term.put({__MODULE__, :no_cacerts}, message)
+            {:error, message}
+        end
+
+      message ->
+        {:error, message}
+    end
+  end
+
+  @doc false
+  # The system's roots as `loader` reads them, or an error naming the
+  # option that does without them.
+  def read_system_cacerts(loader) do
+    case loader.() do
+      [_ | _] = certs -> {:ok, certs}
+      _ -> {:error, no_cacerts("it has none")}
+    end
+  catch
+    _kind, reason -> {:error, no_cacerts(inspect(reason))}
+  end
+
+  defp no_cacerts(why) do
+    "the system's trusted root certificates could not be read (#{why}); install them " <>
+      "(the ca-certificates package) or pass cacerts: to Cronwatch.Transport.HTTP"
   end
 
   defp addresses("[" <> v6, _deadline) do
@@ -199,9 +273,9 @@ defmodule Cronwatch.Transport.HTTP do
     ip? = String.starts_with?(host, "[") or match?({:ok, _}, :inet.parse_ipv4strict_address(String.to_charlist(host)))
 
     cacerts =
-      case Keyword.get(opts, :cacerts) do
-        nil -> :public_key.cacerts_get()
-        certs -> certs
+      case cacerts(opts) do
+        {:ok, certs} -> certs
+        {:error, message} -> raise ArgumentError, message
       end
 
     # An IP address is not sent as SNI, and :ssl checks the certificate

@@ -73,7 +73,9 @@ defmodule Cronwatch do
   def child_spec(opts) do
     %{
       id: Keyword.get(opts, :name, Cronwatch),
-      start: {Cronwatch.Supervisor, :start_link, [opts]},
+      # Wrapped so a supervisor's report, which quotes the start call, does
+      # not print the credentials the options hold.
+      start: {Cronwatch.Supervisor, :start_link, [%Cronwatch.Supervisor.Opts{opts: opts}]},
       type: :supervisor
     }
   end
@@ -333,6 +335,21 @@ defmodule Cronwatch do
   else is left alone.
   `evaluate: false` stores it without evaluating it. Answers the alerts it
   sent.
+
+  It refuses, before writing anything, a run whose `status` is not
+  `"running"`, `"ok"`, `"failed"`, or `"timeout"`, whose `started_at` is not
+  a finite number, whose `finished_at` or `duration_ms` is neither a finite
+  number nor nil, whose `error` or `output` is neither a string nor nil, or
+  whose `trigger` is not a string.
+
+  If a store write fails, retry with the same run and id. An evaluated run
+  is stored as provisionally running until its pending evaluation marker
+  and finish are written, with a `finished_at` of when it was stored, so a
+  concurrent check does not mark it stuck. One whose finish is still not
+  written five minutes later (the importer stopped, or never retried) is
+  closed by the next check as timed out, with an error saying so, and
+  alerts as a stuck run; a later retry that succeeds still recovers it.
+  Runs stored with `evaluate: false` are not evaluated by a retry.
   """
   @spec record_run(Run.t(), keyword()) :: {:ok, [Cronwatch.Alert.t()]} | {:error, Error.t()}
   def record_run(%Run{} = run, opts \\ []) do
