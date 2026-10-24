@@ -372,6 +372,36 @@ public class RoutesTests
     }
 
     [Fact]
+    public async Task Head_answers_the_pages_and_reads_a_get_answers_without_a_body_and_never_runs_the_check()
+    {
+        await using var w = new WebKit();
+        await w.Ok("nightly");
+        foreach (string path in new[] { "/", "/jobs/nightly", "/api", "/api/jobs", "/api/jobs/nightly" })
+        {
+            CronwatchResponse got = await w.Send("HEAD", "/cronwatch" + path, Hs(Auth));
+            CronwatchResponse get = await w.Get("/cronwatch" + path, Auth);
+            Status(path, got, 200);
+            Assert.Equal(0, got.Body.Length);
+            Assert.Equal(get.Header("content-type"), got.Header("content-type"));
+        }
+        string id = (await w.Cw.RunsAsync("nightly", 1))[0].Id;
+        Status("run", await w.Send("HEAD", "/cronwatch/api/runs/" + id, Hs(Auth)), 200);
+        CronwatchResponse missing = await w.Send("HEAD", "/cronwatch/jobs/missing", Hs(Auth));
+        Status("missing", missing, 404);
+        Assert.Equal(0, missing.Body.Length);
+        Status("signed out", await w.Send("HEAD", "/cronwatch/", []), 401);
+        // A check would find the hourly job missed and alert.
+        w.Cw.Job("hourly", new JobOptions { Schedule = "every 1h" });
+        await w.Ok("hourly");
+        w.Advance(3 * 3_600_000);
+        Assert.NotEqual(200, (await w.Send("HEAD", "/cronwatch/api/check", Hs(Auth))).Status);
+        Assert.NotEqual(200, (await w.Send("head", "/cronwatch/api/check", Hs(Auth))).Status);
+        Assert.Empty(w.M.Alerts.Types());
+        Status("a check", await w.Send("POST", "/cronwatch/api/check", Hs(Auth)), 200);
+        Assert.Equal(["missed"], w.M.Alerts.Types());
+    }
+
+    [Fact]
     public async Task Malformed_cookies_and_paths_are_answered()
     {
         await using var w = new WebKit();
@@ -767,7 +797,8 @@ public class RoutesTests
         await using (var w = new WebKit())
         {
             Status("a write to the shell", await w.Send("POST", "/cronwatch/sw.js", []), 401);
-            Status("HEAD elsewhere", await w.Send("HEAD", "/cronwatch/", Hs(Auth)), 404);
+            Status("HEAD elsewhere, as its GET", await w.Send("HEAD", "/cronwatch/", Hs(Auth)), 200);
+            Status("HEAD of a write", await w.Send("HEAD", "/cronwatch/check", Hs(Auth)), 404);
         }
         await using var open = new WebKit(new RoutesOptions { Token = DashboardToken.None });
         Assert.Null(open.Routes.Token());

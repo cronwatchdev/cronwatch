@@ -75,13 +75,13 @@ public sealed class SlackChannel : IChannel
         string url = ChannelShared.Link(_link, alert);
         string title = (Emoji.TryGetValue(alert.Type.Value, out string? emoji) ? emoji : "undefined")
             + " *" + Escape(alert.Title) + "*" + (url.Length == 0 ? "" : " (<" + LinkTarget(url) + "|open>)");
-        string body = Js.Head(CodeBlockSafe(Escape(alert.Message)), 2900);
+        string body = CutEscaped(CodeBlockSafe(Escape(alert.Message)), 2900);
         var blocks = new List<object?> { Section(title), Section("```" + body + "```") };
         // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
         string triage = ChannelShared.Triage(alert);
         if (triage.Length > 0)
         {
-            blocks.Add(Section(Js.Head("_Triage:_ " + Escape(triage), 3000)));
+            blocks.Add(Section(CutEscaped("_Triage:_ " + Escape(triage), 3000)));
         }
         var payload = new JsObject()
             // The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
@@ -108,6 +108,17 @@ public sealed class SlackChannel : IChannel
     /// <summary>Slack's three control characters. Escaping &lt; and &gt; also stops <c>&lt;!channel&gt;</c> and links.</summary>
     internal static string Escape(string text) =>
         text.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal).Replace(">", "&gt;", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Escaped text cut to at most <paramref name="max"/> units, splitting neither an entity
+    /// <see cref="Escape"/> wrote nor a surrogate pair.
+    /// </summary>
+    internal static string CutEscaped(string text, int max)
+    {
+        string kept = Post.Cut(text, max);
+        int amp = kept.LastIndexOf('&');
+        return amp != -1 && kept.IndexOf(';', amp) == -1 ? kept[..amp] : kept;
+    }
 
     /// <summary>
     /// A link's URL as Slack's <c>&lt;url|text&gt;</c> can hold it: <c>&lt;</c>, <c>&gt;</c>, and

@@ -19,6 +19,9 @@ public sealed partial class CronwatchClient
 
     internal const string ShutdownError = "Shutdown: the process stopped while the run was in progress";
 
+    /// <summary>The error a check gives an import whose finish never landed (<see cref="Evaluate.IsStranded"/>).</summary>
+    internal const string StrandedError = "Imported, but its finish was never written; marked as timed out";
+
     /// <summary>Runs open in this process, for the process-exit hook.</summary>
     private readonly ConcurrentDictionary<string, OpenRun> _open = new(StringComparer.Ordinal);
 
@@ -665,6 +668,17 @@ public sealed partial class CronwatchClient
         {
             throw CronwatchException.Invalid("recordRun: run ids cannot contain a NUL character (job " + JsonText.Quote(input.Job) + ")");
         }
+        // The fields evaluation reads that C#'s types still let be wrong: a status is any string,
+        // and a trigger may be a null given past the compiler.
+        string where = "job " + JsonText.Quote(input.Job) + ", run " + JsonText.Quote(input.Id);
+        if (input.Status != RunStatus.Running && input.Status != RunStatus.Ok && input.Status != RunStatus.Failed && input.Status != RunStatus.Timeout)
+        {
+            throw CronwatchException.Invalid("recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" (" + where + ")");
+        }
+        if (input.Trigger is null)
+        {
+            throw CronwatchException.Invalid("recordRun: trigger must be a string (" + where + ")");
+        }
         // Refused as a job's Metric refuses them: a store keeps NaN and infinity as null.
         foreach (var metric in input.Metrics)
         {
@@ -695,8 +709,10 @@ public sealed partial class CronwatchClient
         {
             return await RecordOverAsync(def.Stored, stored, run, evaluate).ConfigureAwait(false);
         }
-        // Keep an evaluated import retryable until its pending marker is durable.
-        Run inserted = evaluate ? run with { Status = RunStatus.Running } : run;
+        // Keep an evaluated import retryable until its pending marker is durable. The placeholder's
+        // FinishedAt is when it was written, so a check can tell one whose finish never landed
+        // (Evaluate.IsStranded); the finish writes the run's own.
+        Run inserted = evaluate ? run with { Status = RunStatus.Running, FinishedAt = Now() } : run;
         try
         {
             await CallAsync(() => _store.InsertRunAsync(inserted)).ConfigureAwait(false);

@@ -246,4 +246,17 @@ public class ChannelTests
         Assert.True(cut.Length <= 4096);
         Assert.DoesNotContain(cut.Select((c, i) => (c, i)), p => char.IsHighSurrogate(p.c) && (p.i + 1 == cut.Length || !char.IsLowSurrogate(cut[p.i + 1])));
     }
+
+    [Fact]
+    public async Task Slack_cuts_its_escaped_text_without_splitting_an_entity_or_a_surrogate_pair()
+    {
+        var rec = new Recorder();
+        var channel = new SlackChannel(new SlackOptions { WebhookUrl = "https://hooks.slack.example/T/B/x", Transport = rec });
+        Alert alert = ChannelsConformanceTests.Sample() with { Message = new string('a', 2897) + "<<<", Triage = new string('b', 2989) + "\U0001F600<" };
+        rec.AnswerWith(200, "ok");
+        await channel.SendAsync(alert, new ChannelContext(_ => { }), CancellationToken.None);
+        var blocks = Fixtures.List(Json.ParseObject(Recorder.Body(Assert.Single(rec.Taken()))), "blocks");
+        Assert.Equal("```" + new string('a', 2897) + "```", Fixtures.Object((JsObject)blocks[1]!, "text").Get("text"));
+        Assert.Equal("_Triage:_ " + new string('b', 2989), Fixtures.Object((JsObject)blocks[2]!, "text").Get("text"));
+    }
 }

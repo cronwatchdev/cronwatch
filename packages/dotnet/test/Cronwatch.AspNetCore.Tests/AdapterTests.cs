@@ -119,6 +119,142 @@ public class AdapterTests
     }
 
     /// <summary>
+    /// A scheme that signs in whoever <c>x-user</c> names, in the role <c>x-role</c> names; its
+    /// challenge is an empty 401 and its forbid an empty 403.
+    /// </summary>
+    private sealed class ByHeader(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
+        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    {
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            string? user = Request.Headers["x-user"];
+            if (string.IsNullOrEmpty(user))
+            {
+                return Task.FromResult(AuthenticateResult.NoResult());
+            }
+            var identity = new System.Security.Claims.ClaimsIdentity(Scheme.Name);
+            identity.AddClaim(new(System.Security.Claims.ClaimTypes.Name, user));
+            if (Request.Headers["x-role"] is { Count: > 0 } role)
+            {
+                identity.AddClaim(new(System.Security.Claims.ClaimTypes.Role, role.ToString()));
+            }
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new System.Security.Claims.ClaimsPrincipal(identity), Scheme.Name)));
+        }
+    }
+
+    /// <summary>A signed-in fallback policy, and an <c>Admins</c> policy of the app's own.</summary>
+    private static void WithAdmins(IServiceCollection s)
+    {
+        s.AddAuthentication("header").AddScheme<AuthenticationSchemeOptions, ByHeader>("header", null);
+        s.AddAuthorizationBuilder()
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
+            .AddPolicy("Admins", p => p.RequireRole("admin"));
+    }
+
+    private static HttpRequestMessage As(HttpMethod method, string path, string? user, string? role = null, string? bearer = null)
+    {
+        var m = new HttpRequestMessage(method, path);
+        if (user != null)
+        {
+            m.Headers.Add("x-user", user);
+        }
+        if (role != null)
+        {
+            m.Headers.Add("x-role", role);
+        }
+        if (bearer != null)
+        {
+            m.Headers.Add("authorization", "Bearer " + bearer);
+        }
+        return m;
+    }
+
+    /// <summary>
+    /// A policy the app puts on a dashboard with a token, or on a group around it, is enforced
+    /// ahead of the token, where an app with only a fallback policy still reaches the dashboard's
+    /// own sign-in; an open dashboard takes the app's policies too.
+    /// </summary>
+    [Fact]
+    public async Task A_dashboard_with_a_token_keeps_an_authorization_policy_the_app_puts_on_it_or_on_a_group_around_it()
+    {
+        await using CronwatchClient cw = Client();
+        await using WebApplication app = App(cw, WithAdmins);
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapCronwatch("/admins", new RoutesOptions { Token = "tok" }).RequireAuthorization("Admins");
+        app.MapGroup("/ops").RequireAuthorization().MapCronwatch("/cronwatch", new RoutesOptions { Token = "tok" });
+        app.MapCronwatch("/cronwatch", new RoutesOptions { Token = "tok" });
+        app.MapCronwatch("/open", new RoutesOptions { Token = DashboardToken.None }).RequireAuthorization("Admins");
+        await app.StartAsync();
+        HttpClient http = app.GetTestClient();
+
+        // The app's policy on the dashboard: its challenge, then its forbid, even with the token.
+        HttpResponseMessage challenged = await http.SendAsync(As(HttpMethod.Get, "/admins/api/jobs", null, bearer: "tok"));
+        Assert.Equal(401, (int)challenged.StatusCode);
+        Assert.Equal("", await challenged.Content.ReadAsStringAsync());
+        Assert.Equal(403, (int)(await http.SendAsync(As(HttpMethod.Get, "/admins/api/jobs", "bob", bearer: "tok"))).StatusCode);
+        Assert.Equal(403, (int)(await http.SendAsync(As(HttpMethod.Get, "/admins/", "bob"))).StatusCode);
+        // Past it, the token is still asked for.
+        HttpResponseMessage noToken = await http.SendAsync(As(HttpMethod.Get, "/admins/api/jobs", "ann", "admin"));
+        Assert.Equal(401, (int)noToken.StatusCode);
+        Assert.Equal("{\"ok\":false,\"error\":\"Unauthorized\"}", await noToken.Content.ReadAsStringAsync());
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Get, "/admins/api/jobs", "ann", "admin", "tok"))).StatusCode);
+
+        // A group's policy around the dashboard.
+        Assert.Equal(401, (int)(await http.SendAsync(As(HttpMethod.Get, "/ops/cronwatch/api/jobs", null, bearer: "tok"))).StatusCode);
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Get, "/ops/cronwatch/api/jobs", "bob", bearer: "tok"))).StatusCode);
+
+        // With the fallback policy alone, the dashboard's own sign-in answers anyone.
+        HttpResponseMessage signIn = await http.SendAsync(As(HttpMethod.Get, "/cronwatch/", null));
+        Assert.Equal(401, (int)signIn.StatusCode);
+        Assert.Contains("<form", await signIn.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Get, "/cronwatch/api/jobs", null, bearer: "tok"))).StatusCode);
+
+        // An open dashboard takes the default policy and the app's own.
+        Assert.Equal(401, (int)(await http.SendAsync(As(HttpMethod.Get, "/open/api/jobs", null))).StatusCode);
+        Assert.Equal(403, (int)(await http.SendAsync(As(HttpMethod.Get, "/open/api/jobs", "bob"))).StatusCode);
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Get, "/open/api/jobs", "ann", "admin"))).StatusCode);
+        await app.StopAsync();
+    }
+
+    /// <summary>
+    /// A policy the app puts on a job's handler with a secret, or on a group around it, is enforced
+    /// ahead of the secret; with the fallback policy alone the bearer is the guard.
+    /// </summary>
+    [Fact]
+    public async Task A_handler_with_a_secret_keeps_an_authorization_policy_the_app_puts_on_it_or_on_a_group_around_it()
+    {
+        await using var cw = new CronwatchClient(new CronwatchOptions { ProcessExitHook = false, Alerts = [], CronSecret = "letmein-test" });
+        Job admins = cw.Job("admins");
+        Job grouped = cw.Job("grouped");
+        Job plain = cw.Job("plain");
+        await using WebApplication app = App(cw, WithAdmins);
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapCronwatchHandler("/cron/admins", admins, (job, http, ct) => Task.CompletedTask).RequireAuthorization("Admins");
+        app.MapGroup("/ops").RequireAuthorization().MapCronwatchHandler("/cron/grouped", grouped, (job, http, ct) => Task.CompletedTask);
+        app.MapCronwatchHandler("/cron/plain", plain, (job, http, ct) => Task.CompletedTask);
+        await app.StartAsync();
+        HttpClient http = app.GetTestClient();
+        const string Secret = "letmein-test";
+
+        Assert.Equal(401, (int)(await http.SendAsync(As(HttpMethod.Post, "/cron/admins", null, bearer: Secret))).StatusCode);
+        Assert.Equal(403, (int)(await http.SendAsync(As(HttpMethod.Post, "/cron/admins", "bob", bearer: Secret))).StatusCode);
+        Assert.Empty(await cw.RunsAsync("admins"));
+        Assert.Equal(401, (int)(await http.SendAsync(As(HttpMethod.Post, "/cron/admins", "ann", "admin"))).StatusCode);
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Post, "/cron/admins", "ann", "admin", Secret))).StatusCode);
+
+        Assert.Equal(401, (int)(await http.SendAsync(As(HttpMethod.Post, "/ops/cron/grouped", null, bearer: Secret))).StatusCode);
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Post, "/ops/cron/grouped", "bob", bearer: Secret))).StatusCode);
+
+        Assert.Equal(200, (int)(await http.SendAsync(As(HttpMethod.Post, "/cron/plain", null, bearer: Secret))).StatusCode);
+        Assert.Single(await cw.RunsAsync("admins"));
+        Assert.Single(await cw.RunsAsync("grouped"));
+        Assert.Single(await cw.RunsAsync("plain"));
+        await app.StopAsync();
+    }
+
+    /// <summary>
     /// The middleware is no endpoint, so only the app's authorization running ahead of it guards an
     /// open dashboard: after <c>UseAuthorization</c> the fallback policy applies to it.
     /// </summary>

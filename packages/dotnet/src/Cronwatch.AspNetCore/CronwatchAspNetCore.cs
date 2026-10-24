@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Cronwatch;
 using Cronwatch.Web;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
@@ -29,13 +30,17 @@ public static class CronwatchAspNetCoreExtensions
     /// <summary>
     /// Maps the dashboard at <paramref name="pattern"/> and everything beneath it, for every
     /// method. The endpoints skip antiforgery (the dashboard has its own cross-site check) and are
-    /// left out of OpenAPI documents. While the dashboard has a token they allow anonymous
-    /// requests, so an app whose fallback policy requires a signed-in user still reaches the
-    /// dashboard's own sign-in; an open dashboard (<see cref="DashboardToken.None"/>) requires
-    /// authorization (<c>RequireAuthorization()</c>, the app's default policy, a signed-in user
-    /// unless the app changed it), so it is never open to anyone by accident. An app that truly
-    /// wants it open chains <c>.AllowAnonymous()</c> on the answer. Inside a route group the base
-    /// path is the group's.
+    /// left out of OpenAPI documents. While the dashboard has a token, the token is its guard: the
+    /// app's fallback policy is set aside for it (the endpoints allow anonymous requests), so an
+    /// app whose fallback policy requires a signed-in user still reaches the dashboard's own
+    /// sign-in. An authorization policy the app puts on the dashboard itself
+    /// (<c>.RequireAuthorization("Admins")</c> on the answer) or on a route group around it is
+    /// kept and enforced ahead of the token, since the endpoints allow anonymous requests only when
+    /// nothing asks for authorization once every convention is in. An open dashboard
+    /// (<see cref="DashboardToken.None"/>) requires authorization (<c>RequireAuthorization()</c>,
+    /// the app's default policy, a signed-in user unless the app changed it), so it is never open
+    /// to anyone by accident. An app that truly wants it open chains <c>.AllowAnonymous()</c> on the
+    /// answer. Inside a route group the base path is the group's.
     /// </summary>
     /// <param name="endpoints">The app.</param>
     /// <param name="pattern">Where the dashboard is. Default <c>/cronwatch</c>.</param>
@@ -69,9 +74,29 @@ public static class CronwatchAspNetCoreExtensions
         }
         else
         {
-            group.AllowAnonymous();
+            ((IEndpointConventionBuilder)group).Finally(AllowAnonymousUnlessAuthorized);
         }
         return group;
+    }
+
+    /// <summary>
+    /// Allows anonymous requests to an endpoint guarded by its own token or secret, so the app's
+    /// fallback policy does not turn away the dashboard's sign-in or a platform cron's bearer, but
+    /// only when nothing on the endpoint asks for authorization: a policy the app added to it, or to
+    /// a group around it, is kept, since an <see cref="IAllowAnonymous"/> anywhere on an endpoint
+    /// would make the authorization middleware skip every policy. A finally convention, so it runs
+    /// once every other convention (the app's, and its groups') is in.
+    /// </summary>
+    private static void AllowAnonymousUnlessAuthorized(EndpointBuilder endpoint)
+    {
+        foreach (object item in endpoint.Metadata)
+        {
+            if (item is IAuthorizeData or AuthorizationPolicy or IAuthorizationRequirementData or IAllowAnonymous)
+            {
+                return;
+            }
+        }
+        endpoint.Metadata.Add(new AllowAnonymousAttribute());
     }
 
     /// <summary>
@@ -116,8 +141,11 @@ public static class CronwatchAspNetCoreExtensions
     /// secret runs <paramref name="fn"/> as a recorded run with the trigger <c>handler</c> (see
     /// <see cref="Handler"/>), with the request's <c>RequestAborted</c> linked into the run's token.
     /// The endpoint skips antiforgery and is left out of OpenAPI documents. While the handler has a
-    /// secret it allows anonymous requests, the bearer being its guard; a handler open to anyone
-    /// (<see cref="Handler.IsOpen"/>) takes the app's authorization policy.
+    /// secret, the bearer is its guard and the app's fallback policy is set aside for it (the
+    /// endpoint allows anonymous requests), unless the app puts an authorization policy on it or on
+    /// a route group around it, which is then kept and enforced ahead of the secret, as
+    /// <see cref="MapCronwatch(IEndpointRouteBuilder, string, RoutesOptions?)"/> does. A handler
+    /// open to anyone (<see cref="Handler.IsOpen"/>) takes the app's authorization policy.
     /// </summary>
     public static IEndpointConventionBuilder MapCronwatchHandler(
         this IEndpointRouteBuilder endpoints,
@@ -191,11 +219,12 @@ public static class CronwatchAspNetCoreExtensions
         IEndpointConventionBuilder built = endpoints.Map(pattern, context => ServeAsync(context, handler.HandleAsync, null));
         built.DisableAntiforgery();
         built.ExcludeFromDescription();
-        // Anonymous to the app's authorization only while the bearer is the guard: a handler open
-        // to anyone takes the app's policy, so it never opens a job the app's sign-in would refuse.
+        // Anonymous to the app's fallback policy only while the bearer is the guard, and only when
+        // the app asks for no policy of its own: a handler open to anyone takes the app's policy,
+        // so it never opens a job the app's sign-in would refuse.
         if (!handler.IsOpen)
         {
-            built.AllowAnonymous();
+            built.Finally(AllowAnonymousUnlessAuthorized);
         }
         return built;
     }

@@ -442,6 +442,19 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task RecordRun_refuses_fields_evaluation_cannot_read()
+    {
+        await using var m = Make();
+        m.Cw.Job("imported");
+        var run = new Run { Id = "r", Job = "imported", Status = RunStatus.Ok, StartedAt = 1, FinishedAt = 2, DurationMs = 1, Trigger = "source" };
+        var e = await Assert.ThrowsAsync<CronwatchException>(() => m.Cw.RecordRunAsync(run with { Status = "succeeded" }));
+        Assert.Equal("recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" (job \"imported\", run \"r\")", e.Message);
+        e = await Assert.ThrowsAsync<CronwatchException>(() => m.Cw.RecordRunAsync(run with { Trigger = null! }));
+        Assert.Equal("recordRun: trigger must be a string (job \"imported\", run \"r\")", e.Message);
+        Assert.Null(await m.Cw.GetRunAsync("r"));
+    }
+
+    [Fact]
     public async Task A_silence_ends_on_a_whole_millisecond_held_at_2_to_the_53_minus_1()
     {
         await using var m = Make();
