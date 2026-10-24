@@ -253,3 +253,22 @@ func TestAnEvaluatedImportWhoseFinishWriteFailsIsClosedByACheckAndALateSuccessRe
 	eq(t, "late success", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusOK)
 	sameList(t, "recovered", alertTypes(sent.List()), []string{"stuck", "recovered"})
 }
+
+func TestAnImportStillRunningIsLeftToTheJobsTimeoutNotClosedAsStranded(t *testing.T) {
+	clock := storetest.NewClock(T0)
+	shared := cronwatch.NewMemoryStore()
+	sent := &storetest.Capture{}
+	cw := cronwatch.MustNew(cronwatch.WithStore(shared), cronwatch.WithClock(clock.Now), cronwatch.WithAlerts(sent),
+		cronwatch.WithoutCronSecret(), cronwatch.WithErrorHandler(quiet))
+	cw.MustJob("long", cronwatch.Timeout("1h"))
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, cronwatch.Run{ID: "long-run", Job: "long", Status: cronwatch.StatusRunning, StartedAt: clock.Now(), Metrics: cronwatch.Metrics{}, Trigger: "source"}))
+	clock.Advance(sendLease + MIN)
+	checkNow(t, cw)
+	stored := must[*cronwatch.Run](t)(shared.GetRun(bg, "long-run"))
+	eq(t, "still running", stored.Status, cronwatch.StatusRunning)
+	eq(t, "no finish", stored.FinishedAt == nil, true)
+	clock.Advance(60 * MIN)
+	checkNow(t, cw)
+	eq(t, "timed out", must[*cronwatch.Run](t)(shared.GetRun(bg, "long-run")).Status, cronwatch.StatusTimeout)
+	sameList(t, "alerted", alertTypes(sent.List()), []string{"stuck"})
+}
