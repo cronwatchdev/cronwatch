@@ -49,8 +49,8 @@ func WithSecret(secret string) HandlerOption {
 func WithoutSecret() HandlerOption { return func(c *handlerConfig) { c.secret, c.open = "", true } }
 
 // Handler is the job as an http.Handler (the SDK's job.handler()). A
-// request must send `Authorization: Bearer <secret>` (compared in constant
-// time): the handler's WithSecret, else the client's cron secret. With no
+// request must send `Authorization: Bearer <secret>` (the scheme in any
+// case, the secret compared in constant time): the handler's WithSecret, else the client's cron secret. With no
 // secret at all it answers 503 and reports it once to the error handler as
 // "handler", unless the environment is development (see WithToken) or
 // WithoutSecret (or the client's WithoutCronSecret) lets anyone in; a
@@ -145,8 +145,9 @@ func (h *jobHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.secret != "" {
-		sent, _ := header(r, "Authorization")
-		if !constantTimeEqual(latin1(sent), "Bearer "+h.secret) {
+		// Read as the dashboard's routes read it: the scheme in any case.
+		sent, ok := bearer(r)
+		if !ok || !constantTimeEqual(sent, h.secret) {
 			handlerJSON(w, js.NewObject("ok", false, "error", "Unauthorized"), http.StatusUnauthorized)
 			return
 		}

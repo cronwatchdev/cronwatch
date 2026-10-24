@@ -129,13 +129,26 @@ func (w *Watch) saveAll() {
 			if !defined[name] {
 				continue // forgotten since
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
-			if _, err := w.cw.SyncJob(ctx, name); err != nil {
+			if err := w.saveOne(name); err != nil {
 				w.cw.ReportError(err, "declaring "+name)
 			}
-			cancel()
 		}
 	}
+}
+
+// saveOne writes one declaration, with a panic (in the app's store, say)
+// returned as its error, so the goroutine saving carries on and Settle
+// still returns.
+func (w *Watch) saveOne(name string) (err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+	defer cancel()
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panicked: %v", p)
+		}
+	}()
+	_, err = w.cw.SyncJob(ctx, name)
+	return err
 }
 
 // Settle waits until what Declare declared has been written to the store,

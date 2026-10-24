@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"cronwatch.dev/go/internal/js"
 )
 
 func TestRedactsWhatTheSDKTestsRedact(t *testing.T) {
@@ -205,5 +208,29 @@ func TestRecorderMetrics(t *testing.T) {
 	r.Log("a", 1, errors.New("e"), nil, []any{1.0, "x"})
 	if got := *r.Output(); got != `a 1 Error: e null [1,"x"]` {
 		t.Errorf("log %q", got)
+	}
+}
+
+func TestRecorderKeepsTheExpectTailWithoutCopyingItPerLine(t *testing.T) {
+	r := NewRecorder()
+	var all []string
+	started := time.Now()
+	for i := range 200_000 {
+		line := strconv.Itoa(i) + " \U0001F600 " + strings.Repeat("x", i%40)
+		all = append(all, line)
+		r.Log(line)
+	}
+	took := time.Since(started)
+	t.Logf("200000 lines logged in %v", took)
+	if took > 3*time.Second && !raceEnabled {
+		t.Errorf("200000 lines took %v", took)
+	}
+	joined := strings.Join(all, "\n")
+	want := js.Head16(joined, OutputCap) + "\n" + tail(joined, OutputCap)
+	if got := *r.ExpectText(); got != want {
+		t.Errorf("expect text differs: %d units, want %d", js.Length16(got), js.Length16(want))
+	}
+	if got := *r.Output(); !strings.HasSuffix(joined, got) || js.Length16(got) < OutputCap {
+		t.Errorf("output is not the newest lines: %d units", js.Length16(got))
 	}
 }

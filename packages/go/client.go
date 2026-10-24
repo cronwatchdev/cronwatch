@@ -48,6 +48,8 @@ const (
 	// Runs read for a baseline, and the most read when failures crowd out the successes.
 	historyPage = baselineWindow + 5
 	historyMax  = 200
+	// The error a check gives an import whose finish never landed (isStranded).
+	strandedError = "Imported, but its finish was never written; marked as timed out"
 )
 
 // Stderr is where the default error handler, the in-memory store's

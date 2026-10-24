@@ -32,7 +32,6 @@ func TestHandlerChecksTheBearerAndReportsTheRun(t *testing.T) {
 	})
 	status(t, "no auth", serve(h, "GET", "http://x/api/cron/hourly", nil, ""), 401)
 	eq(t, "no auth body", serve(h, "GET", "http://x/api/cron/hourly", hdr{"authorization": "Bearer wrong"}, "").Body.String(), `{"ok":false,"error":"Unauthorized"}`)
-	status(t, "lowercase bearer", serve(h, "GET", "http://x/api/cron/hourly", hdr{"authorization": "bearer " + secret}, ""), 401)
 	res := serve(h, "GET", "http://x/api/cron/hourly", hdr{"authorization": "Bearer " + secret}, "")
 	status(t, "ok", res, 200)
 	eq(t, "type", res.Header().Get("Content-Type"), "application/json; charset=utf-8")
@@ -47,6 +46,20 @@ func TestHandlerChecksTheBearerAndReportsTheRun(t *testing.T) {
 	eq(t, "runs", len(list), 2)
 	eq(t, "output", *list[1].Output, "/api/cron/hourly")
 	eq(t, "trigger", list[0].Trigger, "handler")
+}
+
+func TestHandlerReadsTheBearerSchemeInAnyCaseAsTheRoutesDo(t *testing.T) {
+	secret := "s3" + "cret"
+	k := newKit(t, cronwatch.WithCronSecret(secret))
+	ran := 0
+	h := must[*cronwatch.Job](t)(k.cw.Job("hook")).Handler(func(context.Context, *cronwatch.JobContext, http.ResponseWriter, *http.Request) error {
+		ran++
+		return nil
+	})
+	status(t, "lowercase, two spaces", serve(h, "GET", "http://x/", hdr{"authorization": "bearer  " + secret}, ""), 200)
+	status(t, "wrong", serve(h, "GET", "http://x/", hdr{"authorization": "Bearer wrong"}, ""), 401)
+	status(t, "no scheme", serve(h, "GET", "http://x/", hdr{"authorization": secret}, ""), 401)
+	eq(t, "ran", ran, 1)
 }
 
 func TestHandlerWithSecretIsItsOwn(t *testing.T) {

@@ -50,14 +50,14 @@ func Slack(o SlackOptions) (cronwatch.Channel, error) {
 		if link != "" {
 			head += " (<" + slackLinkTarget(link) + "|open>)"
 		}
-		body := js.Head16Lone(codeBlockSafe(slackEscape(message)), 2900)
+		body := slackCut(codeBlockSafe(slackEscape(message)), 2900)
 		blocks := []any{
 			js.NewObject("type", "section", "text", js.NewObject("type", "mrkdwn", "text", head)),
 			js.NewObject("type", "section", "text", js.NewObject("type", "mrkdwn", "text", "```"+body+"```")),
 		}
 		if diagnosis != "" {
 			// Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
-			blocks = append(blocks, js.NewObject("type", "section", "text", js.NewObject("type", "mrkdwn", "text", js.Head16Lone("_Triage:_ "+slackEscape(diagnosis), 3000))))
+			blocks = append(blocks, js.NewObject("type", "section", "text", js.NewObject("type", "mrkdwn", "text", slackCut("_Triage:_ "+slackEscape(diagnosis), 3000))))
 		}
 		payload := js.StringifyLone(js.NewObject(
 			// The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
@@ -81,6 +81,16 @@ func Slack(o SlackOptions) (cronwatch.Channel, error) {
 // also stops <!channel> and <url|links>.
 func slackEscape(text string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+}
+
+// slackCut is escaped text cut to at most max UTF-16 code units,
+// splitting neither an entity slackEscape wrote nor a surrogate pair.
+func slackCut(text string, max int) string {
+	kept := cut(text, max)
+	if amp := strings.LastIndexByte(kept, '&'); amp != -1 && !strings.Contains(kept[amp:], ";") {
+		return kept[:amp]
+	}
+	return kept
 }
 
 // slackLinkTarget is a link's URL as Slack's <url|text> can hold it: <, >,

@@ -288,14 +288,16 @@ type answer struct {
 	body    []byte
 }
 
-func (a answer) write(w http.ResponseWriter) {
+// write sends the answer; to a HEAD, its status and headers alone, with
+// the Content-Length its GET would have.
+func (a answer) write(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	for _, kv := range a.headers {
 		h.Set(kv[0], kv[1])
 	}
 	h.Set("Content-Length", strconv.Itoa(len(a.body)))
 	w.WriteHeader(a.status)
-	if len(a.body) > 0 {
+	if len(a.body) > 0 && !strings.EqualFold(r.Method, http.MethodHead) {
 		_, _ = w.Write(a.body)
 	}
 }
@@ -401,7 +403,7 @@ func (rt *Routes) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path, under := stripBase(pathname, base)
 	if !under {
 		// Not under the base at all: nothing here answers it, signed in or not.
-		page(messagePage("Not found", pathname, base, false), http.StatusNotFound).write(w)
+		page(messagePage("Not found", pathname, base, false), http.StatusNotFound).write(w, r)
 		return
 	}
 	wantsHTML := !strings.HasPrefix(path, "/api")
@@ -433,7 +435,7 @@ func (rt *Routes) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return a
 	}()
-	a.write(w)
+	a.write(w, r)
 }
 
 // publicOrigin is the origin a browser sees: WithOrigin's, the forwarded
@@ -753,8 +755,10 @@ func (rt *Routes) serve(r *http.Request, pathname, path, rawQuery, base string, 
 	}
 
 	// HTML
+	// A HEAD reads what a GET would; write sends it without a body.
+	reads := method == http.MethodGet || method == http.MethodHead
 	switch {
-	case method == http.MethodGet && path == "/":
+	case reads && path == "/":
 		entries, err := cw.JobsWithRuns(ctx, boardPageRuns)
 		if err != nil {
 			return answer{}, err
@@ -771,7 +775,7 @@ func (rt *Routes) serve(r *http.Request, pathname, path, rawQuery, base string, 
 			return answer{}, err
 		}
 		return page(dashboardPage(jobs, runsByJob, now, base, nil, lanes), http.StatusOK), nil
-	case method == http.MethodGet && len(parts) == 2 && parts[0] == "jobs":
+	case reads && len(parts) == 2 && parts[0] == "jobs":
 		job, err := cw.JobSummary(ctx, parts[1])
 		if err != nil {
 			return answer{}, err
@@ -875,11 +879,12 @@ func (rt *Routes) serveAPI(r *http.Request, method string, rest []string, query 
 		job, err := cw.JobSummary(ctx, name)
 		return job != nil, err
 	}
+	reads := method == http.MethodGet || method == http.MethodHead
 	switch {
-	case method == http.MethodGet && len(rest) == 0:
+	case reads && len(rest) == 0:
 		// What is serving the API, so a client such as @cronwatch/mcp can tell.
 		return apiAnswer(js.NewObject("ok", true, "library", apiLibrary, "language", apiLanguage, "version", Version, "api", apiVersion), http.StatusOK), nil
-	case method == http.MethodGet && len(rest) == 1 && rest[0] == "jobs":
+	case reads && len(rest) == 1 && rest[0] == "jobs":
 		jobs, err := cw.Jobs(ctx)
 		if err != nil {
 			return answer{}, err
@@ -889,7 +894,7 @@ func (rt *Routes) serveAPI(r *http.Request, method string, rest []string, query 
 			list[i] = j
 		}
 		return apiAnswer(js.NewObject("ok", true, "jobs", list), http.StatusOK), nil
-	case len(rest) == 2 && rest[0] == "jobs" && method == http.MethodGet:
+	case len(rest) == 2 && rest[0] == "jobs" && reads:
 		job, err := cw.JobSummary(ctx, rest[1])
 		if err != nil {
 			return answer{}, err
@@ -973,7 +978,7 @@ func (rt *Routes) serveAPI(r *http.Request, method string, rest []string, query 
 			}
 			return apiAnswer(body, http.StatusOK), nil
 		}
-	case method == http.MethodGet && len(rest) == 2 && rest[0] == "runs":
+	case reads && len(rest) == 2 && rest[0] == "runs":
 		run, err := cw.GetRun(ctx, rest[1])
 		if err != nil {
 			return answer{}, err

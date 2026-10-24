@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -369,5 +371,67 @@ func contains(t *testing.T, what, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
 		t.Errorf("%s: %q is not in %q", what, want, got)
+	}
+}
+
+// panicky is a memory store whose job calls panic while armed, as an
+// app's store might.
+type panicky struct {
+	*cronwatch.MemoryStore
+	armed atomic.Bool
+}
+
+func (s *panicky) trip() {
+	if s.armed.Load() {
+		panic("store exploded")
+	}
+}
+
+func (s *panicky) GetJob(ctx context.Context, name string) (*cronwatch.StoredJob, error) {
+	s.trip()
+	return s.MemoryStore.GetJob(ctx, name)
+}
+
+func (s *panicky) ListJobs(ctx context.Context) ([]cronwatch.StoredJob, error) {
+	s.trip()
+	return s.MemoryStore.ListJobs(ctx)
+}
+
+func (s *panicky) UpsertJob(ctx context.Context, definition cronwatch.Definition, now int64) error {
+	s.trip()
+	return s.MemoryStore.UpsertJob(ctx, definition, now)
+}
+
+func TestASyncThatPanicsIsReportedAndWaitStillReturns(t *testing.T) {
+	store := &panicky{MemoryStore: cronwatch.NewMemoryStore()}
+	errs := &storetest.Errors{}
+	cw, err := cronwatch.New(cronwatch.WithStore(store), cronwatch.WithAlerts(&storetest.Capture{}), cronwatch.WithErrorHandler(errs.Add))
+	check(t, err)
+	w := cwgocron.New(cw, cwgocron.Options{})
+	s, err := gocron.NewScheduler(w.Option(), gocron.WithLocation(time.UTC))
+	check(t, err)
+	defer func() { _ = s.Shutdown() }()
+	store.armed.Store(true)
+	_, err = s.NewJob(gocron.CronJob("0 2 * * *", false), gocron.NewTask(NightlyReport))
+	check(t, err)
+	waitFor(t, "the sync's panic to be reported", func() bool {
+		return slices.Contains(errs.List(), "gocron: panicked: store exploded")
+	})
+	waited := make(chan struct{})
+	go func() {
+		w.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait never returned after a sync panicked")
+	}
+	store.armed.Store(false)
+	// The watcher carries on: the next sync declares the job.
+	check(t, w.Sync(context.Background()))
+	w.Wait()
+	if job, _ := store.GetJob(context.Background(), "gocron_test.NightlyReport"); job == nil {
+		t.Error("the job was not declared after the panic")
 	}
 }

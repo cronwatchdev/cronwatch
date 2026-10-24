@@ -183,10 +183,11 @@ func (w *Watcher) later() {
 	go func() {
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
-			if err := w.Sync(ctx); err != nil {
+			err := w.syncRecovered(ctx)
+			cancel()
+			if err != nil {
 				w.cw.ReportError(err, "robfig/cron")
 			}
-			cancel()
 			w.mu.Lock()
 			if !w.again {
 				w.pending = false
@@ -198,6 +199,18 @@ func (w *Watcher) later() {
 			w.mu.Unlock()
 		}
 	}()
+}
+
+// syncRecovered is Sync with a panic (in the app's store, say) returned
+// as its error, as the client reports a channel's, so the goroutine that
+// syncs carries on and Wait still returns.
+func (w *Watcher) syncRecovered(ctx context.Context) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panicked: %v", p)
+		}
+	}()
+	return w.Sync(ctx)
 }
 
 // Wait waits for the syncs the cron's events started to finish, and for

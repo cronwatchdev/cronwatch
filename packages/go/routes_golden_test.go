@@ -66,8 +66,8 @@ func readGolden(t *testing.T) goldenFile {
 	if g.T0 != T0 {
 		t.Fatalf("golden.json's t0 is %d, not %d", g.T0, T0)
 	}
-	if len(g.Captures) != 98 {
-		t.Fatalf("golden.json has %d captures, not 98", len(g.Captures))
+	if len(g.Captures) != 105 {
+		t.Fatalf("golden.json has %d captures, not 105", len(g.Captures))
 	}
 	// GET /api names the library, its language, and its version, and a page's
 	// footer the library and its version, which the fixture holds as
