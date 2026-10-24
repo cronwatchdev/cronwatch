@@ -383,3 +383,72 @@ def test_import_retries_marker_failure_without_a_false_stuck_alert() -> None:
     assert sent.types() == ["failed"]
     assert shared.get_run("external").status == "failed"
     assert shared.get_state("imported").pending_runs is None
+
+
+def test_an_evaluated_import_whose_state_write_fails_and_is_not_retried_is_closed_by_a_check() -> None:
+    shared = MemoryStore()
+    fail = [True]
+
+    def cas(state: Any, version: Any) -> bool:
+        if fail[0]:
+            fail[0] = False
+            raise RuntimeError("state unavailable")
+        return shared.compare_and_set_state(state, version)
+
+    c, sent = Clock(), Capture()
+    cw = Cronwatch(store=Wrapped(shared, compare_and_set_state=cas), now=c.now, alerts=[sent], on_error=quiet)
+    cw.job("imported", schedule="every 5m", timeout="1m")
+    cw.check()
+    run = {"id": "lost-import", "job": "imported", "status": "failed", "startedAt": c.now() - 2 * MIN, "finishedAt": c.now() - MIN, "durationMs": MIN, "error": "boom", "output": None, "metrics": {}, "trigger": "source"}
+    with pytest.raises(RuntimeError, match="state unavailable"):
+        cw.record_run(run)
+    cw.check()
+    assert shared.get_run("lost-import").status == "running"
+    c.advance(SEND_LEASE_MS + MIN)
+    cw.check()
+    closed = shared.get_run("lost-import")
+    assert closed.status == "timeout"
+    assert closed.duration_ms == MIN
+    assert closed.error == "Imported, but its finish was never written; marked as timed out\nboom"
+    assert sent.types() == ["stuck"]
+    assert cw.job_summary("imported").health != "healthy"
+
+
+def test_an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_by_a_check_and_a_late_success_recovers_it() -> None:
+    shared = MemoryStore()
+    fail = [True]
+
+    def update(run: Any, from_statuses: Any) -> bool:
+        if fail[0]:
+            fail[0] = False
+            raise RuntimeError("store unavailable")
+        return shared.update_run_if(run, from_statuses)
+
+    c, sent = Clock(), Capture()
+    cw = Cronwatch(store=Wrapped(shared, update_run_if=update), now=c.now, alerts=[sent], on_error=quiet)
+    cw.job("imported", schedule="0 * * * *", timeout="1m")
+    cw.check()
+    run = {"id": "lost-finish", "job": "imported", "status": "ok", "startedAt": c.now(), "finishedAt": c.now(), "durationMs": 0, "error": None, "output": None, "metrics": {}, "trigger": "source"}
+    with pytest.raises(RuntimeError, match="store unavailable"):
+        cw.record_run(run)
+    c.advance(SEND_LEASE_MS + MIN)
+    cw.check()
+    assert shared.get_run("lost-finish").status == "timeout"
+    assert shared.get_state("imported").pending_runs is None
+    assert sent.types() == ["stuck"]
+    cw.record_run(run)
+    assert shared.get_run("lost-finish").status == "ok"
+    assert sent.types() == ["stuck", "recovered"]
+
+
+def test_an_import_still_running_is_judged_by_its_timeout_not_closed_as_stranded() -> None:
+    shared = MemoryStore()
+    c, sent = Clock(), Capture()
+    cw = Cronwatch(store=shared, now=c.now, alerts=[sent], on_error=quiet)
+    cw.job("imported", timeout="1h")
+    cw.record_run({"id": "long", "job": "imported", "status": "running", "startedAt": c.now(), "finishedAt": None, "durationMs": None, "error": None, "output": None, "metrics": {}, "trigger": "source"})
+    assert shared.get_run("long").finished_at is None
+    c.advance(SEND_LEASE_MS + MIN)
+    cw.check()
+    assert shared.get_run("long").status == "running"
+    assert sent.types() == []

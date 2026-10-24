@@ -378,6 +378,14 @@ def test_slack_escapes_control_characters_and_fences_in_the_blocks_and_the_fallb
     assert body["blocks"][0]["text"]["text"] == ":x: *j failed*"
 
 
+def test_slack_cuts_its_escaped_text_without_splitting_an_entity_or_a_surrogate_pair() -> None:
+    http = FakeHTTP()
+    A.Slack(webhook_url="https://hooks.slack.example/T/B/x", http=http).send(failed("a" * 2897 + "<<<", triage="b" * 2989 + "\U0001f600<"))
+    blocks = json.loads(http.requests[0]["body"])["blocks"]
+    assert blocks[1]["text"]["text"] == "```" + "a" * 2897 + "```"
+    assert blocks[2]["text"]["text"] == "_Triage:_ " + "b" * 2989
+
+
 def test_slack_link_and_failure() -> None:
     http = FakeHTTP(500, "no")
     channel = A.Slack(webhook_url="https://hooks.slack.example/x", link=lambda _a: "https://app.example/j", http=http)

@@ -9,7 +9,7 @@ from .. import _js
 from .._deprecated import names as _deprecated_names
 from ..types import Alert
 from ._http import HTTP
-from ._shared import http_or_default, link_for, positional_url, present, slice16, webhook_error
+from ._shared import cut, http_or_default, link_for, positional_url, present, webhook_error
 
 __all__ = ["Slack"]
 
@@ -57,14 +57,14 @@ class Slack:
     def send(self, alert: Alert, context: Any = None) -> None:
         url = link_for(self._link, alert)
         title = f"{_EMOJI[str(alert.type)]} *{_escape(alert.title)}*{f' (<{_link_target(url)}|open>)' if url else ''}"
-        body = slice16(_code_block_safe(_escape(alert.message)), 2900)
+        body = _cut_escaped(_code_block_safe(_escape(alert.message)), 2900)
         blocks: list[dict[str, Any]] = [
             {"type": "section", "text": {"type": "mrkdwn", "text": title}},
             {"type": "section", "text": {"type": "mrkdwn", "text": "```" + body + "```"}},
         ]
         if present(alert.triage):
             # Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
-            triage = slice16(f"_Triage:_ {_escape(str(alert.triage))}", 3000)
+            triage = _cut_escaped(f"_Triage:_ {_escape(str(alert.triage))}", 3000)
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": triage}})
         payload = {
             # The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
@@ -80,6 +80,13 @@ class Slack:
 def _escape(text: str) -> str:
     """Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _cut_escaped(text: str, max_units: int) -> str:
+    """Escaped text cut to at most `max_units` UTF-16 units, splitting neither an entity _escape wrote nor a surrogate pair."""
+    kept = cut(text, max_units)
+    amp = kept.rfind("&")
+    return kept[:amp] if amp != -1 and kept.find(";", amp) == -1 else kept
 
 
 def _link_target(url: str) -> str:

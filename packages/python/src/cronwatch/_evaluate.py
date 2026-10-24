@@ -71,6 +71,7 @@ __all__ = [
     "hold_alerts",
     "hold_run",
     "is_silenced",
+    "is_stranded",
     "is_stuck",
     "job_health",
     "mute_opens",
@@ -836,6 +837,15 @@ def on_check(definition: JobDefinition, stored: StoredJob, last_run: Run | None,
 def is_stuck(definition: JobDefinition, run: Run, now: int) -> bool:
     """Whether a running run has gone on longer than the job's timeout."""
     return run.status == RunStatus.RUNNING and run.finished_at is None and now - run.started_at > timeout_ms(definition)
+
+
+def is_stranded(run: Run, now: int) -> bool:
+    """Whether a finished import was left as its placeholder: record_run()
+    writes one as running, with ``finished_at`` set to when it was written,
+    and the finish that follows never landed (the importer stopped, or a
+    store write failed and it was not retried). A check closes one
+    SEND_LEASE_MS after it was written, as it closes a stuck run."""
+    return run.status == RunStatus.RUNNING and run.finished_at is not None and now - run.finished_at > SEND_LEASE_MS
 
 
 def mute_opens(previous: JobState, following: JobState) -> JobState:

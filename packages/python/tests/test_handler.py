@@ -63,6 +63,16 @@ def test_handler_checks_the_bearer_secret_and_reports_the_run() -> None:
     assert handler(get(authorization="Bearer s3cret ")).status == 401, "compared exactly"
 
 
+def test_a_handler_reads_the_bearer_scheme_in_any_case_as_the_routes_do() -> None:
+    cw, _, _ = make(cron_secret="s3cret")
+    ran: list[int] = []
+    handler = cw.job("hook").handler(lambda ctx, request: ran.append(1))
+    assert handler(get(authorization="bearer  s3cret")).status == 200
+    assert handler(get(authorization="Bearer wrong")).status == 401
+    assert handler(get(authorization="s3cret")).status == 401
+    assert len(ran) == 1
+
+
 def test_a_handler_returning_a_response_passes_it_through_and_4xx_or_5xx_count_as_failure() -> None:
     cw, _, alerts = make()
     handler = cw.job("h").handler(lambda ctx, request: Response(503, {"content-type": "text/plain"}, b"bad"))

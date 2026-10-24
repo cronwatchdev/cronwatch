@@ -680,7 +680,8 @@ class Web:
         except BadContentLength:
             response = _bad_length()
         else:
-            response = self.handle(request)
+            # Unstripped, so a HEAD's Content-Length is its GET's; the body is dropped below.
+            response = self._answer(request)
         start_response(f"{response.status} {http.HTTPStatus(response.status).phrase}", response.wsgi_headers())
         return [] if str(environ.get("REQUEST_METHOD", "")).upper() == "HEAD" else [response.body]
 
@@ -710,7 +711,7 @@ class Web:
             request.body = _too_large_body
         else:
             request = Request.from_asgi(scope, body)
-        response = await asyncio.to_thread(self.handle, request)
+        response = await asyncio.to_thread(self._answer, request)
         headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in response.wsgi_headers()]
         await send({"type": "http.response.start", "status": response.status, "headers": headers})
         await send({"type": "http.response.body", "body": b"" if head else response.body})
@@ -718,7 +719,15 @@ class Web:
     # ------------------------------------------------------------ the routes
 
     def handle(self, request: Request) -> Response:
-        """One request, answered as the SDK's routes answer it."""
+        """One request, answered as the SDK's routes answer it. A HEAD reads
+        what a GET would, and is answered without the body."""
+        response = self._answer(request)
+        if request.method.upper() == "HEAD":
+            return Response(response.status, response.headers, b"")
+        return response
+
+    def _answer(self, request: Request) -> Response:
+        """handle(), with the body a HEAD leaves out still in it."""
         wants_html = True
         base = self._base_path if self._base_path is not None else re.sub(r"/+\Z", "", request.mount)
         try:
@@ -874,13 +883,15 @@ class Web:
         parts: list[str] = [p for p in decoded if p is not None]
 
         # HTML
-        if method == "GET" and path == "/":
+        # A HEAD reads what a GET would; handle() sends it without the body.
+        reads = method in ("GET", "HEAD")
+        if reads and path == "/":
             entries = cw.jobs_with_runs(_BOARD_PAGE_RUNS)
             now = cw.now()
             runs_by_job = {entry.job.name: entry.runs for entry in entries}
             lanes = self._board_lanes(cw, entries, now)
             return _html_response(_html.dashboard_page([entry.job for entry in entries], runs_by_job, now, base, None, lanes))
-        if method == "GET" and len(parts) == 2 and parts[0] == "jobs":
+        if reads and len(parts) == 2 and parts[0] == "jobs":
             job = cw.job_summary(parts[1])
             if job is None:
                 return _html_response(_html.message_page("No such job", f"{parts[1]} is not in the store.", base), 404)
@@ -924,16 +935,17 @@ class Web:
         return _html_response(_html.message_page("Not found", path, base), 404)
 
     def _serve_api(self, cw: Any, request: Request, method: str, rest: list[str], bearer: str | None) -> Response:
+        reads = method in ("GET", "HEAD")
         # What is serving the API, so a client such as @cronwatch/mcp can tell.
-        if method == "GET" and rest == []:
+        if reads and rest == []:
             from .. import __version__
 
             return _api({"ok": True, "library": _LIBRARY, "language": _LANGUAGE, "version": __version__, "api": _API_VERSION})
-        if method == "GET" and rest == ["jobs"]:
+        if reads and rest == ["jobs"]:
             return _api({"ok": True, "jobs": cw.jobs()})
         if len(rest) == 2 and rest[0] == "jobs":
             name = rest[1]
-            if method == "GET":
+            if reads:
                 job = cw.job_summary(name)
                 if job is None:
                     return _api({"ok": False, "error": "No such job"}, 404)
@@ -971,7 +983,7 @@ class Web:
             if method in ("GET", "POST"):
                 result = cw.check()
                 return _api({"ok": True, **result.to_dict()})
-        if method == "GET" and len(rest) == 2 and rest[0] == "runs":
+        if reads and len(rest) == 2 and rest[0] == "runs":
             run = cw.get_run(rest[1])
             return _api({"ok": True, "run": run}) if run is not None else _api({"ok": False, "error": "No such run"}, 404)
         return _api({"ok": False, "error": "Not found"}, 404)

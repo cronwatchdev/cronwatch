@@ -111,8 +111,14 @@ module Cronwatch
       # dropped from @lines: what expect_text needs once the output runs long.
       @head = []
       @head_size = 0
-      @whole = ""
-      @tail = ""
+      # Every line logged while they come to no more than twice the cap
+      # (nil after), joined only when read, so a log is not a copy of them all.
+      @whole = []
+      @whole_size = 0
+      # The raw lines behind expect_text's tail, each with its UTF-16 length,
+      # joined only when it is read.
+      @raw = []
+      @raw_size = 0
       @logged = false
       @metrics = {}
       @lock = Mutex.new
@@ -126,9 +132,15 @@ module Cronwatch
         separator = @logged ? "\n" : ""
         @logged = true
         if @whole
-          @whole = JS.length16(@whole) + separator.length + length <= 2 * Output::CAP ? @whole + separator + line : nil
+          @whole_size += separator.length + length
+          @whole = @whole_size <= 2 * Output::CAP ? @whole << line.dup : nil
         end
-        @tail = JS.tail16(@tail + separator + JS.tail16(line, Output::CAP), Output::CAP).dup
+        raw = length > Output::CAP ? JS.tail16(line, Output::CAP).dup : line.dup
+        raw_length = length > Output::CAP ? JS.length16(raw) : length
+        @raw << [raw, raw_length]
+        @raw_size += raw_length + 1
+        # Drops the oldest only while what is left still holds the cap.
+        @raw_size -= @raw.shift[1] + 1 while @raw.length > 1 && @raw_size - (@raw[0][1] + 1) > Output::CAP
         if @head_size < Output::CAP
           @head << JS.head16(line, Output::CAP - @head_size).dup
           @head_size += length + 1
@@ -165,9 +177,9 @@ module Cronwatch
       @lock.synchronize do
         next nil if @lines.empty?
 
-        next @whole if @whole
+        next @whole.join("\n") if @whole
 
-        "#{JS.head16(@head.join("\n"), Output::CAP)}\n#{@tail}"
+        "#{JS.head16(@head.join("\n"), Output::CAP)}\n#{JS.tail16(@raw.map(&:first).join("\n"), Output::CAP)}"
       end
     end
 

@@ -204,6 +204,14 @@ module Cronwatch
     end
 
     def call(env)
+      status, headers, body = answer(env)
+      # A HEAD reads what a GET would, and is answered without the body.
+      env["REQUEST_METHOD"].to_s.upcase == "HEAD" ? [status, headers, []] : [status, headers, body]
+    end
+
+    private
+
+    def answer(env)
       wants_html = true
       base = @base_path || env["SCRIPT_NAME"].to_s.sub(%r{/+\z}, "")
       begin
@@ -227,8 +235,6 @@ module Cronwatch
         end
       end
     end
-
-    private
 
     def serve(request, path, wants_html, base)
       cw = client
@@ -308,14 +314,15 @@ module Cronwatch
         return wants_html ? html(HTML.message_page("Bad request", "The path is not valid.", base), 400) : api({ ok: false, error: "Bad path" }, 400)
       end
 
-      # HTML
-      if method == "GET" && path == "/"
+      # HTML. A HEAD reads what a GET would; call sends it without the body.
+      reads = %w[GET HEAD].include?(method)
+      if reads && path == "/"
         entries = cw.jobs_with_runs(BOARD_PAGE_RUNS)
         now = cw.now
         runs_by_job = entries.to_h { |entry| [entry.job.name, entry.runs] }
         return html(HTML.dashboard_page(entries.map(&:job), runs_by_job, now, base, nil, board_lanes(cw, entries, now)))
       end
-      if method == "GET" && parts[0] == "jobs" && parts.length == 2
+      if reads && parts[0] == "jobs" && parts.length == 2
         job = cw.job_summary(parts[1])
         return html(HTML.message_page("No such job", "#{parts[1]} is not in the store.", base), 404) unless job
 
@@ -363,14 +370,15 @@ module Cronwatch
 
     def serve_api(request, method, rest, bearer)
       cw = client
-      if method == "GET" && rest.empty?
+      reads = %w[GET HEAD].include?(method)
+      if reads && rest.empty?
         return api({ ok: true, library: LIBRARY, language: LANGUAGE, version: VERSION, api: API_VERSION })
       end
-      return api({ ok: true, jobs: cw.jobs }) if method == "GET" && rest[0] == "jobs" && rest.length == 1
+      return api({ ok: true, jobs: cw.jobs }) if reads && rest[0] == "jobs" && rest.length == 1
 
       if rest[0] == "jobs" && rest.length == 2
         name = rest[1]
-        if method == "GET"
+        if reads
           job = cw.job_summary(name)
           return api({ ok: false, error: "No such job" }, 404) unless job
 
@@ -413,7 +421,7 @@ module Cronwatch
         end
         return api({ "ok" => true }.merge(cw.check.to_h)) if %w[GET POST].include?(method)
       end
-      if method == "GET" && rest[0] == "runs" && rest.length == 2
+      if reads && rest[0] == "runs" && rest.length == 2
         run = cw.get_run(rest[1])
         return run ? api({ ok: true, run: run }) : api({ ok: false, error: "No such run" }, 404)
       end

@@ -45,9 +45,13 @@ module Cronwatch
     # The longest run id, in UTF-16 code units (JavaScript's string length):
     # what start, resume, and record_run take, and every store holds.
     MAX_RUN_ID = 200
+    # The statuses record_run takes.
+    RUN_STATUSES = %w[running ok failed timeout].freeze
+    # The error a check gives an import whose finish never landed (Evaluate.stranded?).
+    STRANDED_ERROR = "Imported, but its finish was never written; marked as timed out"
     private_constant :CHANNEL_TIMEOUT_MS, :DEFAULT_OPTIONS, :FORK_LOCK, :HISTORY_MAX, :HISTORY_PAGE, :MAX_RUN_ID,
-                     :PRUNE_INTERVAL_MS, :RESERVED_RUN_ID_PREFIX, :RETRY_BUDGET_MS, :SILENCE_OPTIONS, :STATE_ATTEMPTS,
-                     :TRIAGE_TIMEOUT_MS
+                     :PRUNE_INTERVAL_MS, :RESERVED_RUN_ID_PREFIX, :RETRY_BUDGET_MS, :RUN_STATUSES, :SILENCE_OPTIONS,
+                     :STATE_ATTEMPTS, :STRANDED_ERROR, :TRIAGE_TIMEOUT_MS
 
     # What execute returns: the recorded run, and the block's own outcome.
     #
@@ -362,7 +366,8 @@ module Cronwatch
     # redacted the same way; one finishing after a check marked it timeout is
     # judged only when it succeeded, as RunHandle#finish does. A metric that
     # is not a finite number raises ArgumentError before anything is written,
-    # as JobContext#metric does. `evaluate: false` stores it without judging
+    # as JobContext#metric does, and so does a status, start, finish,
+    # duration, error, output, or trigger evaluation cannot read. `evaluate: false` stores it without judging
     # it, for history imported on first sight. Returns the alerts it sent.
     #
     # `run` is a Cronwatch::Run, or a hash of its fields (camelCase or snake_case keys).
@@ -379,6 +384,7 @@ module Cronwatch
       if input.id.include?("\0")
         raise ArgumentError, "record_run: run ids cannot contain a NUL character (job \"#{input.job}\")"
       end
+      check_record_fields(input)
       # Refused as JobContext#metric refuses them: a store keeps NaN and Infinity as null.
       unless input.metrics.nil? || input.metrics.is_a?(Hash)
         raise ArgumentError, "record_run: metrics must be a Hash of numbers (job \"#{input.job}\", run \"#{input.id}\")"
@@ -410,8 +416,16 @@ module Cronwatch
       stored = @store.get_run(run.id)
       return record_over(definition, stored, run, evaluate) if stored
 
+      # An evaluated import stays retryable until its durable evaluation marker
+      # is written. A finished one's placeholder has finished_at set to when it
+      # was written, so a check can tell one whose finish never landed
+      # (Evaluate.stranded?); the finish writes the run's own. One still
+      # running keeps finished_at nil, so it times out as any running run does.
       inserted = run.dup
-      inserted.status = :running if evaluate
+      if evaluate
+        inserted.finished_at = now unless inserted.status == :running
+        inserted.status = :running
+      end
       begin
         @store.insert_run(inserted)
       rescue StandardError
@@ -910,6 +924,23 @@ module Cronwatch
       end
     end
 
+    # The fields evaluation reads, checked before record_run writes anything.
+    def check_record_fields(input)
+      where = "job \"#{input.job}\", run \"#{input.id}\""
+      status = input.status
+      unless (status.is_a?(Symbol) || status.is_a?(String)) && RUN_STATUSES.include?(status.to_s)
+        raise ArgumentError, "record_run: status must be \"running\", \"ok\", \"failed\", or \"timeout\" (#{where})"
+      end
+      raise ArgumentError, "record_run: started_at must be a finite number (#{where})" unless JS.finite?(input.started_at)
+      raise ArgumentError, "record_run: finished_at must be a finite number or nil (#{where})" unless input.finished_at.nil? || JS.finite?(input.finished_at)
+      raise ArgumentError, "record_run: duration_ms must be a finite number or nil (#{where})" unless input.duration_ms.nil? || JS.finite?(input.duration_ms)
+
+      { "error" => input.error, "output" => input.output }.each do |field, value|
+        raise ArgumentError, "record_run: #{field} must be a String or nil (#{where})" unless value.nil? || value.is_a?(String)
+      end
+      raise ArgumentError, "record_run: trigger must be a String (#{where})" unless input.trigger.is_a?(String)
+    end
+
     # record_run for a run already stored.
     def record_over(definition, stored, run, evaluate)
       if stored.job != run.job
@@ -1348,18 +1379,25 @@ module Cronwatch
         next if definition.nil?
 
         evaluable(listed.job, definition)
-        next unless Evaluate.stuck?(definition, listed, at)
+        stranded = Evaluate.stranded?(listed, at)
+        next unless stranded || Evaluate.stuck?(definition, listed, at)
 
         # Read again just before the write: lines and metrics flushed since the
         # list was read (while earlier stuck runs were sent, say) are kept.
         run = @store.get_run(listed.id)
         next if run.nil? || run.status != :running || run.job != listed.job
 
-        timeout = Evaluate.timeout_ms(definition)
         run.status = :timeout
-        run.finished_at = at
-        run.duration_ms = Evaluate.run_duration(run.started_at, at)
-        run.error = "Still running after #{Duration.format(timeout)}; marked as timed out"
+        if stranded
+          # Its own status was never written; a late finish of it is judged
+          # as one after a timeout, so a success still recovers.
+          run.duration_ms = Evaluate.run_duration(run.started_at, run.finished_at) if run.duration_ms.nil?
+          run.error = run.error.nil? ? STRANDED_ERROR : "#{STRANDED_ERROR}\n#{run.error}"
+        else
+          run.finished_at = at
+          run.duration_ms = Evaluate.run_duration(run.started_at, at)
+          run.error = "Still running after #{Duration.format(Evaluate.timeout_ms(definition))}; marked as timed out"
+        end
         # Only over a row still running: a finish that landed meanwhile wins.
         next unless write_run_if(run, [:running])
 
