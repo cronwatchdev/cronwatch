@@ -15,6 +15,32 @@
     "reason": "No upstream patch exists. Only the SQLx MySQL tests enable mysql-rsa. SQLx uses public-key encryption for client authentication, never the private-key operation affected by the Marvin timing attack. The published libraries leave mysql-rsa to the app. Review or remove by expiry."
   },
   {
+    "ecosystem": "crates.io",
+    "name": "ctutils",
+    "version": "0.4.2",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0385"
+    ],
+    "expires": "2027-01-10",
+    "reason": "The fix (0.4.4) needs Rust 1.87, and the lockfile builds the core and cronwatch-tokio-cron-scheduler on their Rust 1.85 floor. The lockfile is not published: an app on Rust 1.87 or newer resolves the fixed release. The core reaches ctutils through digest for HMAC-SHA256 signing of outgoing webhooks, which computes a MAC and never compares one. Remove when the floor reaches 1.87."
+  },
+  {
+    "ecosystem": "crates.io",
+    "name": "crypto-bigint",
+    "version": "0.7.5",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0387"
+    ],
+    "expires": "2027-01-10",
+    "reason": "The fix (0.7.6) requires ctutils 0.4.5, which needs Rust 1.87, and Cargo keeps one ctutils 0.4 release for the whole lockfile, held at 0.4.2 for the Rust 1.85 floor. crypto-bigint is reached only through SQLx's mysql-rsa, which only the MySQL tests enable, and it encrypts with a public key there. The lockfile is not published. Remove when the floor reaches 1.87."
+  },
+  {
     "ecosystem": "Go",
     "name": "golang.org/x/crypto",
     "version": "v0.58.0",
