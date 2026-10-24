@@ -1017,6 +1017,27 @@ class ClientTest < Minitest::Test
     assert_equal({ "rows" => 3 }, cw.get_run("m1").metrics)
   end
 
+  def test_record_run_refuses_fields_evaluation_cannot_read
+    cw, = make
+    cw.job("imported")
+    base = { id: "r", job: "imported", status: "ok", started_at: 1, finished_at: 2, duration_ms: 1, error: nil, output: nil,
+             metrics: {}, trigger: "source" }
+    {
+      { status: "succeeded" } => /\Arecord_run: status must be "running", "ok", "failed", or "timeout" \(job "imported", run "r"\)\z/,
+      { status: 3 } => /record_run: status must be/,
+      { started_at: Float::NAN } => /record_run: started_at must be a finite number/,
+      { finished_at: "2" } => /record_run: finished_at must be a finite number or nil/,
+      { duration_ms: Float::INFINITY } => /record_run: duration_ms must be a finite number or nil/,
+      { error: 5 } => /record_run: error must be a String or nil/,
+      { output: :text } => /record_run: output must be a String or nil/,
+      { trigger: nil } => /record_run: trigger must be a String/,
+    }.each do |patch, message|
+      error = assert_raises(ArgumentError, patch.inspect) { cw.record_run(base.merge(patch)) }
+      assert_match message, error.message
+    end
+    assert_nil cw.get_run("r")
+  end
+
   def test_text_past_the_redaction_window_never_keeps_what_came_right_after_its_cut
     cap = Cronwatch::Output::CAP
     edge = Cronwatch::Output::REDACT_EDGE

@@ -382,6 +382,10 @@ class ConformanceTest < Minitest::Test
     end
   end
 
+  def test_is_stranded
+    each_case(HEALTH["isStranded"]) { |c| differs(c["stranded"], Cronwatch::Evaluate.stranded?(Cronwatch::Run.from_h(c["run"]), c["now"])) }
+  end
+
   def test_run_duration
     each_case(HEALTH["runDuration"]) { |c| differs(c["durationMs"], Cronwatch::Evaluate.run_duration(c["startedAt"], c["finishedAt"])) }
   end

@@ -104,6 +104,20 @@ def test_pages_through_django_are_the_routes_pages_byte_for_byte() -> None:
                 assert through[name] == value, (path, name)
 
 
+def test_a_head_through_django_is_the_routes_head_without_a_body() -> None:
+    from django.test import RequestFactory
+
+    from cronwatch.django.views import dashboard
+
+    cw = fixed()
+    with override_settings(CRONWATCH={"CLIENT": cw, "TOKEN": "tok"}):
+        for path, status in [("", 200), ("jobs/nightly", 200), ("api/jobs", 200), ("api/check", 404)]:
+            # The view itself, since Django's test client drops a HEAD's body on its own.
+            res = dashboard(RequestFactory().head(f"{BASE}/{path}", **BEARER), path)
+            assert (res.status_code, res.content) == (status, b""), path
+    assert cw.runs("nightly")[0].status == "ok"
+
+
 def test_forms_post_without_a_django_csrf_token_and_a_cross_site_write_is_refused() -> None:
     cw = fixed()
     with override_settings(CRONWATCH={"CLIENT": cw, "TOKEN": "tok"}):

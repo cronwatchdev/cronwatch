@@ -439,4 +439,75 @@ class OutboxTest < Minitest::Test
     assert_nil store.get_state("imported").pending_runs
   end
 
+  def test_an_evaluated_import_whose_state_write_fails_and_is_not_retried_is_closed_by_a_check
+    store = Cronwatch::Stores::Memory.new
+    original = store.method(:compare_and_set_state)
+    fail = true
+    store.define_singleton_method(:compare_and_set_state) do |state, version|
+      if fail
+        fail = false
+        raise "state unavailable"
+      end
+      original.call(state, version)
+    end
+    clock, sent = Clock.new, Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], cron_secret: nil, on_error: ->(*) {})
+    cw.job("imported", schedule: "every 5m", timeout: "1m")
+    cw.check
+    run = { id: "lost-import", job: "imported", status: "failed", started_at: clock.now - (2 * MIN), finished_at: clock.now - MIN,
+            duration_ms: MIN, error: "boom", output: nil, metrics: {}, trigger: "source" }
+    assert_raises(RuntimeError) { cw.record_run(run) }
+    cw.check
+    assert_equal :running, store.get_run("lost-import").status
+    clock.advance(LEASE + MIN)
+    cw.check
+    closed = store.get_run("lost-import")
+    assert_equal :timeout, closed.status
+    assert_equal MIN, closed.duration_ms
+    assert_equal "Imported, but its finish was never written; marked as timed out\nboom", closed.error
+    assert_equal [:stuck], sent.types
+    refute_equal :healthy, cw.job_summary("imported").health
+  end
+
+  def test_an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_and_a_late_success_recovers_it
+    store = Cronwatch::Stores::Memory.new
+    original = store.method(:update_run_if)
+    fail = true
+    store.define_singleton_method(:update_run_if) do |run, from_statuses|
+      if fail
+        fail = false
+        raise "store unavailable"
+      end
+      original.call(run, from_statuses)
+    end
+    clock, sent = Clock.new, Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], cron_secret: nil, on_error: ->(*) {})
+    cw.job("imported", schedule: "0 * * * *", timeout: "1m")
+    cw.check
+    run = { id: "lost-finish", job: "imported", status: "ok", started_at: clock.now, finished_at: clock.now, duration_ms: 0,
+            error: nil, output: nil, metrics: {}, trigger: "source" }
+    assert_raises(RuntimeError) { cw.record_run(run) }
+    clock.advance(LEASE + MIN)
+    cw.check
+    assert_equal :timeout, store.get_run("lost-finish").status
+    assert_nil store.get_state("imported").pending_runs
+    assert_equal [:stuck], sent.types
+    cw.record_run(run)
+    assert_equal :ok, store.get_run("lost-finish").status
+    assert_equal %i[stuck recovered], sent.types
+  end
+
+  def test_an_import_still_running_is_judged_by_its_timeout_not_closed_as_stranded
+    store = Cronwatch::Stores::Memory.new
+    clock, sent = Clock.new, Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], cron_secret: nil, on_error: ->(*) {})
+    cw.job("imported", timeout: "1h")
+    cw.record_run({ id: "long", job: "imported", status: "running", started_at: clock.now, finished_at: nil, duration_ms: nil,
+                    error: nil, output: nil, metrics: {}, trigger: "source" })
+    assert_nil store.get_run("long").finished_at
+    clock.advance(LEASE + MIN)
+    cw.check
+    assert_equal :running, store.get_run("long").status
+    assert_empty sent.types
+  end
 end

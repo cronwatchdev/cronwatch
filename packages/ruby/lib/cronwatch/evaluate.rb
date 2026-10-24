@@ -691,6 +691,15 @@ module Cronwatch
       run.status == :running && run.finished_at.nil? && now - run.started_at > timeout_ms(definition)
     end
 
+    # Whether a finished import was left as its placeholder: record_run writes
+    # one as running, with finished_at set to when it was written, and the
+    # finish that follows never landed (the importer stopped, or a store write
+    # failed and it was not retried). A check closes one SEND_LEASE_MS after
+    # it was written, as it closes a stuck run.
+    def stranded?(run, now)
+      run.status == :running && !run.finished_at.nil? && now - run.finished_at > SEND_LEASE_MS
+    end
+
     # While a job is silenced nothing new is recorded as an incident: conditions
     # may close (so a job that recovered during the silence shows as healthy) but
     # none may open, so the first problem after the silence ends alerts normally.

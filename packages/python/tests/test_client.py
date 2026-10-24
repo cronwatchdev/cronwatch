@@ -470,3 +470,21 @@ def test_run_and_monitor_are_typed_for_a_type_checker() -> None:
     assert len(typing.get_overloads(JobHandle.monitor)) == 2
     assert len(typing.get_overloads(JobHandle.run)) == 3
     assert JobHandle.handler.__annotations__["return"] == "Handler"
+
+
+def test_record_run_refuses_fields_evaluation_cannot_read() -> None:
+    cw, _, _ = make(cron_secret=None)
+    cw.job("imported")
+    run = {"id": "r", "job": "imported", "status": "ok", "startedAt": 1, "finishedAt": 2, "durationMs": 1, "error": None, "output": None, "metrics": {}, "trigger": "source"}
+    for patch, message in [
+        ({"status": "succeeded"}, "record_run: status must be"),
+        ({"startedAt": float("nan")}, "record_run: started_at must be a finite number"),
+        ({"finishedAt": "2"}, "record_run: finished_at must be a finite number or None"),
+        ({"durationMs": float("inf")}, "record_run: duration_ms must be a finite number or None"),
+        ({"error": 5}, "record_run: error must be a string or None"),
+        ({"output": b"bytes"}, "record_run: output must be a string or None"),
+        ({"trigger": None}, "record_run: trigger must be a string"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            cw.record_run({**run, **patch})
+    assert cw.store.get_run("r") is None

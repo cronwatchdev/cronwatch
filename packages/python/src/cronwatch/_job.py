@@ -82,8 +82,14 @@ class RunRecorder:
         # dropped from _lines: what expect_text needs once the output runs long.
         self._head: list[str] = []
         self._head_size = 0
-        self._whole: str | None = ""
-        self._tail = ""
+        # Every line logged while they come to no more than twice the cap
+        # (None after), joined only when read, so a log is not a copy of them all.
+        self._whole: list[str] | None = []
+        self._whole_size = 0
+        # The raw lines behind expect_text's tail, each with its UTF-16
+        # length, joined only when it is read.
+        self._raw: deque[tuple[str, int]] = deque()
+        self._raw_size = 0
         self._logged = False
         self._metrics: dict[str, float] = {}
         self._lock = threading.Lock()
@@ -96,8 +102,18 @@ class RunRecorder:
             separator = "\n" if self._logged else ""
             self._logged = True
             if self._whole is not None:
-                self._whole = self._whole + separator + line if _js.length16(self._whole) + len(separator) + length <= 2 * OUTPUT_CAP else None
-            self._tail = _js.tail16(self._tail + separator + _js.tail16(line, OUTPUT_CAP), OUTPUT_CAP)
+                self._whole_size += len(separator) + length
+                if self._whole_size <= 2 * OUTPUT_CAP:
+                    self._whole.append(line)
+                else:
+                    self._whole = None
+            raw = _js.tail16(line, OUTPUT_CAP) if length > OUTPUT_CAP else line
+            raw_length = _js.length16(raw) if length > OUTPUT_CAP else length
+            self._raw.append((raw, raw_length))
+            self._raw_size += raw_length + 1
+            # Drops the oldest only while what is left still holds the cap.
+            while len(self._raw) > 1 and self._raw_size - (self._raw[0][1] + 1) > OUTPUT_CAP:
+                self._raw_size -= self._raw.popleft()[1] + 1
             if self._head_size < OUTPUT_CAP:
                 self._head.append(_js.head16(line, OUTPUT_CAP - self._head_size))
                 self._head_size += length + 1
@@ -130,8 +146,8 @@ class RunRecorder:
             if not self._lines:
                 return None
             if self._whole is not None:
-                return self._whole
-            return _js.head16("\n".join(self._head), OUTPUT_CAP) + "\n" + self._tail
+                return "\n".join(self._whole)
+            return _js.head16("\n".join(self._head), OUTPUT_CAP) + "\n" + _js.tail16("\n".join(raw for raw, _ in self._raw), OUTPUT_CAP)
 
     def metrics(self) -> dict[str, float]:
         with self._lock:

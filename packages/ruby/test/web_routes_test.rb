@@ -404,4 +404,18 @@ class WebRoutesTest < Minitest::Test
       send_request(web, method, path, headers || {}, body)
     end
   end
+
+  def test_head_answers_the_pages_and_reads_a_get_answers_without_a_body_and_never_runs_the_check
+    cw, _clock, web = app
+    cw.job("nightly").run { nil }
+    run_id = cw.runs("nightly", 1)[0].id
+    ["/", "/jobs/nightly", "/api", "/api/jobs", "/api/jobs/nightly", "/api/runs/#{run_id}"].each do |path|
+      head = send_request(web, "HEAD", "/cronwatch#{path}", BEARER)
+      get = send_request(web, "GET", "/cronwatch#{path}", BEARER)
+      assert_equal [200, ""], [head.status, head.body], path
+      assert_equal get.headers, head.headers, "#{path}: the GET's headers, its length included"
+    end
+    assert_equal 404, send_request(web, "HEAD", "/cronwatch/jobs/missing", BEARER).status
+    refute_equal 200, send_request(web, "HEAD", "/cronwatch/api/check", BEARER).status
+  end
 end

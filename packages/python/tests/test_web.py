@@ -1343,3 +1343,45 @@ def test_the_timeline_puts_an_interval_due_a_period_after_a_run_that_outlasted_i
     times = due_times(summary, parsed, cw.runs("every-hour"), T0, T0 + 5 * HOUR).times
     assert times == [T0 + 150 * MIN, T0 + 210 * MIN, T0 + 270 * MIN], "a period after the 90-minute run ended, not after it began"
     assert missed_at(summary, parsed, times, clock.now()) == T0 + 150 * MIN
+
+
+def test_head_answers_the_pages_and_reads_a_get_answers_without_a_body_and_never_runs_the_check() -> None:
+    cw, _, _ = make(cron_secret=None)
+    cw.job("nightly").run(lambda ctx: None)
+    web = cw.routes(token="tok", base_path="/cronwatch")
+    bearer = {"authorization": "Bearer tok"}
+    for path in ["/", "/jobs/nightly", "/api", "/api/jobs", "/api/jobs/nightly", f"/api/runs/{cw.runs('nightly')[0].id}"]:
+        got = web.handle(Request("HEAD", f"/cronwatch{path}", "", bearer, b"", "https://app.test"))
+        assert (got.status, got.body) == (200, b""), path
+        get = web.handle(Request("GET", f"/cronwatch{path}", "", bearer, b"", "https://app.test"))
+        assert got.headers == get.headers, path
+        through = send(web, "HEAD", f"/cronwatch{path}", bearer)
+        assert (through.status, through.body) == (200, b""), path
+        assert through.headers["content-length"] == str(len(get.body)), "a HEAD's length is its GET's"
+    assert web.handle(Request("HEAD", "/cronwatch/jobs/missing", "", bearer, b"", "https://app.test")).status == 404
+    assert web.handle(Request("HEAD", "/cronwatch/api/check", "", bearer, b"", "https://app.test")).status != 200
+
+    async def asgi(path: str) -> tuple[int, bytes]:
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def emit(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "HEAD",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "/cronwatch",
+            "query_string": b"",
+            "headers": [(b"host", b"app.test"), (b"authorization", b"Bearer tok")],
+            "server": ("127.0.0.1", 8000),
+        }
+        await web.asgi(scope, receive, emit)
+        return sent[0]["status"], sent[1]["body"]
+
+    assert asyncio.run(asgi("/cronwatch/api/jobs")) == (200, b"")

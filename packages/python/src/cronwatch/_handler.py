@@ -13,7 +13,8 @@ answered with how it went:
     # AWS Lambda behind API Gateway or a function URL: lambda_handler = cron.aws_lambda
     # anything else: response = cron(request), for any request with headers
 
-The caller must send ``Authorization: Bearer <secret>``. The secret is the
+The caller must send ``Authorization: Bearer <secret>`` (the scheme in any
+case, then any whitespace, as the dashboard reads it). The secret is the
 handler's ``secret=``, else the client's cron_secret (which defaults to
 $CRON_SECRET, what Vercel sends its cron requests with); "" or a string of
 only whitespace counts as unset, and anything but a string or None raises
@@ -171,9 +172,11 @@ class Handler:
             self._warn_no_secret()
             return _json({"ok": False, "error": NO_SECRET}, 503)
         if self.secret:
-            from .web import _constant_time_equal
+            from .web import _bearer_token, _constant_time_equal
 
-            if not _constant_time_equal(authorization(request), f"Bearer {self.secret}"):
+            # Read as the dashboard's routes read it: the scheme in any case.
+            sent = _bearer_token(authorization(request))
+            if sent is None or not _constant_time_equal(sent, self.secret):
                 return _json({"ok": False, "error": "Unauthorized"}, 401)
         return None
 

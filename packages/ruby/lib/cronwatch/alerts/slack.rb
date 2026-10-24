@@ -29,14 +29,14 @@ module Cronwatch
       def call(alert)
         url = @link&.call(alert)
         title = "#{EMOJI[alert.type]} *#{Slack.escape(alert.title)}*#{url && !url.empty? ? " (<#{Slack.link_target(url)}|open>)" : ""}"
-        body = JS.head16(Slack.code_block_safe(Slack.escape(alert.message)), 2900)
+        body = Slack.cut_escaped(Slack.code_block_safe(Slack.escape(alert.message)), 2900)
         blocks = [
           { "type" => "section", "text" => { "type" => "mrkdwn", "text" => title } },
           { "type" => "section", "text" => { "type" => "mrkdwn", "text" => "```#{body}```" } },
         ]
         if alert.triage && !alert.triage.empty?
           # Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
-          blocks << { "type" => "section", "text" => { "type" => "mrkdwn", "text" => JS.head16("_Triage:_ #{Slack.escape(alert.triage)}", 3000) } }
+          blocks << { "type" => "section", "text" => { "type" => "mrkdwn", "text" => Slack.cut_escaped("_Triage:_ #{Slack.escape(alert.triage)}", 3000) } }
         end
         payload = {
           # The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
@@ -50,6 +50,14 @@ module Cronwatch
       # Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>.
       def self.escape(text)
         text.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;")
+      end
+
+      # Escaped text cut to at most `max` UTF-16 units, splitting neither an
+      # entity escape wrote nor a surrogate pair.
+      def self.cut_escaped(text, max)
+        kept = JS.head16(text, max)
+        amp = kept.rindex("&")
+        amp && !kept.index(";", amp) ? kept[0, amp] : kept
       end
 
       # A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|`

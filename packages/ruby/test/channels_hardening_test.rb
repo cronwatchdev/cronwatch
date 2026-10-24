@@ -39,6 +39,16 @@ class ChannelsHardeningTest < Minitest::Test
 
   EMAIL = { from: "a@b.c", to: "d@e.f" }.freeze
 
+  def test_slack_cuts_its_escaped_text_without_splitting_an_entity_or_a_surrogate_pair
+    http = FakeHTTP.new
+    alert = failed(message: "#{"a" * 2897}<<<")
+    alert.triage = "#{"b" * 2989}\u{1F600}<"
+    A::Slack.new(webhook_url: "https://hooks.slack.example/T/B/x", http: http).call(alert)
+    blocks = JSON.parse(http.requests[0][:body])["blocks"]
+    assert_equal "```#{"a" * 2897}```", blocks[1]["text"]["text"]
+    assert_equal "_Triage:_ #{"b" * 2989}", blocks[2]["text"]["text"]
+  end
+
   def test_a_secret_that_straddles_the_cut_in_a_providers_error_body_is_still_cut_out
     key = "key-0123456789abcdef0123456789abcdef"
     http = FakeHTTP.new { [401, "#{"x" * 180}invalid key #{key}"] }
@@ -100,6 +110,22 @@ class ChannelsHardeningTest < Minitest::Test
     server&.close
     sender&.kill
     sender&.join
+  end
+
+  # Net::HTTP reads http_proxy and https_proxy unless told not to; fetch
+  # never does, so an alert goes straight to the channel's host. (Net::HTTP
+  # never proxies a loopback address, hence a documentation one here.)
+  def test_alerts_go_direct_whatever_the_proxy_variables_say
+    names = %w[http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY]
+    before = names.to_h { |name| [name, ENV.fetch(name, nil)] }
+    names.each { |name| ENV.delete(name) }
+    %w[http_proxy HTTP_PROXY https_proxy HTTPS_PROXY].each { |name| ENV[name] = "http://127.0.0.1:9" }
+    assert Net::HTTP.new("192.0.2.1", 443).proxy?, "Net::HTTP's default reads the variables"
+    net = Cronwatch::HTTP::NetHTTP.new(timeout: 5)
+    refute net.connection(URI("https://192.0.2.1/in")).proxy?
+    refute net.connection(URI("http://192.0.2.1/in")).proxy?
+  ensure
+    before&.each { |name, value| value.nil? ? ENV.delete(name) : ENV[name] = value }
   end
 
   # Net::HTTP never follows a redirect, so a 307 is an answer outside 2xx:

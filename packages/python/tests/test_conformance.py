@@ -412,6 +412,13 @@ def test_is_stuck() -> None:
     )
 
 
+def test_is_stranded() -> None:
+    each_case(
+        HEALTH["isStranded"],
+        lambda c: differs(c["stranded"], _evaluate.is_stranded(Run.from_dict(c["run"]), c["now"])),
+    )
+
+
 def test_unevaluable_summary() -> None:
     def check(c: dict[str, Any]) -> str | None:
         stored = StoredJob.from_dict(c["stored"])
@@ -955,7 +962,7 @@ def test_webhook_payloads() -> None:
             [request["body"], headers["x-cronwatch-signature"], f"sha256={mine}", headers["x-cronwatch-timestamp"], headers["x-cronwatch-timestamp-signature"], f"sha256={timestamped}"],
         )
 
-    assert len(CHANNELS["webhookPayloads"]) == 32
+    assert len(CHANNELS["webhookPayloads"]) == 34
     each_case(CHANNELS["webhookPayloads"], check)
 
 
@@ -1332,7 +1339,7 @@ def test_every_fixture_is_replayed() -> None:
 # The sections of each fixture this harness (or the test named) replays. A
 # section the SDK adds fails here until a replay is written for it.
 SECTIONS = {
-    "health.json": {"jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck", "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery"},
+    "health.json": {"jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck", "isStranded", "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery"},
     # environment and secrets: tests/test_env.py.
     "client.json": {"runIds", "unknownFields", "environment", "secrets", "outbox"},
     # foreignRows: tests/test_foreign_rows.py (rows and check).

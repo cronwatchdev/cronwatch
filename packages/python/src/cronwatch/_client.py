@@ -42,6 +42,7 @@ from ._evaluate import (
     has_full_baseline,
     hold_alerts,
     hold_run,
+    is_stranded,
     is_stuck,
     normalize_state,
     on_check,
@@ -120,6 +121,10 @@ HISTORY_MAX = 200
 #: Run ids that start with this belong to the pg_cron source.
 RESERVED_RUN_ID_PREFIX = "pgcron:"
 DEFAULT_OPTIONS = ("grace", "timeout", "timezone", "failures_before_alert")
+#: The statuses record_run() takes.
+_RUN_STATUSES = frozenset(str(status) for status in RunStatus)
+#: The error a check gives an import whose finish never landed (is_stranded).
+_STRANDED_ERROR = "Imported, but its finish was never written; marked as timed out"
 
 
 class ChannelTimeout(Exception):
@@ -717,8 +722,9 @@ class Cronwatch:
         processes record the same finish, only the one whose write lands
         evaluates it. ``evaluate=False`` stores it without judging it, for
         history imported on first sight. A metric that is not a finite number
-        raises before anything is written, as metric() does. Returns the
-        alerts it sent."""
+        raises before anything is written, as metric() does, and so does a
+        status, start, finish, duration, error, output, or trigger evaluation
+        cannot read. Returns the alerts it sent."""
         self._after_fork_check()
         given = run if isinstance(run, Run) else Run.from_dict(run)
         with self._registry:
@@ -731,6 +737,21 @@ class Cronwatch:
             raise ValueError(f'record_run: run ids must be 1 to 200 characters (got {got}; job "{given.job}")')
         if "\x00" in given.id:
             raise ValueError(f'record_run: run ids cannot contain a NUL character (job "{given.job}")')
+        # The fields evaluation reads, checked for callers without the types.
+        where = f'job "{given.job}", run "{given.id}"'
+        if not isinstance(given.status, str) or given.status not in _RUN_STATUSES:
+            raise ValueError(f'record_run: status must be "running", "ok", "failed", or "timeout" ({where})')
+        if not _js.is_finite(given.started_at):
+            raise ValueError(f"record_run: started_at must be a finite number ({where})")
+        if given.finished_at is not None and not _js.is_finite(given.finished_at):
+            raise ValueError(f"record_run: finished_at must be a finite number or None ({where})")
+        if given.duration_ms is not None and not _js.is_finite(given.duration_ms):
+            raise ValueError(f"record_run: duration_ms must be a finite number or None ({where})")
+        for field in ("error", "output"):
+            if getattr(given, field) is not None and not isinstance(getattr(given, field), str):
+                raise ValueError(f"record_run: {field} must be a string or None ({where})")
+        if not isinstance(given.trigger, str):
+            raise ValueError(f"record_run: trigger must be a string ({where})")
         # Refused as metric() refuses them: a store keeps NaN and Infinity as null.
         for metric, value in (given.metrics or {}).items():
             if not _js.is_finite(value):
@@ -752,8 +773,15 @@ class Cronwatch:
         stored = self.store.get_run(run.id)
         if stored is not None:
             return self._record_over(definition, stored, run, evaluate)
+        # An evaluated import stays retryable until its durable evaluation
+        # marker is written. A finished one's placeholder has finished_at set
+        # to when it was written, so a check can tell one whose finish never
+        # landed (is_stranded); the finish writes the run's own. One still
+        # running keeps finished_at None, so it times out as any running run does.
         inserted = run.copy()
         if evaluate:
+            if inserted.status != RunStatus.RUNNING:
+                inserted.finished_at = self.now()
             inserted.status = RunStatus.RUNNING
         try:
             self.store.insert_run(inserted)
@@ -1647,18 +1675,25 @@ class Cronwatch:
                     if stored_job is not None:
                         self._evaluable(stored_job)
                     judged = stored_job.definition if stored_job else None
-                if judged is None or not is_stuck(judged, listed, at):
+                stranded = is_stranded(listed, at)
+                if judged is None or not (stranded or is_stuck(judged, listed, at)):
                     continue
                 # Read again just before the write: lines and metrics flushed since
                 # the list was read (while earlier stuck runs were sent, say) are kept.
                 run = self.store.get_run(listed.id)
                 if run is None or run.status != RunStatus.RUNNING or run.job != listed.job:
                     continue
-                timeout = timeout_ms(judged)
                 run.status = RunStatus.TIMEOUT
-                run.finished_at = at
-                run.duration_ms = run_duration(run.started_at, at)
-                run.error = f"Still running after {format_duration(timeout)}; marked as timed out"
+                if stranded and run.finished_at is not None:
+                    # Its own status was never written; a late finish of it is
+                    # judged as one after a timeout, so a success still recovers.
+                    if run.duration_ms is None:
+                        run.duration_ms = run_duration(run.started_at, run.finished_at)
+                    run.error = _STRANDED_ERROR if run.error is None else f"{_STRANDED_ERROR}\n{run.error}"
+                else:
+                    run.finished_at = at
+                    run.duration_ms = run_duration(run.started_at, at)
+                    run.error = f"Still running after {format_duration(timeout_ms(judged))}; marked as timed out"
                 # Only over a row still running: a finish that landed meanwhile wins.
                 if not self._write_run_if(run, [RunStatus.RUNNING]):
                     continue
