@@ -4,7 +4,7 @@ Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.14.2
+Stable tag: 0.14.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -141,7 +141,7 @@ On a single site, yes. The site sends alerts to the addresses set under CronWatc
 
 == Changelog ==
 
-= Unreleased =
+= 0.14.3 =
 * The JSON API's token is saved as its SHA-256 digest, never as itself. A token saved before is changed to its digest the first time the plugin reads it, and keeps working.
 * The dashboard in wp-admin ignores an Authorization header, as WordPress's sign-in stands for its token.
 * Errors from the database, the HTTP API, and wp_mail are kept as plain text, so a notice and the error log no longer show them escaped twice.
