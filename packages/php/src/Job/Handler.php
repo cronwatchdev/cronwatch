@@ -30,8 +30,8 @@ use Cronwatch\Web\ResponseStatus;
  *     return $cron($request);                                // a Symfony controller (or Laravel's)
  *     new Cronwatch\Web\PsrJobHandler($cron, $f, $f);        // PSR-15 (Slim, Mezzio)
  *
- * The caller must send `Authorization: Bearer <secret>`, compared in
- * constant time. The secret is the handler's own `secret:`, else the
+ * The caller must send `Authorization: Bearer <secret>` (the scheme in any
+ * case, as the dashboard reads it), compared in constant time. The secret is the handler's own `secret:`, else the
  * client's cronSecret (CRON_SECRET by default); "" (the default), a string
  * of only whitespace, and FromEnv::Read each mean the client's secret, and
  * `secret: null` (or a client made with `cronSecret: null`) lets anyone run
@@ -116,8 +116,12 @@ final class Handler
             $this->client->warnNoSecret();
             return self::json(['ok' => false, 'error' => self::NO_SECRET], 503);
         }
-        if ($this->secret !== null && !Dashboard::secretMatches(self::authorization($request), "Bearer {$this->secret}")) {
-            return self::json(['ok' => false, 'error' => 'Unauthorized'], 401);
+        if ($this->secret !== null) {
+            // Read as the dashboard's routes read it: the scheme in any case.
+            $sent = Dashboard::bearerToken(self::authorization($request));
+            if ($sent === null || !Dashboard::secretMatches($sent, $this->secret)) {
+                return self::json(['ok' => false, 'error' => 'Unauthorized'], 401);
+            }
         }
         return null;
     }

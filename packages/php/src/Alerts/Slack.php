@@ -50,14 +50,14 @@ final class Slack implements AlertChannel
     {
         $url = Shared::link($this->link, $alert);
         $title = (self::EMOJI[$alert->type] ?? 'undefined') . ' *' . self::escape($alert->title) . '*' . ($url !== null ? ' (<' . self::linkTarget($url) . '|open>)' : '');
-        $body = Js::slice16(self::codeBlockSafe(self::escape($alert->message)), 2900);
+        $body = self::cutEscaped(self::codeBlockSafe(self::escape($alert->message)), 2900);
         $blocks = [
             ['type' => 'section', 'text' => ['type' => 'mrkdwn', 'text' => $title]],
             ['type' => 'section', 'text' => ['type' => 'mrkdwn', 'text' => '```' . $body . '```']],
         ];
         // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
         if (Shared::present($alert->triage)) {
-            $blocks[] = ['type' => 'section', 'text' => ['type' => 'mrkdwn', 'text' => Js::slice16('_Triage:_ ' . self::escape((string) $alert->triage), 3000)]];
+            $blocks[] = ['type' => 'section', 'text' => ['type' => 'mrkdwn', 'text' => self::cutEscaped('_Triage:_ ' . self::escape((string) $alert->triage), 3000)]];
         }
         $response = $this->http->post(Shared::postable($this->webhookUrl), Js::stringify([
             // The notification fallback is parsed as mrkdwn too, so it is escaped like the blocks.
@@ -74,6 +74,14 @@ final class Slack implements AlertChannel
     private static function escape(string $text): string
     {
         return strtr($text, ['&' => '&amp;', '<' => '&lt;', '>' => '&gt;']);
+    }
+
+    /** Escaped text cut to at most `$max` UTF-16 units, splitting neither an entity escape() wrote nor a surrogate pair. */
+    private static function cutEscaped(string $text, int $max): string
+    {
+        $kept = Shared::cut($text, $max);
+        $amp = strrpos($kept, '&');
+        return $amp !== false && !str_contains(substr($kept, $amp), ';') ? substr($kept, 0, $amp) : $kept;
     }
 
     /** A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|` percent-encoded, which ends neither the link nor its text. */

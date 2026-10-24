@@ -1022,6 +1022,18 @@ final class Evaluate
     }
 
     /**
+     * Whether a finished import was left as its placeholder: recordRun() writes
+     * one as running, with `finishedAt` set to when it was written, and the
+     * finish that follows never landed (the importer stopped, or a store write
+     * failed and it was not retried). A check closes one SEND_LEASE_MS after
+     * it was written, as it closes a stuck run.
+     */
+    public static function isStranded(Run $run, int|float $now): bool
+    {
+        return $run->status === RunStatus::RUNNING && $run->finishedAt !== null && $now - $run->finishedAt > self::SEND_LEASE_MS;
+    }
+
+    /**
      * While a job is silenced nothing new is recorded as an incident:
      * conditions may close (so a job that recovered during the silence shows
      * as healthy) but none may open, so the first problem after the silence

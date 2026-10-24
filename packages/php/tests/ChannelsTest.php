@@ -817,6 +817,15 @@ final class ChannelsTest extends TestCase
         $this->assertSame('https://hooks.example.com', Alerts\Shared::origin("https://hooks.exa\tmple.com/x"), 'a tab inside is dropped, as the URL parser drops it');
     }
 
+    public function testSlackCutsItsEscapedTextWithoutSplittingAnEntityOrASurrogatePair(): void
+    {
+        $http = new FakeHttp();
+        (new Alerts\Slack('https://hooks.slack.example/T/B/x', http: $http))->send(self::failed(str_repeat('a', 2897) . '<<<', str_repeat('b', 2989) . "\u{1F600}<"), self::context());
+        $blocks = json_decode($http->requests[0]['body'])->blocks;
+        $this->assertSame('```' . str_repeat('a', 2897) . '```', $blocks[1]->text->text);
+        $this->assertSame('_Triage:_ ' . str_repeat('b', 2989), $blocks[2]->text->text);
+    }
+
     public function testAWebhookWithAnEmptySecretReportsThatItSendsUnsignedOnEachSendAndStillSends(): void
     {
         $http = new FakeHttp();

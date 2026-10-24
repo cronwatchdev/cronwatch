@@ -162,7 +162,7 @@ return $cron($request);                                      // a Symfony (or La
 $psr = new Cronwatch\Web\PsrJobHandler($cron, $f, $f);       // PSR-15, with a PSR-17 factory
 ```
 
-The caller must send `Authorization: Bearer <secret>`: the handler's `secret:`, else the client's `cronSecret` (`CRON_SECRET` by default). With no secret at all it answers 503 outside development; `secret: null` lets anyone run the job (`false`, deprecated, does the same; before 0.11 `null` meant the client's secret). Each request is a recorded run, answered with `{"ok","job","run","status","durationMs"}` and 200 or 500. A function that returns a response is answered with it, and a status of 400 or more fails the run, from any job: a PSR-7 response, Symfony's or Laravel's, Laravel's HTTP client response, a `Cronwatch\Web\Response`, or an array such as `['status' => 503, 'body' => 'down']`.
+The caller must send `Authorization: Bearer <secret>` (the scheme in any case, as the dashboard reads it): the handler's `secret:`, else the client's `cronSecret` (`CRON_SECRET` by default). With no secret at all it answers 503 outside development; `secret: null` lets anyone run the job (`false`, deprecated, does the same; before 0.11 `null` meant the client's secret). Each request is a recorded run, answered with `{"ok","job","run","status","durationMs"}` and 200 or 500. A function that returns a response is answered with it, and a status of 400 or more fails the run, from any job: a PSR-7 response, Symfony's or Laravel's, Laravel's HTTP client response, a `Cronwatch\Web\Response`, or an array such as `['status' => 503, 'body' => 'down']`.
 
 ### Laravel
 

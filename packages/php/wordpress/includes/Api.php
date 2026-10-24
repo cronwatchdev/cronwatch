@@ -30,6 +30,8 @@ use Cronwatch\Web\Response;
 final class Api
 {
     public const NAMESPACE = 'cronwatch/v1';
+    /** What a saved token's digest starts with; a token typed in cannot hold the colon. */
+    public const DIGEST = 'sha256:';
 
     /** The response the route made, written out by serve(). */
     private static ?Response $pending = null;
@@ -55,6 +57,24 @@ final class Api
         return $settings['api_enabled'] === '1' && $settings['api_token'] !== '';
     }
 
+    /**
+     * What the settings keep in place of the token: its SHA-256, so a read
+     * of the options table (a backup, another plugin, a SQL injection
+     * elsewhere) does not give the token away. The token is long and
+     * random, made by the plugin or at least 24 characters typed in, so an
+     * unsalted digest is enough.
+     */
+    public static function digest(string $token): string
+    {
+        return self::DIGEST . hash('sha256', $token);
+    }
+
+    /** Whether a saved token is a digest, not a token an earlier release saved as it was. */
+    public static function isDigest(string $saved): bool
+    {
+        return str_starts_with($saved, self::DIGEST);
+    }
+
     /** The base URL an API client (the MCP server) is given. */
     public static function baseUrl(): string
     {
@@ -63,7 +83,7 @@ final class Api
 
     /**
      * The route's permission check: `Authorization: Bearer <token>`, the
-     * owner's token compared in constant time (or, for /api/check, the
+     * token's digest compared with the saved one in constant time (or, for /api/check, the
      * client's cron secret, when a developer gave it one). Missing or wrong,
      * it is a 401 whose body is the dashboard's own
      * (`{"ok":false,"error":"Unauthorized"}`, what @cronwatch/mcp reads),
@@ -77,7 +97,7 @@ final class Api
         }
         $bearer = self::bearer((string) $rest->get_header('authorization'));
         if ($bearer !== null) {
-            if (Dashboard::secretMatches($bearer, (string) $settings['api_token'])) {
+            if (self::isToken($bearer, $settings)) {
                 return true;
             }
             $secret = Plugin::client()->cronSecret;
@@ -87,7 +107,7 @@ final class Api
         }
         // The dashboard's own refusal of this request, its credentials taken
         // out: the SDK's 401 (or its 403 for a cross-site change), body, and headers.
-        $refusal = self::dashboard($settings)->handle(self::request($rest, false));
+        $refusal = self::dashboard(null)->handle(self::request($rest, false));
         if ($refusal->status < 400) {
             $refusal = new Response(401, ['content-type' => 'application/json; charset=utf-8', 'cache-control' => 'no-store'] + Dashboard::SECURITY_HEADERS, '{"ok":false,"error":"Unauthorized"}');
         }
@@ -110,13 +130,25 @@ final class Api
             // The plugin's check: WP-Cron's events declared as jobs first.
             Plugin::prepare();
         }
-        self::$pending = self::dashboard($settings)->handle(self::request($rest, true));
+        // The dashboard is given the token the request carried, once its digest
+        // is the saved one; a request let in by the cron secret alone gets one
+        // nobody holds, so the dashboard lets it run the check and nothing else.
+        $bearer = self::bearer((string) $rest->get_header('authorization'));
+        self::$pending = self::dashboard($bearer !== null && self::isToken($bearer, $settings) ? $bearer : null)->handle(self::request($rest, true));
         return new \WP_REST_Response(null, self::$pending->status, self::$pending->headers);
     }
 
-    private static function dashboard(array $settings): Dashboard
+    /** Whether a bearer is the owner's token: its digest is the saved one. */
+    private static function isToken(string $bearer, array $settings): bool
     {
-        return new Dashboard(Plugin::client(), token: (string) $settings['api_token'], basePath: '/' . self::NAMESPACE, origin: AdminDashboard::origin(rest_url()), head: [AdminDashboard::class, 'head']);
+        $saved = (string) $settings['api_token'];
+        return $saved !== '' && hash_equals($saved, self::digest($bearer));
+    }
+
+    /** The dashboard answering the API with a token: the one the request carried, or (null) one nobody holds. */
+    private static function dashboard(?string $token): Dashboard
+    {
+        return new Dashboard(Plugin::client(), token: $token ?? bin2hex(random_bytes(32)), basePath: '/' . self::NAMESPACE, origin: AdminDashboard::origin(rest_url()), head: [AdminDashboard::class, 'head']);
     }
 
     /** The token of `Bearer <token>`, as the dashboard reads it, or null for anything else. */

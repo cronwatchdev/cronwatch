@@ -84,6 +84,8 @@ final class Cronwatch
     public const HISTORY_MAX = 200;
     /** The longest run id, in UTF-16 code units: what start(), resume() and recordRun() take, and every store holds. */
     private const MAX_RUN_ID = 200;
+    /** The error a check gives an import whose finish never landed (Evaluate::isStranded). */
+    private const STRANDED_ERROR = 'Imported, but its finish was never written; marked as timed out';
     /**
      * Run ids that start with this belong to the pg_cron source.
      *
@@ -329,8 +331,12 @@ final class Cronwatch
      */
     public function recordRun(Run|array $run, bool $evaluate = true): array
     {
-        $given = $run instanceof Run ? $run : Run::fromJson($run);
-        $declared = $this->definitions[$given->job] ?? throw new \InvalidArgumentException("recordRun: job \"{$given->job}\" is not declared; call job() first");
+        $fields = $run instanceof Run ? $run->toJson() : Js::fields($run);
+        $job = $run instanceof Run ? $run->job : (string) ($fields['job'] ?? '');
+        $declared = $this->definitions[$job] ?? throw new \InvalidArgumentException("recordRun: job \"{$job}\" is not declared; call job() first");
+        // An array's id and job as Run::fromJson() reads them; its other fields are
+        // checked below before fromJson() reads them, which a wrong type would make throw a TypeError.
+        $given = $run instanceof Run ? $run : new Run((string) ($fields['id'] ?? ''), $job, '', 0);
         // The longest id start() takes; MySQL's column would hold 255, but every store holds 200.
         $length = Js::length16($given->id);
         if ($given->id === '' || $length > self::MAX_RUN_ID) {
@@ -339,6 +345,29 @@ final class Cronwatch
         if (str_contains($given->id, "\0")) {
             throw new \InvalidArgumentException("recordRun: run ids cannot contain a NUL character (job \"{$given->job}\")");
         }
+        // The fields evaluation reads, checked for callers without the types.
+        $where = "job \"{$given->job}\", run \"{$given->id}\"";
+        if (!in_array($fields['status'] ?? null, [RunStatus::RUNNING, RunStatus::OK, RunStatus::FAILED, RunStatus::TIMEOUT], true)) {
+            throw new \InvalidArgumentException("recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" ({$where})");
+        }
+        if (!Js::isFinite($fields['startedAt'] ?? null)) {
+            throw new \InvalidArgumentException("recordRun: startedAt must be a finite number ({$where})");
+        }
+        foreach (['finishedAt', 'durationMs'] as $field) {
+            if (($fields[$field] ?? null) !== null && !Js::isFinite($fields[$field])) {
+                throw new \InvalidArgumentException("recordRun: {$field} must be a finite number or null ({$where})");
+            }
+        }
+        foreach (['error', 'output'] as $field) {
+            if (($fields[$field] ?? null) !== null && !is_string($fields[$field])) {
+                throw new \InvalidArgumentException("recordRun: {$field} must be a string or null ({$where})");
+            }
+        }
+        // Left out, it is "run", as Run::fromJson() reads it.
+        if (array_key_exists('trigger', $fields) && !is_string($fields['trigger'])) {
+            throw new \InvalidArgumentException("recordRun: trigger must be a string ({$where})");
+        }
+        $given = $run instanceof Run ? $run : Run::fromJson($fields);
         // Refused as a job's metric() refuses them: a store keeps NaN and INF as null.
         foreach ($given->metrics as $metric => $value) {
             if (!Js::isFinite($value)) {
@@ -367,8 +396,13 @@ final class Cronwatch
             return $this->recordOver($definition, $stored, $run, $evaluate);
         }
         // Keep evaluated imports retryable until their pending marker is durable.
+        // A finished run's placeholder has finishedAt set to when it was written,
+        // so a check can tell one whose finish never landed (isStranded); the
+        // finish writes the run's own. A running import keeps null, and times
+        // out by the job's timeout.
         $inserted = clone $run;
         if ($evaluate) {
+            $inserted->finishedAt = $run->status === RunStatus::RUNNING ? null : $this->now();
             $inserted->status = RunStatus::RUNNING;
         }
         try {
@@ -1531,7 +1565,8 @@ final class Cronwatch
                     self::evaluable($found);
                 }
                 $judged = $declared !== null ? Serialize::toStored($declared) : $found?->definition;
-                if ($judged === null || !Evaluate::isStuck($judged, $listed, $at)) {
+                $stranded = Evaluate::isStranded($listed, $at);
+                if ($judged === null || !($stranded || Evaluate::isStuck($judged, $listed, $at))) {
                     continue;
                 }
                 // Read again just before the write: lines and metrics flushed since the
@@ -1540,11 +1575,17 @@ final class Cronwatch
                 if ($run === null || $run->status !== RunStatus::RUNNING || $run->job !== $listed->job) {
                     continue;
                 }
-                $timeout = Evaluate::timeoutMs($judged);
                 $run->status = RunStatus::TIMEOUT;
-                $run->finishedAt = $at;
-                $run->durationMs = Evaluate::runDuration($run->startedAt, $at);
-                $run->error = 'Still running after ' . Duration::format($timeout) . '; marked as timed out';
+                if ($stranded) {
+                    // Its own status was never written; a late finish of it is judged
+                    // as one after a timeout, so a success still recovers.
+                    $run->durationMs ??= Evaluate::runDuration($run->startedAt, $run->finishedAt);
+                    $run->error = self::STRANDED_ERROR . ($run->error === null ? '' : "\n{$run->error}");
+                } else {
+                    $run->finishedAt = $at;
+                    $run->durationMs = Evaluate::runDuration($run->startedAt, $at);
+                    $run->error = 'Still running after ' . Duration::format(Evaluate::timeoutMs($judged)) . '; marked as timed out';
+                }
                 // Only over a row still running: a finish that landed meanwhile wins.
                 if (!$this->writeRunIf($run, [RunStatus::RUNNING])) {
                     continue;

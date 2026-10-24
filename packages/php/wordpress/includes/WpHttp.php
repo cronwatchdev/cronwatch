@@ -43,7 +43,7 @@ final class WpHttp implements Http
             if (stripos($message, 'timed out') !== false || stripos($message, 'timeout') !== false) {
                 throw new RequestTimeout();
             }
-            throw new \RuntimeException(esc_html($message));
+            throw new \RuntimeException($message); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
         }
         return new HttpResponse((int) wp_remote_retrieve_response_code($response), (string) wp_remote_retrieve_body($response));
     }

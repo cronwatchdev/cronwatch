@@ -339,6 +339,11 @@ final class ConformanceTest extends TestCase
         $this->eachCase(self::fixture('health.json')->isStuck, fn (\stdClass $c) => self::differs($c->stuck, Evaluate::isStuck(JobDefinition::fromJson($c->definition), Run::fromJson($c->run), $c->now)));
     }
 
+    public function testIsStranded(): void
+    {
+        $this->eachCase(self::fixture('health.json')->isStranded, fn (\stdClass $c) => self::differs($c->stranded, Evaluate::isStranded(Run::fromJson($c->run), $c->now)));
+    }
+
     public function testRunDuration(): void
     {
         $this->eachCase(self::fixture('health.json')->runDuration, fn (\stdClass $c) => self::differs($c->durationMs, Evaluate::runDuration($c->startedAt, $c->finishedAt)));

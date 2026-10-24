@@ -164,11 +164,18 @@ final class Dashboard
     public function serve(): void
     {
         $request = Request::fromGlobals();
-        $this->handle($request)->send($request->method);
+        // send() leaves a HEAD's body out itself, after a Content-Length of the GET's.
+        $this->answer($request)->send($request->method);
     }
 
-    /** One request, answered as the SDK's routes answer it. */
+    /** One request, answered as the SDK's routes answer it; a HEAD as its GET would be, without the body. */
     public function handle(Request $request): Response
+    {
+        $response = $this->answer($request);
+        return strtoupper($request->method) === 'HEAD' ? new Response($response->status, $response->headers) : $response;
+    }
+
+    private function answer(Request $request): Response
     {
         $this->warnShortToken();
         $wantsHtml = true;
@@ -437,7 +444,9 @@ final class Dashboard
         }
 
         // HTML
-        if ($method === 'GET' && $path === '/') {
+        // A HEAD reads what a GET would; handle() sends it without a body.
+        $reads = $method === 'GET' || $method === 'HEAD';
+        if ($reads && $path === '/') {
             $entries = $cw->jobsWithRuns(self::BOARD_PAGE_RUNS);
             $now = $cw->now();
             $runsByJob = [];
@@ -447,7 +456,7 @@ final class Dashboard
             $jobs = array_map(fn (JobWithRuns $entry) => $entry->job, $entries);
             return self::html(Html::dashboardPage($jobs, $runsByJob, $now, $base, null, $this->boardLanes($entries, $now), $this->head, $this->empty));
         }
-        if ($method === 'GET' && count($parts) === 2 && $parts[0] === 'jobs') {
+        if ($reads && count($parts) === 2 && $parts[0] === 'jobs') {
             $job = $cw->jobSummary($parts[1]);
             if ($job === null) {
                 return self::html(Html::messagePage('No such job', "{$parts[1]} is not in the store.", $base, head: $this->head), 404);
@@ -506,16 +515,17 @@ final class Dashboard
     private function serveApi(Request $request, string $method, array $rest, ?string $bearer): Response
     {
         $cw = $this->cw;
+        $reads = $method === 'GET' || $method === 'HEAD';
         // What is serving the API, so a client such as @cronwatch/mcp can tell.
-        if ($method === 'GET' && $rest === []) {
+        if ($reads && $rest === []) {
             return self::api(['ok' => true, 'library' => self::LIBRARY, 'language' => 'php', 'version' => Cronwatch::VERSION, 'api' => self::API_VERSION]);
         }
-        if ($method === 'GET' && $rest === ['jobs']) {
+        if ($reads && $rest === ['jobs']) {
             return self::api(['ok' => true, 'jobs' => $cw->jobs()]);
         }
         if (count($rest) === 2 && $rest[0] === 'jobs') {
             $name = $rest[1];
-            if ($method === 'GET') {
+            if ($reads) {
                 $job = $cw->jobSummary($name);
                 if ($job === null) {
                     return self::api(['ok' => false, 'error' => 'No such job'], 404);
@@ -566,7 +576,7 @@ final class Dashboard
                 return self::api(['ok' => true] + $cw->check()->toJson());
             }
         }
-        if ($method === 'GET' && count($rest) === 2 && $rest[0] === 'runs') {
+        if ($reads && count($rest) === 2 && $rest[0] === 'runs') {
             $run = $cw->getRun($rest[1]);
             return $run !== null ? self::api(['ok' => true, 'run' => $run]) : self::api(['ok' => false, 'error' => 'No such run'], 404);
         }
@@ -636,8 +646,10 @@ final class Dashboard
      * follow it, else null. Any other scheme (a proxy's Basic auth, say) is
      * not a bearer at all, so the cookie and ?token= are read as if no header
      * came (/^Bearer\s+([\s\S]*)$/i).
+     *
+     * @internal For the dashboard and a job's handler.
      */
-    private static function bearerToken(?string $authorization): ?string
+    public static function bearerToken(?string $authorization): ?string
     {
         if ($authorization === null) {
             return null;

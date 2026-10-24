@@ -44,7 +44,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         // would fold them, so here any prefix WordPress takes is kept as it is.
         $prefix = $wpdb->prefix . 'cronwatch_';
         if (preg_match('/^[A-Za-z0-9_]+$/D', $prefix) !== 1 || strlen($prefix) > 64 - strlen('runs_job_started')) {
-            throw new \InvalidArgumentException(esc_html("CronWatch cannot name tables with the prefix {$prefix}"));
+            throw new \InvalidArgumentException("CronWatch cannot name tables with the prefix {$prefix}"); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
         }
         $this->prefix = $prefix;
         $this->sql = Sql::statements('mysql', $prefix);
@@ -64,7 +64,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
     {
         $why = self::unsupported($this->wpdb->db_server_info());
         if ($why !== null) {
-            throw new \RuntimeException(esc_html($why));
+            throw new \RuntimeException($why); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
         }
         foreach (self::schema($this->prefix, $this->wpdb->db_server_info()) as $statement) {
             $this->query($statement);
@@ -75,7 +75,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
     /** Drops the tables, for uninstall. */
     public function drop(): void
     {
-        $this->query("DROP TABLE IF EXISTS {$this->prefix}jobs, {$this->prefix}runs, {$this->prefix}state");
+        $this->query('DROP TABLE IF EXISTS %i, %i, %i', identifiers: ["{$this->prefix}jobs", "{$this->prefix}runs", "{$this->prefix}state"]);
         delete_option(self::OPTION);
     }
 
@@ -138,9 +138,9 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
      * that keeps the value: its %f would round to six places.
      *
      * The text is the library's (Sql::statements: fixed text naming this
-     * site's cronwatch_ tables, whose prefix the constructor checked). Table
-     * names are not placeholders: %i needs WordPress 6.2, and the plugin
-     * supports 6.1.
+     * site's cronwatch_ tables, whose prefix the constructor checked), shared
+     * with MysqlStore, so its table names stay in it rather than becoming %i
+     * placeholders; the plugin's own statement (drop()) names them with %i.
      *
      * @return array{string, list<int|string>}
      */
@@ -164,7 +164,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
             if (is_float($value) && is_finite($value)) {
                 $digits = Js::number($value);
                 if (preg_match('/^-?[0-9]+(\.[0-9]+)?(e[+-]?[0-9]+)?$/D', $digits) !== 1) {
-                    throw new \InvalidArgumentException(esc_html("CronWatch cannot store the number {$digits}"));
+                    throw new \InvalidArgumentException("CronWatch cannot store the number {$digits}"); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
                 }
                 return $digits;
             }
@@ -181,13 +181,16 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
      * Every value goes through $wpdb->prepare(), called here with the
      * statement's placeholders (see placeholders()); a statement with no
      * values (a list, the schema, a transaction) is the library's fixed text.
+     * `$identifiers` are the %i placeholders of a text written here, which
+     * come before any ? in it.
      * They are on the plugin's own tables, so there is no WordPress API to
      * use instead, and nothing to cache: a run or a state is read to be
      * changed.
      */
-    private function query(string $text, array $params = [], bool $select = false): array|int
+    private function query(string $text, array $params = [], bool $select = false, array $identifiers = []): array|int
     {
         [$template, $args] = self::placeholders($text, $params);
+        $args = [...$identifiers, ...$args];
         $wpdb = $this->wpdb;
         $suppressed = $wpdb->suppress_errors(true);
         try {
@@ -204,7 +207,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
             }
             // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery, PluginCheck.Security.DirectDB.UnescapedDBParameter
             if ($wpdb->last_error !== '') {
-                throw new \RuntimeException(esc_html('WordPress database error: ' . $wpdb->last_error));
+                throw new \RuntimeException('WordPress database error: ' . $wpdb->last_error); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
             }
             return $select ? $result : (int) $result;
         } finally {
@@ -278,6 +281,10 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         }
         // MySQL counts only the rows an UPDATE changed, so a row that already
         // held these values (and matched) answers 0: it was written all the same.
+        // A second writer of the same values answers true only while the row
+        // still matches, which is only when its status is one of $fromStatuses
+        // (a flush of a running run): every store, counting matched rows, says
+        // the same. A finish moves the status out of them, so the second finish fails.
         $stored = $this->getRun($run->id);
         return $stored !== null && in_array($stored->status, $fromStatuses, true)
             && Js::stringify(Sql::updateRunParams($stored)) === Js::stringify(Sql::updateRunParams($run));
