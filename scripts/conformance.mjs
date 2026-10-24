@@ -41,6 +41,7 @@ import {
   recordSent,
   releaseSending,
   SEND_LEASE_MS,
+  isStranded,
   isStuck,
   jobHealth,
   muteOpens,
@@ -1232,6 +1233,16 @@ function healthCases() {
     [{ timeout: "5m" }, r("a", "running", -(2 ** 62), null)],
     [{ timeout: "5m" }, r("a", "running", 2 ** 62, null)],
   ].map(([definition, runValue]) => ({ definition, run: runValue, now: T0, stuck: isStuck(definition, runValue, T0) }));
+  // An import's placeholder (running, finishedAt when it was written) whose
+  // finish never landed: closed once SEND_LEASE_MS has passed since then.
+  const stranded = [
+    { ...r("placeholder", "running", T0 - HOUR, null), finishedAt: T0 - SEND_LEASE_MS, durationMs: 1000 },
+    { ...r("placeholder", "running", T0 - HOUR, null), finishedAt: T0 - SEND_LEASE_MS - 1, durationMs: 1000 },
+    { ...r("placeholder", "running", T0 - HOUR, null), finishedAt: T0, durationMs: null },
+    r("a", "running", T0 - HOUR, null),
+    r("a", "ok", T0 - HOUR),
+    { ...r("a", "timeout", T0 - HOUR), finishedAt: T0 - HOUR },
+  ].map((runValue) => ({ run: runValue, now: T0, stranded: isStranded(runValue, T0) }));
 
   // A run's duration, from its start to its finish (or to now, for a run
   // marked as timed out): 0 for a start after the finish, and at most 2^53 - 1,
@@ -1320,7 +1331,7 @@ function healthCases() {
   ].map(([duration, now]) => ({ duration, now, silencedUntil: silenceEnd(now, sdk.parseDuration(duration)) }));
 
   return {
-    jobHealth: jobHealthCases, summarize: summaries, percentile: stats, median: medians, normalizeState: normalized, muteOpens: mutes, isStuck: stuck,
+    jobHealth: jobHealthCases, summarize: summaries, percentile: stats, median: medians, normalizeState: normalized, muteOpens: mutes, isStuck: stuck, isStranded: stranded,
     unevaluableSummary: unevaluable, applySilence: silences, staleAlert: staleCases, runDuration: durations, stateVersion: versions,
     failureCount: failureCounts, silenceEnd: silenceEnds, delivery: deliveryCases(state),
   };
@@ -2344,6 +2355,7 @@ function channelAlerts() {
     { name: "a long message with a fence", alert: failed(sampleRun({ error: "Error: long", output: "````\n" + "z".repeat(5000) }), "short") },
     { name: "fences all the way past the cut", alert: failed(sampleRun({ error: "Error: fences", output: "```&<>".repeat(1500) })) },
     { name: "escapes that grow past the cut", alert: failed(sampleRun({ error: "Error: amp", output: "&".repeat(1000) + "<>".repeat(600) })) },
+    { name: "an emoji across the cut", alert: failed(sampleRun({ error: "Error: emoji", output: "z".repeat(2899 - "Error: emoji\n".length) + "\u{1F600}".repeat(4) }), "y".repeat(2989) + "\u{1F600}<<") },
     { name: "accents and emoji", alert: failed(sampleRun({ error: "Error: caf\u00e9 \u{1F600}", output: "r\u00e9sum\u00e9 \u{1F680} done" }), "\u00e9t\u00e9 \u{1F600} `code` [link](x)") },
     { name: "an empty triage", alert: failed(failedRun, "") },
     { name: "a missed run", alert: clone(sdk.composeAlert({ type: "missed", run: null, details: { dueAt: T0 - 30 * MIN, deadline: T0 - 15 * MIN, graceMs: 15 * MIN, lastRunAt: null } }, def, T0)) },

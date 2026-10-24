@@ -463,3 +463,55 @@ test("a concurrent check does not time out a completed import awaiting its marke
   assert.equal((await store.getRun("old-success"))!.status, "ok");
   assert.deepEqual(sent.types(), []);
 });
+
+test("an evaluated import whose state write fails and is not retried is closed by a check", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const cas = store.compareAndSetState!.bind(store);
+  let fail = true;
+  store.compareAndSetState = async (...args) => {
+    if (fail) { fail = false; throw new Error("state unavailable"); }
+    return cas(...args);
+  };
+  const cw = cronwatch({ store, now: c.now, alerts: [sent], onError: () => {} });
+  cw.job("imported", { schedule: "every 5m", timeout: "1m" });
+  await cw.check();
+  const run = { id: "lost-import", job: "imported", status: "failed" as const, startedAt: c.now() - 2 * MIN, finishedAt: c.now() - MIN, durationMs: MIN, error: "boom", output: null, metrics: {}, trigger: "source" };
+  await assert.rejects(cw.recordRun(run), /state unavailable/);
+  await cw.check();
+  assert.equal((await store.getRun(run.id))!.status, "running");
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  const closed = (await store.getRun(run.id))!;
+  assert.equal(closed.status, "timeout");
+  assert.equal(closed.durationMs, MIN);
+  assert.equal(closed.error, "Imported, but its finish was never written; marked as timed out\nboom");
+  assert.deepEqual(sent.types(), ["stuck"]);
+  assert.notEqual((await cw.jobSummary("imported"))!.health, "healthy");
+});
+
+test("an evaluated import whose finish write fails after its marker is closed by a check, and a late success recovers it", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const update = store.updateRunIf!.bind(store);
+  let fail = true;
+  store.updateRunIf = async (...args) => {
+    if (fail) { fail = false; throw new Error("store unavailable"); }
+    return update(...args);
+  };
+  const cw = cronwatch({ store, now: c.now, alerts: [sent], onError: () => {} });
+  cw.job("imported", { schedule: "0 * * * *", timeout: "1m" });
+  await cw.check();
+  const run = { id: "lost-finish", job: "imported", status: "ok" as const, startedAt: c.now(), finishedAt: c.now(), durationMs: 0, error: null, output: null, metrics: {}, trigger: "source" };
+  await assert.rejects(cw.recordRun(run), /store unavailable/);
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  assert.equal((await store.getRun(run.id))!.status, "timeout");
+  assert.equal((await store.getState(run.job))!.pendingRuns, undefined);
+  assert.deepEqual(sent.types(), ["stuck"]);
+  await cw.recordRun(run);
+  assert.equal((await store.getRun(run.id))!.status, "ok");
+  assert.deepEqual(sent.types(), ["stuck", "recovered"]);
+});

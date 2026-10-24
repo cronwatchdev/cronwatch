@@ -2489,6 +2489,104 @@
       "stuck": false
     }
   ],
+  "isStranded": [
+    {
+      "run": {
+        "id": "placeholder",
+        "job": "j",
+        "status": "running",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767605100000,
+        "durationMs": 1000,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": false
+    },
+    {
+      "run": {
+        "id": "placeholder",
+        "job": "j",
+        "status": "running",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767605099999,
+        "durationMs": 1000,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": true
+    },
+    {
+      "run": {
+        "id": "placeholder",
+        "job": "j",
+        "status": "running",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767605400000,
+        "durationMs": null,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": false
+    },
+    {
+      "run": {
+        "id": "a",
+        "job": "j",
+        "status": "running",
+        "startedAt": 1767601800000,
+        "finishedAt": null,
+        "durationMs": null,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": false
+    },
+    {
+      "run": {
+        "id": "a",
+        "job": "j",
+        "status": "ok",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767601801000,
+        "durationMs": 1000,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": false
+    },
+    {
+      "run": {
+        "id": "a",
+        "job": "j",
+        "status": "timeout",
+        "startedAt": 1767601800000,
+        "finishedAt": 1767601800000,
+        "durationMs": 1000,
+        "error": null,
+        "output": null,
+        "metrics": {},
+        "trigger": "run"
+      },
+      "now": 1767605400000,
+      "stranded": false
+    }
+  ],
   "unevaluableSummary": [
     {
       "stored": {

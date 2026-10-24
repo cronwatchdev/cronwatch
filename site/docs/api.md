@@ -115,7 +115,9 @@ A second `finish()` on a handle, or on a run another process has finished, recor
 | `origin` | the request URL's | the public origin, such as `"https://app.example.com"`, used for the cross-site check, the sign-in redirect and cookie, and the development sign-in line. Must be an `http` or `https` URL, or the call throws |
 | `trustProxy` | `false` | take the origin from the first `X-Forwarded-Proto` and `X-Forwarded-Host` instead, when present (see [behind a proxy](/docs/dashboard/#behind-a-proxy)). With neither this nor `origin`, forwarded headers are ignored |
 
-The development sign-in line names the host only when `origin` is set or the first request's host is loopback (`localhost`, a name ending in `.localhost`, `127.0.0.0/8`, or `::1`); for any other host it prints the path alone, since a client controls the `Host` header. Cross-site writes are refused, only a `Bearer` `Authorization` header is read as the token (any other scheme leaves the cookie and `?token=` to sign in), the sign-in form posts the token to `<base>/signin`, `?token=` is read only on a page `GET`, and a silence `for` that is not a duration or a number of milliseconds is a 400.
+The development sign-in line names the host only when `origin` is set or the first request's host is loopback (`localhost`, a name ending in `.localhost`, `127.0.0.0/8`, or `::1`); for any other host it prints the path alone, since a client controls the `Host` header. Cross-site writes are refused, only a `Bearer` `Authorization` header is read as the token (any other scheme leaves the cookie and `?token=` to sign in), the sign-in form posts the token to `<base>/signin`, `?token=` is read only on a page `GET`, and a silence `for` that is not a duration or a number of milliseconds is a 400. A `HEAD` request is answered as its `GET` would be, without the body, and never runs the check.
+
+Make the token long and random (`openssl rand -hex 32`, say): the dashboard's cookie is a hash of it and lasts until the token changes, so rotate the token to sign every browser out, and sign-in is not rate limited, so a short or guessable token could be found by trying.
 
 ### recordRun()
 
@@ -128,7 +130,9 @@ The development sign-in line names the host only when `origin` is set or the fir
 - `evaluate: false` stores it without judging it, for history imported on first sight.
 - It resolves to the alerts it sent.
 
-If a store write throws, retry with the same run and id. An evaluated import can remain provisionally `running` until its pending evaluation marker and finish are written. A completed import retains its finish time during that step so a concurrent check does not mark it stuck. Imports deliberately stored with `evaluate: false` are not evaluated by a retry.
+If a store write throws, retry with the same run and id. An evaluated import is stored as provisionally `running` until its pending evaluation marker and finish are written, with a finish time of when it was stored, so a concurrent check does not mark it stuck. One whose finish is still not written five minutes later (the importer stopped, or never retried) is closed by the next check as timed out, with an error saying so, and alerts as a stuck run; a later retry that succeeded still recovers it. Imports deliberately stored with `evaluate: false` are not evaluated by a retry.
+
+It refuses, before writing anything, a run whose `status` is not `running`, `ok`, `failed`, or `timeout`, whose `startedAt` is not a finite number, whose `finishedAt` or `durationMs` is neither a finite number nor null, whose `error` or `output` is neither a string nor null, or whose `trigger` is not a string.
 
 ## Exports
 

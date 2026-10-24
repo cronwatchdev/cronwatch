@@ -160,6 +160,38 @@
       }
     },
     {
+      "name": "an emoji across the cut",
+      "alert": {
+        "type": "failed",
+        "run": {
+          "id": "r1",
+          "job": "nightly",
+          "status": "failed",
+          "startedAt": 1767605400000,
+          "finishedAt": 1767605401500,
+          "durationMs": 1500,
+          "error": "Error: emoji",
+          "output": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀",
+          "metrics": {},
+          "trigger": "run"
+        },
+        "details": {
+          "consecutiveFailures": 1,
+          "threshold": 1
+        },
+        "job": "nightly",
+        "definition": {
+          "name": "nightly",
+          "schedule": "0 2 * * *",
+          "grace": "15m"
+        },
+        "title": "nightly failed",
+        "message": "Started 2026-01-05 09:30:00 UTC (now), ran 2s.\nError: emoji\nOutput (tail):\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀",
+        "at": 1767605402000,
+        "triage": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀<<"
+      }
+    },
+    {
       "name": "accents and emoji",
       "alert": {
         "type": "failed",
@@ -562,8 +594,8 @@
         "content-type": "application/json"
       },
       "body": {
-        "length": 27154,
-        "sha256": "868c151c2d665d1d3aa684b7e7fd00005c8763be2e252c1f4a75b5f91fb784ba"
+        "length": 27152,
+        "sha256": "132c8255773898364720aad187dff873ce1affccd674be5045eb4f3bc27f38a6"
       }
     },
     {
@@ -577,8 +609,23 @@
         "content-type": "application/json"
       },
       "body": {
-        "length": 12951,
-        "sha256": "2f3fd6ee3d1221b94f7db28feabfb4b7a237fcc19f93bb8f51064e85bd524527"
+        "length": 12949,
+        "sha256": "24aed52b793b0b14fe1144246d05a6f2f567d818fbd1aa3ee5549ff79f48f4d4"
+      }
+    },
+    {
+      "channel": "slack",
+      "options": {
+        "webhookUrl": "https://hooks.slack.example/T/B/secret"
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://hooks.slack.example/T/B/secret",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "length": 9100,
+        "sha256": "317680607e879ad70eef8ee6899f41151e3c02d1f5dfb33b2b5339b17a6d163b"
       }
     },
     {
@@ -803,8 +850,8 @@
         "content-type": "application/json"
       },
       "body": {
-        "length": 27206,
-        "sha256": "f429d79a265fedc59b92fa31f4673a73e9f8c02411988fc880e33e038cbeb3da"
+        "length": 27204,
+        "sha256": "b7d817e8c0aca08aed19d7d231cdab86a1cee325e9ac292f3ab55196f14b8005"
       }
     },
     {
@@ -819,8 +866,24 @@
         "content-type": "application/json"
       },
       "body": {
-        "length": 13003,
-        "sha256": "fa4117e28c9ddce4eb8a552d920443dd28292acc876bdd0333c55a15c119f9f9"
+        "length": 13001,
+        "sha256": "81391d04d9bb0d05a0421abbe59c08955ea17e79ff1d524afd1a8f46ac046dee"
+      }
+    },
+    {
+      "channel": "slack",
+      "options": {
+        "webhookUrl": "https://hooks.slack.example/T/B/secret",
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://hooks.slack.example/T/B/secret",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "length": 9152,
+        "sha256": "03396b7000ff402bbf02d94d4ab9e53e270e908a13c3d0662a3b4e97ae3f4562"
       }
     },
     {
@@ -1076,6 +1139,21 @@
       "options": {
         "webhookUrl": "https://discord.example/api/webhooks/1/x"
       },
+      "alert": "an emoji across the cut",
+      "url": "https://discord.example/api/webhooks/1/x",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "length": 4167,
+        "sha256": "676aebe27299804118ed5e5d15ad2a5c8421a8798cc6d7825fb52dcbd8ea58a5"
+      }
+    },
+    {
+      "channel": "discord",
+      "options": {
+        "webhookUrl": "https://discord.example/api/webhooks/1/x"
+      },
       "alert": "accents and emoji",
       "url": "https://discord.example/api/webhooks/1/x",
       "headers": {
@@ -1306,6 +1384,22 @@
       "body": {
         "length": 2508,
         "sha256": "e228ecf6e4c238180a845edaa3d32d3146efae09110037dbf712aa11b42af171"
+      }
+    },
+    {
+      "channel": "discord",
+      "options": {
+        "webhookUrl": "https://discord.example/api/webhooks/1/x",
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://discord.example/api/webhooks/1/x",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "length": 4218,
+        "sha256": "6905c99c3d5a8181c04dbedfe3ce5a0b52281267b0ca56e67df53dbfaa169c5c"
       }
     },
     {
@@ -1556,6 +1650,22 @@
       "body": {
         "length": 4881,
         "sha256": "223d0db2ffa143b5ddafc933406beeeda89268f99d2696893a9e8040f2b87d91"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/cronwatch?key=secret"
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://hooks.example.com/cronwatch?key=secret",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "cronwatch"
+      },
+      "body": {
+        "length": 9278,
+        "sha256": "94df7cfc70d04d1a8df10322b6dd3e065eb9f543cd0cb9596f6e5c5da2f6baa9"
       }
     },
     {
@@ -1856,6 +1966,31 @@
       "body": {
         "length": 4881,
         "sha256": "223d0db2ffa143b5ddafc933406beeeda89268f99d2696893a9e8040f2b87d91"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com:8443/in",
+        "secret": "s3cret",
+        "headers": {
+          "authorization": "Bearer abc"
+        },
+        "now": 1767605402500
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://hooks.example.com:8443/in",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "cronwatch",
+        "authorization": "Bearer abc",
+        "x-cronwatch-signature": "sha256=0f37935a67d2e50155743ce4a4cdbdc237391d008fc5ccbd1303e78a9a040585",
+        "x-cronwatch-timestamp": "1767605402",
+        "x-cronwatch-timestamp-signature": "sha256=de5a12fa52c704d223255ff9f383b46571da5e04623ba31e3bcbcface94f5349"
+      },
+      "body": {
+        "length": 9278,
+        "sha256": "94df7cfc70d04d1a8df10322b6dd3e065eb9f543cd0cb9596f6e5c5da2f6baa9"
       }
     },
     {
@@ -2265,6 +2400,33 @@
       "body": {
         "length": 4881,
         "sha256": "223d0db2ffa143b5ddafc933406beeeda89268f99d2696893a9e8040f2b87d91"
+      }
+    },
+    {
+      "channel": "webhook",
+      "options": {
+        "url": "https://hooks.example.com/in",
+        "secret": "s3cret",
+        "now": 1767605400999,
+        "headers": {
+          "Content-Type": "application/cloudevents+json",
+          "USER-AGENT": " mine ",
+          "X-CronWatch-Timestamp": "1",
+          "X-CronWatch-Signature": "forged"
+        }
+      },
+      "alert": "an emoji across the cut",
+      "url": "https://hooks.example.com/in",
+      "headers": {
+        "Content-Type": "application/cloudevents+json",
+        "USER-AGENT": "mine",
+        "x-cronwatch-signature": "sha256=0f37935a67d2e50155743ce4a4cdbdc237391d008fc5ccbd1303e78a9a040585",
+        "x-cronwatch-timestamp": "1767605400",
+        "x-cronwatch-timestamp-signature": "sha256=6056307698808eeb4af5fe0a6235ec9326db82f713f04fc719bacdd27a2c0c30"
+      },
+      "body": {
+        "length": 9278,
+        "sha256": "94df7cfc70d04d1a8df10322b6dd3e065eb9f543cd0cb9596f6e5c5da2f6baa9"
       }
     },
     {
@@ -2918,6 +3080,14 @@
       "timestampSignature": "sha256=45a256f6995b403531e574f7e08b6962c86f936bd2d7fcd8b9c788cf7b84435e"
     },
     {
+      "alert": "an emoji across the cut",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: emoji\",\"output\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: emoji\\nOutput (tail):\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀\",\"at\":1767605402000,\"triage\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀<<\"}",
+      "signature": "sha256=0f37935a67d2e50155743ce4a4cdbdc237391d008fc5ccbd1303e78a9a040585",
+      "timestamp": "1767605402",
+      "timestampSignature": "sha256=de5a12fa52c704d223255ff9f383b46571da5e04623ba31e3bcbcface94f5349"
+    },
+    {
       "alert": "accents and emoji",
       "secret": "s3cret",
       "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: café 😀\",\"output\":\"résumé 🚀 done\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: café 😀\\nOutput (tail):\\nrésumé 🚀 done\",\"at\":1767605402000,\"triage\":\"été 😀 `code` [link](x)\"}",
@@ -3044,6 +3214,14 @@
       "signature": "sha256=60cf826dc7cab2666c7ea9d28aba1b4806f9c4f70c29e498d873f1e243d6048b",
       "timestamp": "1767605400",
       "timestampSignature": "sha256=df9562a9fd52772186dd270424ce9d51df351bf1cc90f51093f24824a400c1fb"
+    },
+    {
+      "alert": "an emoji across the cut",
+      "secret": "s3cret",
+      "body": "{\"schema\":1,\"type\":\"failed\",\"run\":{\"id\":\"r1\",\"job\":\"nightly\",\"status\":\"failed\",\"startedAt\":1767605400000,\"finishedAt\":1767605401500,\"durationMs\":1500,\"error\":\"Error: emoji\",\"output\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀\",\"metrics\":{},\"trigger\":\"run\"},\"details\":{\"consecutiveFailures\":1,\"threshold\":1},\"job\":\"nightly\",\"definition\":{\"name\":\"nightly\",\"schedule\":\"0 2 * * *\",\"grace\":\"15m\"},\"title\":\"nightly failed\",\"message\":\"Started 2026-01-05 09:30:00 UTC (now), ran 2s.\\nError: emoji\\nOutput (tail):\\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz😀😀😀😀\",\"at\":1767605402000,\"triage\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀<<\"}",
+      "signature": "sha256=0f37935a67d2e50155743ce4a4cdbdc237391d008fc5ccbd1303e78a9a040585",
+      "timestamp": "1767605400",
+      "timestampSignature": "sha256=6056307698808eeb4af5fe0a6235ec9326db82f713f04fc719bacdd27a2c0c30"
     },
     {
       "alert": "accents and emoji",
@@ -3289,6 +3467,34 @@
           "body": {
             "length": 12830,
             "sha256": "8509a7c562296bb8af05456370ecdf1c9c3d551d47d3ea34288f917f2e229fb7"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "resend",
+      "options": {
+        "apiKey": "re_secret",
+        "from": "CronWatch <alerts@example.com>",
+        "to": [
+          "ops@example.com",
+          "dev@example.com"
+        ],
+        "subjectPrefix": "[prod]",
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.resend.com/emails",
+          "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer re_secret",
+            "idempotency-key": "cronwatch-4decc12d0e5ddc824b937dea51ece9be"
+          },
+          "body": {
+            "length": 12678,
+            "sha256": "d1f2c77a806efb5168e671908f8b78aeb21d881f4de111a941c0b3fdabcf0763"
           }
         }
       ]
@@ -3723,6 +3929,29 @@
         "from": "alerts@example.com",
         "to": "ops@example.com"
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.resend.com/emails",
+          "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer re_secret",
+            "idempotency-key": "cronwatch-4decc12d0e5ddc824b937dea51ece9be"
+          },
+          "body": {
+            "length": 12490,
+            "sha256": "ac4b2ca0c1c7cebfbff7eb248c4abafde02736e5acd584642debd886c34c5ef5"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "resend",
+      "options": {
+        "apiKey": "re_secret",
+        "from": "alerts@example.com",
+        "to": "ops@example.com"
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -4100,6 +4329,33 @@
           "body": {
             "length": 12873,
             "sha256": "96a12b6df1d93b6baf81a901ba5db7bdcfb34dfcbf827508f188db67b77dff89"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "postmark",
+      "options": {
+        "serverToken": "pm-secret",
+        "from": "CronWatch <alerts@example.com>",
+        "to": [
+          "ops@example.com",
+          "dev@example.com"
+        ],
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.postmarkapp.com/email",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "x-postmark-server-token": "pm-secret"
+          },
+          "body": {
+            "length": 12721,
+            "sha256": "31f3bea63c7775ae9b32245adc20333e8b0efd611f0681de551ab0645cc56120"
           }
         }
       ]
@@ -4535,6 +4791,31 @@
         "messageStream": "alerts",
         "subjectPrefix": "[prod]"
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.postmarkapp.com/email",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "x-postmark-server-token": "pm-secret"
+          },
+          "body": {
+            "length": 12546,
+            "sha256": "c737131061e2bbedfa73466a8ca49a86798dd1e3f09a9ee8ae928a16a153d06f"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "postmark",
+      "options": {
+        "serverToken": "pm-secret",
+        "from": "alerts@example.com",
+        "to": "ops@example.com",
+        "messageStream": "alerts",
+        "subjectPrefix": "[prod]"
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -4927,6 +5208,32 @@
           "body": {
             "length": 12980,
             "sha256": "217c7aa98e8888dba022efd62b85a28ee9fa0f3a9d0418981d3c7f31fa4793a4"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "sendgrid",
+      "options": {
+        "apiKey": "SG.secret",
+        "from": "CronWatch <alerts@example.com>",
+        "to": [
+          "Ops <ops@example.com>",
+          "dev@example.com"
+        ],
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.sendgrid.com/v3/mail/send",
+          "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer SG.secret"
+          },
+          "body": {
+            "length": 12828,
+            "sha256": "65e0ba72a3f55589faa391279d6ba0e3f71020f3fa1294c13f7910aa2819e655"
           }
         }
       ]
@@ -5340,6 +5647,29 @@
         "to": "ops@example.com",
         "region": "eu"
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.eu.sendgrid.com/v3/mail/send",
+          "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer SG.secret"
+          },
+          "body": {
+            "length": 12617,
+            "sha256": "cdcfe7b130440b1583399ae4d59dd6207ac2d2ab327e08a94673620f526622fa"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "sendgrid",
+      "options": {
+        "apiKey": "SG.secret",
+        "from": "alerts@example.com",
+        "to": "ops@example.com",
+        "region": "eu"
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -5716,6 +6046,33 @@
           "body": {
             "length": 26263,
             "sha256": "b4c182c7a3ce7c4aa3eb8e5f4598b8b1d3a447bdc736d68d38098d5a8e0668d5"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "mailgun",
+      "options": {
+        "apiKey": "key-secret",
+        "domain": "mg.example.com",
+        "from": "CronWatch <alerts@example.com>",
+        "to": [
+          "ops@example.com",
+          "dev@example.com"
+        ],
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.mailgun.net/v3/mg.example.com/messages",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic YXBpOmtleS1zZWNyZXQ="
+          },
+          "body": {
+            "length": 13056,
+            "sha256": "fe0757a28e4ae793c1558888b03541edea53e33de2675d4b6829bdd8696584a2"
           }
         }
       ]
@@ -6146,6 +6503,30 @@
         "to": "ops@example.com",
         "region": "eu"
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.eu.mailgun.net/v3/mg.example.com/messages",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic YXBpOmtleS1zZWNyZXQ="
+          },
+          "body": {
+            "length": 12809,
+            "sha256": "88d07a510157f910a8469d489932367e729deffea625aace224a1a7b2620b548"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "mailgun",
+      "options": {
+        "apiKey": "key-secret",
+        "domain": "mg.example.com",
+        "from": "alerts@example.com",
+        "to": "ops@example.com",
+        "region": "eu"
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -6547,6 +6928,36 @@
           "body": {
             "length": 13025,
             "sha256": "b58c8b164d0323c1a2640a99677d0902fcb643ab223eb4f6f6aa92526d5f0e2b"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "ses",
+      "options": {
+        "region": "us-east-1",
+        "accessKeyId": "AKIDEXAMPLE",
+        "secretAccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        "from": "CronWatch <alerts@example.com>",
+        "to": [
+          "ops@example.com",
+          "dev@example.com"
+        ],
+        "now": 1767605400000,
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails",
+          "headers": {
+            "content-type": "application/json",
+            "x-amz-date": "20260105T093000Z",
+            "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260105/us-east-1/ses/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=d7c1fd11e8c25bd4f89b59ac75157002333515d7f98484ec337501b7be3157eb"
+          },
+          "body": {
+            "length": 12873,
+            "sha256": "670bed3552308258d348dd03695e8ee9f69eb2964ffbfdc187e8ddb92d6f06ea"
           }
         }
       ]
@@ -7022,6 +7433,35 @@
           "body": {
             "length": 12876,
             "sha256": "d2688fdc716445ea550fd6acd839fccc0568f498e9599a6e34150ff776cc2388"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "ses",
+      "options": {
+        "region": "eu-west-1",
+        "accessKeyId": "AKIDEXAMPLE",
+        "secretAccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        "sessionToken": "session-token",
+        "configurationSetName": "alerts",
+        "from": "alerts@example.com",
+        "to": "ops@example.com",
+        "now": 1767609000000
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://email.eu-west-1.amazonaws.com/v2/email/outbound-emails",
+          "headers": {
+            "content-type": "application/json",
+            "x-amz-date": "20260105T103000Z",
+            "x-amz-security-token": "session-token",
+            "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260105/eu-west-1/ses/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, Signature=9b2cc8918488c4c892a71e5670911311677b6207b6360fb86567bae4842a8f0b"
+          },
+          "body": {
+            "length": 12724,
+            "sha256": "cc5a0910fda2cb12b58014ea815600ec10cf095920241259bc29d1203cffe9e0"
           }
         }
       ]
@@ -7541,6 +7981,44 @@
         ],
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000000/Messages.json",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic QUMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDp0dy1zZWNyZXQ="
+          },
+          "body": {
+            "length": 542,
+            "sha256": "998899475abc9227f10102010a9880d5ba95a2b40643b74606e057ac1556a4ea"
+          }
+        },
+        {
+          "url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000000/Messages.json",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic QUMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDp0dy1zZWNyZXQ="
+          },
+          "body": {
+            "length": 542,
+            "sha256": "754edff1c86523b94f93dc5d8b725b84f0e9a908a6a23e2a3d4a1af6a7be0479"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "twilio",
+      "options": {
+        "accountSid": "AC00000000000000000000000000000000",
+        "authToken": "tw-secret",
+        "from": "+15005550006",
+        "to": [
+          "+15551110000",
+          "+15552220000"
+        ],
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -8020,6 +8498,31 @@
         "recovered": true,
         "segments": 1
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000000/Messages.json",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic U0swMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDpzay1zZWNyZXQ="
+          },
+          "body": {
+            "text": "To=%2B15551110000&MessagingServiceSid=MG00000000000000000000000000000000&Body=nightly+failed%0AStarted+2026-01-05+09%3A30%3A00+UTC+%28now%29%2C+ran+2s.%0AError%3A+emoji%0AOutput+%28tail%29%3A%0Azzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz..."
+          }
+        }
+      ]
+    },
+    {
+      "channel": "twilio",
+      "options": {
+        "accountSid": "AC00000000000000000000000000000000",
+        "apiKeySid": "SK00000000000000000000000000000000",
+        "apiKeySecret": "sk-secret",
+        "messagingServiceSid": "MG00000000000000000000000000000000",
+        "to": "+15551110000",
+        "recovered": true,
+        "segments": 1
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -8395,6 +8898,27 @@
         "dsn": "https://pubkey@o1.ingest.sentry.io/42",
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://o1.ingest.sentry.io/api/42/envelope/",
+          "headers": {
+            "content-type": "application/x-sentry-envelope",
+            "x-sentry-auth": "Sentry sentry_version=7, sentry_key=pubkey, sentry_client=cronwatch"
+          },
+          "body": {
+            "length": 6623,
+            "sha256": "34fac76fb61e055a43127a1acd2a75c31c8f982a88aa16b0674bb34bd19bc959"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "sentry",
+      "options": {
+        "dsn": "https://pubkey@o1.ingest.sentry.io/42",
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -8731,6 +9255,29 @@
           "body": {
             "length": 2889,
             "sha256": "85a62626176cd1ee870dd4d65c75c7650d9d86cf7713fd7be54940eb449c188c"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "sentry",
+      "options": {
+        "dsn": "https://pubkey@sentry.example.com/prefix/7",
+        "environment": "staging",
+        "release": "app@1.2.3",
+        "recovered": false
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://sentry.example.com/prefix/api/7/envelope/",
+          "headers": {
+            "content-type": "application/x-sentry-envelope",
+            "x-sentry-auth": "Sentry sentry_version=7, sentry_key=pubkey, sentry_client=cronwatch"
+          },
+          "body": {
+            "length": 6590,
+            "sha256": "7006a7e0e6a98ae858750274d5059614274e69a5b3ee999aabb24b6f7e9fbe30"
           }
         }
       ]
@@ -9080,6 +9627,28 @@
         "apiKey": "hb-secret",
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.honeybadger.io/v1/notices",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "x-api-key": "hb-secret"
+          },
+          "body": {
+            "length": 6604,
+            "sha256": "7f4b19059bc85ce9005759506283024507cc4e97fddab69ada1270a04a8d179d"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "honeybadger",
+      "options": {
+        "apiKey": "hb-secret",
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -9406,6 +9975,30 @@
           "body": {
             "length": 2849,
             "sha256": "766aa76875a31fc472d00c73bb94b02c59f29e2654d15ee06374e9d4f4129e0e"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "honeybadger",
+      "options": {
+        "apiKey": "hb-secret",
+        "environment": "staging",
+        "endpoint": "https://eu-api.honeybadger.io",
+        "recovered": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://eu-api.honeybadger.io/v1/notices",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "x-api-key": "hb-secret"
+          },
+          "body": {
+            "length": 6550,
+            "sha256": "0b2207b3d874a2bd8ed352b251842be43bc396195fa279264a41b81f393a033e"
           }
         }
       ]
@@ -9790,6 +10383,28 @@
         "apiKey": "dd-secret",
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.datadoghq.com/api/v1/events",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "dd-api-key": "dd-secret"
+          },
+          "body": {
+            "length": 4206,
+            "sha256": "1403d3e4e44605d7d27c0eb6e21090bfc33c7b06deebc0c28311f7047275eabb"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "datadog",
+      "options": {
+        "apiKey": "dd-secret",
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -10147,6 +10762,32 @@
           "body": {
             "length": 2522,
             "sha256": "3ff1eded0642db14b8e71432db941aae19fe2bab0fe7c7862620e5fd8aa4b6fd"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "datadog",
+      "options": {
+        "apiKey": "dd-secret",
+        "site": "datadoghq.eu",
+        "tags": [
+          "env:prod"
+        ],
+        "host": "worker-1"
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.datadoghq.eu/api/v1/events",
+          "headers": {
+            "content-type": "application/json",
+            "accept": "application/json",
+            "dd-api-key": "dd-secret"
+          },
+          "body": {
+            "length": 4235,
+            "sha256": "2e9e46d7c23fc525502660a2da5245ee62d9fba7141be22b24315cc1f25da7f5"
           }
         }
       ]
@@ -10543,6 +11184,27 @@
         "accessToken": "rb-secret",
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.rollbar.com/api/1/item/",
+          "headers": {
+            "content-type": "application/json",
+            "x-rollbar-access-token": "rb-secret"
+          },
+          "body": {
+            "length": 6482,
+            "sha256": "0678353b8ef3be3e00bb5ca5c70ee01e1166dea878324be93a3519dcdeaaac9b"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "rollbar",
+      "options": {
+        "accessToken": "rb-secret",
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -10885,6 +11547,28 @@
         "environment": "staging",
         "recovered": false
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.rollbar.com/api/1/item/",
+          "headers": {
+            "content-type": "application/json",
+            "x-rollbar-access-token": "rb-secret"
+          },
+          "body": {
+            "length": 6427,
+            "sha256": "30f2497e8f35583442a8ccbefc293daaf2cf1c73516cd2c6f49687a601e7117d"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "rollbar",
+      "options": {
+        "accessToken": "rb-secret",
+        "environment": "staging",
+        "recovered": false
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -11212,6 +11896,30 @@
           "body": {
             "length": 3017,
             "sha256": "ef2a13e94dba9bdc9dc7c8a5082a0d20ef56b09e570c45b66f458593d2f13d8a"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "bugsnag",
+      "options": {
+        "apiKey": "bs-secret",
+        "now": 1767605400000,
+        "link": true
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://notify.bugsnag.com/",
+          "headers": {
+            "content-type": "application/json",
+            "bugsnag-api-key": "bs-secret",
+            "bugsnag-payload-version": "5",
+            "bugsnag-sent-at": "2026-01-05T09:30:00.000Z"
+          },
+          "body": {
+            "length": 6718,
+            "sha256": "187a8e075a24479540760f253efe3eccb4aa6574de5671f3ed3e2dd30db4f29b"
           }
         }
       ]
@@ -11578,6 +12286,32 @@
           "body": {
             "length": 2962,
             "sha256": "61ae7c18d1fa5db0473030f928f8a5b103f5ea3ea9baaf5ea93b08a34b9f87c2"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "bugsnag",
+      "options": {
+        "apiKey": "bs-secret",
+        "releaseStage": "staging",
+        "endpoint": "https://notify.bugsnag.example.com/",
+        "recovered": true,
+        "now": 1767605400000
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://notify.bugsnag.example.com/",
+          "headers": {
+            "content-type": "application/json",
+            "bugsnag-api-key": "bs-secret",
+            "bugsnag-payload-version": "5",
+            "bugsnag-sent-at": "2026-01-05T09:30:00.000Z"
+          },
+          "body": {
+            "length": 6663,
+            "sha256": "db5778dee7d6e214d0f4a7c814f292751ac3a775f1846abc2e36de009f0d05e3"
           }
         }
       ]
@@ -11985,6 +12719,28 @@
         "apiKey": "nr-secret",
         "link": true
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://insights-collector.newrelic.com/v1/accounts/12345/events",
+          "headers": {
+            "content-type": "application/json",
+            "api-key": "nr-secret"
+          },
+          "body": {
+            "length": 6233,
+            "sha256": "c4322e03406ffb6a1fd3fd6ebc6dd6b4ba7bd93eeaac59236b8f61f82ec409a4"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "newrelic",
+      "options": {
+        "accountId": "12345",
+        "apiKey": "nr-secret",
+        "link": true
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -12323,6 +13079,29 @@
           "body": {
             "length": 2478,
             "sha256": "542a7c3308d0a0551f0490aaf160b8bcdbeac74e128d27c232d1c1f71188cdea"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "newrelic",
+      "options": {
+        "accountId": 12345,
+        "apiKey": "nr-secret",
+        "region": "eu",
+        "eventType": "CronJobAlert"
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://insights-collector.eu01.nr-data.net/v1/accounts/12345/events",
+          "headers": {
+            "content-type": "application/json",
+            "api-key": "nr-secret"
+          },
+          "body": {
+            "length": 6179,
+            "sha256": "6712bbe1f29fe177ac2361e608ec5a42c894e4e55ad39d4675f82953735a779c"
           }
         }
       ]
@@ -12683,6 +13462,29 @@
           "body": {
             "length": 12642,
             "sha256": "2afcfca3de1c3b1ec139eca511baba4dd02b4f43cde55a3582147da42f436297"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "resend",
+      "options": {
+        "apiKey": " re_secret\n",
+        "from": "alerts@example.com",
+        "to": "ops@example.com"
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.resend.com/emails",
+          "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer re_secret",
+            "idempotency-key": "cronwatch-4decc12d0e5ddc824b937dea51ece9be"
+          },
+          "body": {
+            "length": 12490,
+            "sha256": "ac4b2ca0c1c7cebfbff7eb248c4abafde02736e5acd584642debd886c34c5ef5"
           }
         }
       ]
@@ -13076,6 +13878,34 @@
           "body": {
             "length": 12844,
             "sha256": "3b52c378f002363b0ce5ebd196e63af241eec13598e7341c3cd5103b8218ebe3"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "ses",
+      "options": {
+        "region": "us-east-1",
+        "accessKeyId": " AKIDEXAMPLE",
+        "secretAccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY\n",
+        "sessionToken": " session-token ",
+        "from": "alerts@example.com",
+        "to": "ops@example.com",
+        "now": 1767605400000
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails",
+          "headers": {
+            "content-type": "application/json",
+            "x-amz-date": "20260105T093000Z",
+            "x-amz-security-token": "session-token",
+            "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260105/us-east-1/ses/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, Signature=0e9f72d1510126bd09507bfc827886ebf6801e8206cce0241193c522f2c59a81"
+          },
+          "body": {
+            "length": 12692,
+            "sha256": "927b63d232930f5fbc549759e78aae1543911e584de481eeeb9f66e32a6d9b00"
           }
         }
       ]
@@ -13508,6 +14338,29 @@
         "from": "+15005550006",
         "to": "+15551110000"
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000000/Messages.json",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "authorization": "Basic QUMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDp0dy1zZWNyZXQ="
+          },
+          "body": {
+            "length": 528,
+            "sha256": "92ac613acfb9365518dd7518af77f9983c7fccb62a8a27b098ab66acc7185630"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "twilio",
+      "options": {
+        "accountSid": " AC00000000000000000000000000000000 ",
+        "authToken": "tw-secret\n",
+        "from": "+15005550006",
+        "to": "+15551110000"
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -13841,6 +14694,29 @@
         "apiKey": "\tbs-secret ",
         "now": 1767605400000
       },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://notify.bugsnag.com/",
+          "headers": {
+            "content-type": "application/json",
+            "bugsnag-api-key": "bs-secret",
+            "bugsnag-payload-version": "5",
+            "bugsnag-sent-at": "2026-01-05T09:30:00.000Z"
+          },
+          "body": {
+            "length": 6666,
+            "sha256": "573bb2d60628096260c0ae566e55577ad6896d37b4b8525a0729c8a3e7907310"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "bugsnag",
+      "options": {
+        "apiKey": "\tbs-secret ",
+        "now": 1767605400000
+      },
       "alert": "accents and emoji",
       "requests": [
         {
@@ -14156,6 +15032,26 @@
           "body": {
             "length": 2870,
             "sha256": "7c23a3c90e0e824ce00ce0e120e7a2ce59287e2bcc34fbb11654293bb8b380dc"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "sentry",
+      "options": {
+        "dsn": " https://pubkey@o1.ingest.sentry.io/42\n"
+      },
+      "alert": "an emoji across the cut",
+      "requests": [
+        {
+          "url": "https://o1.ingest.sentry.io/api/42/envelope/",
+          "headers": {
+            "content-type": "application/x-sentry-envelope",
+            "x-sentry-auth": "Sentry sentry_version=7, sentry_key=pubkey, sentry_client=cronwatch"
+          },
+          "body": {
+            "length": 6571,
+            "sha256": "a13201da63b95073fd5b090e1dec4152157ab759b96958c010a31dd2a2686e5e"
           }
         }
       ]

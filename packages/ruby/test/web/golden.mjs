@@ -226,6 +226,14 @@ const requests = [
   ["GET", "/cronwatchapi/jobs", bearer],
   ["GET", "/api/jobs", bearer],
   ["GET", "/cronwatch-x/api/jobs"],
+  // HEAD reads what GET reads, without a body, and never runs the check.
+  ["HEAD", "/cronwatch/", bearer],
+  ["HEAD", "/cronwatch/jobs/nightly-report", bearer],
+  ["HEAD", "/cronwatch/jobs/missing", bearer],
+  ["HEAD", "/cronwatch/api/jobs", bearer],
+  ["HEAD", "/cronwatch/api/jobs/nightly-report", bearer],
+  ["HEAD", "/cronwatch/api/check", bearer],
+  ["HEAD", "/cronwatch/"],
 ];
 
 const captures = [];

@@ -220,3 +220,19 @@ test("a webhook URL fetch cannot post to is refused without quoting it, since it
   await slack({ webhookUrl: `https://hooks.example.com/${secretPath}\n` }).send(failed());
   assert.equal(calls, 1);
 });
+
+test("slack cuts its escaped text without splitting an entity or a surrogate pair", async () => {
+  const { slack } = await import("../src/alerts/slack.js");
+  const real = globalThis.fetch;
+  let body = "";
+  globalThis.fetch = async (_url, init) => { body = String(init!.body); return new Response("ok"); };
+  try {
+    const alert = { type: "failed", job: "j", title: "t", message: "a".repeat(2897) + "<<<", triage: "b".repeat(2989) + "\u{1F600}<", run: null, details: {}, at: 0 } as never;
+    await slack({ webhookUrl: "https://hooks.slack.example/T/B/x" }).send(alert);
+    const blocks = JSON.parse(body).blocks as { text: { text: string } }[];
+    assert.equal(blocks[1]!.text.text, "```" + "a".repeat(2897) + "```");
+    assert.equal(blocks[2]!.text.text, "_Triage:_ " + "b".repeat(2989));
+  } finally {
+    globalThis.fetch = real;
+  }
+});

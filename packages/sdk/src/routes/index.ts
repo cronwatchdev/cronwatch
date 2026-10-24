@@ -1,6 +1,6 @@
 import type { Cronwatch } from "../client.js";
 import { isDevelopment, readSecretEnv, secretOption } from "../env.js";
-import { constantTimeEqual, json } from "../http.js";
+import { bearerToken, constantTimeEqual, json } from "../http.js";
 import { parseDuration } from "../duration.js";
 import type { Duration, JobSummary, Run } from "../types.js";
 import { dashboardPage, jobPage, messagePage } from "./html.js";
@@ -231,11 +231,6 @@ function forwardedOrigin(request: Request, url: URL): string {
  * follow it, else null. Any other scheme (a proxy's Basic auth, say) is not
  * a bearer at all, so the cookie and ?token= are read as if no header came.
  */
-function bearerToken(header: string | null): string | null {
-  const match = header === null ? null : /^Bearer\s+([\s\S]*)$/i.exec(header);
-  return match ? match[1]! : null;
-}
-
 /**
  * Where a sign-in through the form goes next: the page it was posted from
  * (the Referer) when that is on the public origin and its query has no
@@ -491,13 +486,15 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
     const parts = decoded as string[];
 
     // HTML
-    if (method === "GET" && path === "/") {
+    // A HEAD reads what a GET would; the handler sends it without a body.
+    const reads = method === "GET" || method === "HEAD";
+    if (reads && path === "/") {
       const entries = await cw.jobsWithRuns(BOARD_PAGE_RUNS);
       const now = cw.now();
       const runsByJob = new Map<string, Run[]>(entries.map((entry) => [entry.job.name, entry.runs]));
       return html(dashboardPage(entries.map((entry) => entry.job), runsByJob, now, base, null, await boardLanes(cw, entries, now)));
     }
-    if (method === "GET" && parts[0] === "jobs" && parts.length === 2) {
+    if (reads && parts[0] === "jobs" && parts.length === 2) {
       const job = await cw.jobSummary(parts[1]!);
       if (!job) return html(messagePage("No such job", `${parts[1]} is not in the store.`, base), 404);
       const now = cw.now();
@@ -537,15 +534,15 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
     if (parts[0] === "api") {
       const rest = parts.slice(1);
       // What is serving the API, so a client such as @cronwatch/mcp can tell.
-      if (method === "GET" && rest.length === 0) {
+      if (reads && rest.length === 0) {
         return api({ ok: true, library: LIBRARY, language: LANGUAGE, version: VERSION, api: API_VERSION });
       }
-      if (method === "GET" && rest[0] === "jobs" && rest.length === 1) {
+      if (reads && rest[0] === "jobs" && rest.length === 1) {
         return api({ ok: true, jobs: await cw.jobs() });
       }
       if (rest[0] === "jobs" && rest.length === 2) {
         const name = rest[1]!;
-        if (method === "GET") {
+        if (reads) {
           const job = await cw.jobSummary(name);
           if (!job) return api({ ok: false, error: "No such job" }, 404);
           return api({ ok: true, job, runs: await cw.runs(name, runsLimit(url.searchParams.get("runs"))) });
@@ -588,7 +585,7 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
           return api({ ok: true, ...result });
         }
       }
-      if (method === "GET" && rest[0] === "runs" && rest.length === 2) {
+      if (reads && rest[0] === "runs" && rest.length === 2) {
         const run = await cw.getRun(rest[1]!);
         return run ? api({ ok: true, run }) : api({ ok: false, error: "No such run" }, 404);
       }
@@ -606,7 +603,8 @@ export function buildRoutes(cw: Cronwatch, options: RoutesOptions = {}): Routes 
       // Not under the base at all: nothing here answers it, signed in or not.
       if (path === null) return html(messagePage("Not found", url.pathname, base), 404);
       wantsHtml = !path.startsWith("/api");
-      return await serve(request, url, path, wantsHtml);
+      const response = await serve(request, url, path, wantsHtml);
+      return request.method.toUpperCase() === "HEAD" ? new Response(null, { status: response.status, headers: response.headers }) : response;
     } catch (e) {
       try {
         cw.onError(e, "routes");

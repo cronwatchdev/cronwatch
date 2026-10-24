@@ -19,3 +19,9 @@ export function constantTimeEqual(sent: string, secret: string): boolean {
   for (let i = 0; i < sent.length; i++) diff |= sent.charCodeAt(i) ^ secret.charCodeAt(i % secret.length);
   return diff === 0;
 }
+
+/** The token of an `Authorization: Bearer <token>` header: the scheme in any case, then any whitespace. */
+export function bearerToken(header: string | null): string | null {
+  const match = header === null ? null : /^Bearer\s+([\s\S]*)$/i.exec(header);
+  return match ? match[1]! : null;
+}

@@ -10,6 +10,7 @@ import {
   hasFullBaseline,
   holdAlerts,
   holdRun,
+  isStranded,
   isStuck,
   MAX_UNDELIVERED,
   normalizeState,
@@ -31,7 +32,7 @@ import {
 } from "./evaluate.js";
 import type { Evaluation } from "./evaluate.js";
 import { composeAlert } from "./format.js";
-import { constantTimeEqual, json } from "./http.js";
+import { bearerToken, constantTimeEqual, json } from "./http.js";
 import { createRecorder } from "./job.js";
 import type { JobContext } from "./job.js";
 import { capOutput, describeError, OUTPUT_CAP, redactAndCap, redactSecrets } from "./output.js";
@@ -260,6 +261,8 @@ const STATE_ATTEMPTS = 10;
 /** Runs read for a baseline, and the most read when failures crowd out the successes. */
 const HISTORY_PAGE = BASELINE_WINDOW + 5;
 const HISTORY_MAX = 200;
+/** The error a check gives an import whose finish never landed (isStranded). */
+const STRANDED_ERROR = "Imported, but its finish was never written; marked as timed out";
 
 /** Throws a clear error for options that would otherwise quietly turn a check off. */
 function validateDefinition(def: JobDefinition): void {
@@ -461,8 +464,9 @@ export class Cronwatch {
             return json({ ok: false, error: "CRON_SECRET is not set, so this job will not run for an unauthenticated request. Set it, or pass secret: null to handler() to allow anyone." }, 503);
           }
           if (secret) {
-            const header = request.headers.get("authorization") ?? "";
-            if (!constantTimeEqual(header, `Bearer ${secret}`)) {
+            // Read as the dashboard's routes read it: the scheme in any case.
+            const sent = bearerToken(request.headers.get("authorization"));
+            if (sent === null || !constantTimeEqual(sent, secret)) {
               return json({ ok: false, error: "Unauthorized" }, 401);
             }
           }
@@ -1058,6 +1062,18 @@ export class Cronwatch {
       throw new Error(`recordRun: run ids must be 1 to ${MAX_RUN_ID} characters (got ${got}; job "${input.job}")`);
     }
     if (input.id.includes("\u0000")) throw new Error(`recordRun: run ids cannot contain a NUL character (job "${input.job}")`);
+    // The fields evaluation reads, checked for callers without the types.
+    const where = `job "${input.job}", run "${input.id}"`;
+    if (!["running", "ok", "failed", "timeout"].includes(input.status)) {
+      throw new Error(`recordRun: status must be "running", "ok", "failed", or "timeout" (${where})`);
+    }
+    if (!Number.isFinite(input.startedAt)) throw new Error(`recordRun: startedAt must be a finite number (${where})`);
+    if (input.finishedAt !== null && !Number.isFinite(input.finishedAt)) throw new Error(`recordRun: finishedAt must be a finite number or null (${where})`);
+    if (input.durationMs !== null && !Number.isFinite(input.durationMs)) throw new Error(`recordRun: durationMs must be a finite number or null (${where})`);
+    for (const field of ["error", "output"] as const) {
+      if (input[field] !== null && typeof input[field] !== "string") throw new Error(`recordRun: ${field} must be a string or null (${where})`);
+    }
+    if (typeof input.trigger !== "string") throw new Error(`recordRun: trigger must be a string (${where})`);
     // Refused as job.metric() refuses them: a store keeps NaN and Infinity as null.
     for (const [metric, value] of Object.entries(input.metrics ?? {})) {
       if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -1082,8 +1098,10 @@ export class Cronwatch {
     if (stored) return this.recordOver(definition, stored, run, evaluate);
     // An evaluated import stays retryable until its durable evaluation marker
     // is written. A finished row alone cannot distinguish lost evaluation
-    // from history deliberately imported without evaluation.
-    const inserted: Run = evaluate ? { ...run, status: "running" } : run;
+    // from history deliberately imported without evaluation. The placeholder's
+    // finishedAt is when it was written, so a check can tell one whose finish
+    // never landed (isStranded); the finish writes the run's own.
+    const inserted: Run = evaluate ? { ...run, status: "running", finishedAt: this.now() } : run;
     try {
       await this.store.insertRun(inserted);
     } catch (e) {
@@ -1223,16 +1241,23 @@ export class Cronwatch {
         const stored = found ? this.readJob(found) : null;
         if (stored) this.evaluable(stored);
         const definition = declared ? toStored(declared) : stored?.definition;
-        if (!definition || !isStuck(definition, listed, now)) continue;
+        const stranded = isStranded(listed, now);
+        if (!definition || !(stranded || isStuck(definition, listed, now))) continue;
         // Read again just before the write: lines and metrics flushed since the
         // list was read (while earlier stuck runs were sent, say) are kept.
         const run = await this.store.getRun(listed.id);
         if (!run || run.status !== "running" || run.job !== listed.job) continue;
-        const timeout = timeoutMs(definition);
         run.status = "timeout";
-        run.finishedAt = now;
-        run.durationMs = runDuration(run.startedAt, now);
-        run.error = `Still running after ${formatDuration(timeout)}; marked as timed out`;
+        if (stranded) {
+          // Its own status was never written; a late finish of it is judged
+          // as one after a timeout, so a success still recovers.
+          run.durationMs ??= runDuration(run.startedAt, run.finishedAt!);
+          run.error = STRANDED_ERROR + (run.error === null ? "" : `\n${run.error}`);
+        } else {
+          run.finishedAt = now;
+          run.durationMs = runDuration(run.startedAt, now);
+          run.error = `Still running after ${formatDuration(timeoutMs(definition))}; marked as timed out`;
+        }
         // Only over a row still running: a finish that landed meanwhile wins.
         if (!(await this.writeRunIf(run, ["running"]))) continue;
         alerts.push(...(await this.finishRun(definition, run, now)));
