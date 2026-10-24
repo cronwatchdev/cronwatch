@@ -388,3 +388,22 @@ async fn an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed
     assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Ok);
     assert_eq!(k.types(), ["stuck", "recovered"]);
 }
+
+#[tokio::test]
+async fn an_import_still_running_is_left_to_the_jobs_timeout_not_closed_as_stranded() {
+    let shared = Arc::new(MemoryStore::new());
+    let k = Kit::with(|b| b.store_arc(shared.clone()));
+    k.cw.job("long", JobOptions::new().timeout("1h")).unwrap();
+    let mut run = Run::new("long-run", "long", RunStatus::Running, k.now());
+    run.trigger = "source".into();
+    k.cw.record_run(run, RecordOptions::new()).await.unwrap();
+    k.advance(SEND_LEASE_MS + MIN);
+    k.check().await;
+    let stored = shared.get_run("long-run").await.unwrap().unwrap();
+    assert_eq!(stored.status, RunStatus::Running);
+    assert_eq!(stored.finished_at, None);
+    k.advance(60 * MIN);
+    k.check().await;
+    assert_eq!(shared.get_run("long-run").await.unwrap().unwrap().status, RunStatus::Timeout);
+    assert_eq!(k.types(), ["stuck"]);
+}

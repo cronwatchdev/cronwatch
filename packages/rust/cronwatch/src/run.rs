@@ -914,7 +914,9 @@ impl Client {
     /// was stored, until its pending evaluation marker and its finish are
     /// written; one whose finish is still not written five minutes later is
     /// closed by the next check as timed out, with an error saying so, and
-    /// alerts as a stuck run. A later retry that lands still recovers it.
+    /// alerts as a stuck run. A later retry that lands still recovers it. An
+    /// import still running is stored with no finish (`finished_at` is
+    /// `None`) and times out by the job's timeout, as any running run does.
     pub async fn record_run(&self, input: Run, options: RecordOptions) -> Result<Vec<Alert>, Error> {
         let Some(def) = self.declared(&input.job) else {
             return Err(Error::Invalid(format!(
@@ -966,11 +968,12 @@ impl Client {
         // Keep an evaluated import retryable until its pending marker is
         // durable. The placeholder's finish is when it was written, so a check
         // can tell one whose finish never landed (`is_stranded`); the finish
-        // writes the run's own.
+        // writes the run's own. One still running has none, and times out as
+        // any run does.
         let mut inserted = run.clone();
         if evaluate {
+            inserted.finished_at = (run.status != RunStatus::Running).then(|| self.now());
             inserted.status = RunStatus::Running;
-            inserted.finished_at = Some(self.now());
         }
         if let Err(err) = store.insert_run(&inserted).await {
             // Another process recorded it first.
