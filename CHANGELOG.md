@@ -19,7 +19,6 @@ Every notable change to CronWatch, newest first. All the packages, in every lang
 - Elixir: a missing system trust store fails with an error naming `cacerts:`, a transport response read from another process returns an error instead of an empty body, and the instance's child spec no longer shows option values (webhook URLs, keys) in supervisor reports.
 - WordPress: the JSON API token is stored as its SHA-256 digest (an existing token is converted on first read), the wp-admin dashboard ignores an `Authorization` header, and errors are no longer shown escaped twice.
 - Rust: updated rustls-webpki, webpki-roots, webpki-root-certs, and tokio to address security advisories.
-- Rust: updated crypto-bigint and ctutils (through SQLx's MySQL driver) to address security advisories.
 - MCP server: requires zod 4.6.6 or newer, which fixes a memory exhaustion advisory.
 
 ### Changed
