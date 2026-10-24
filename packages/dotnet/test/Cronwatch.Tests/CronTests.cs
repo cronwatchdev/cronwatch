@@ -122,9 +122,18 @@ public class CronTests
     [Fact]
     public void Zones_are_found_without_regard_to_case()
     {
-        foreach (string name in new[] { "America/New_York", "america/new_york", "AMERICA/NEW_YORK", "utc", "UTC", "Etc/GMT+5", "etc/gmt+5", "+05:30", "-0800", "+05", "asia/calcutta", "US/Eastern" })
+        foreach (string name in new[] { "America/New_York", "america/new_york", "AMERICA/NEW_YORK", "utc", "UTC", "Etc/GMT+5", "etc/gmt+5", "+05:30", "-0800", "+05" })
         {
             Assert.True(CronZones.Find(name) != null, name + " should be a zone");
+        }
+        // The old names are links some systems leave out (Ubuntu 26.04 moved them to
+        // tzdata-legacy), so each is expected only where the system finds it as written.
+        foreach ((string name, string link) in new[] { ("asia/calcutta", "Asia/Calcutta"), ("US/Eastern", "US/Eastern") })
+        {
+            if (TimeZoneInfo.TryFindSystemTimeZoneById(link, out _))
+            {
+                Assert.True(CronZones.Find(name) != null, name + " should be a zone");
+            }
         }
         foreach (string name in new[] { "Local", "local", "Bogus/Zone", "+25:00", "+5", "America/New_York/../New_York", "a\0b", "Etc/Unknown" })
         {
