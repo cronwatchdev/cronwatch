@@ -709,10 +709,13 @@ public sealed partial class CronwatchClient
         {
             return await RecordOverAsync(def.Stored, stored, run, evaluate).ConfigureAwait(false);
         }
-        // Keep an evaluated import retryable until its pending marker is durable. The placeholder's
-        // FinishedAt is when it was written, so a check can tell one whose finish never landed
-        // (Evaluate.IsStranded); the finish writes the run's own.
-        Run inserted = evaluate ? run with { Status = RunStatus.Running, FinishedAt = Now() } : run;
+        // Keep an evaluated import retryable until its pending marker is durable. A finished
+        // import's placeholder has FinishedAt set to when it was written, so a check can tell one
+        // whose finish never landed (Evaluate.IsStranded); the finish writes the run's own. One
+        // still running keeps FinishedAt null and times out by the job's timeout.
+        Run inserted = evaluate
+            ? run with { Status = RunStatus.Running, FinishedAt = run.Status == RunStatus.Running ? null : Now() }
+            : run;
         try
         {
             await CallAsync(() => _store.InsertRunAsync(inserted)).ConfigureAwait(false);

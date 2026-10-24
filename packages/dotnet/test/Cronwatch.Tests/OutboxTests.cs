@@ -462,4 +462,21 @@ public class OutboxTests
         Assert.Equal(RunStatus.Ok, (await store.Inner.GetRunAsync(run.Id))!.Status);
         Assert.Equal(["stuck", "recovered"], m.Alerts.Types());
     }
+
+    [Fact]
+    public async Task An_import_still_running_is_left_to_the_jobs_timeout_not_closed_as_stranded()
+    {
+        await using var m = Make();
+        m.Cw.Job("long", new JobOptions { Timeout = "1h" });
+        await m.Cw.RecordRunAsync(Run.Running("long-run", "long", m.Clock.Ms(), "source"));
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs + Min));
+        await m.Cw.CheckAsync();
+        Run still = (await m.Store.GetRunAsync("long-run"))!;
+        Assert.Equal(RunStatus.Running, still.Status);
+        Assert.Null(still.FinishedAt);
+        m.Clock.Advance(TimeSpan.FromMinutes(60));
+        await m.Cw.CheckAsync();
+        Assert.Equal(RunStatus.Timeout, (await m.Store.GetRunAsync("long-run"))!.Status);
+        Assert.Equal(["stuck"], m.Alerts.Types());
+    }
 }
