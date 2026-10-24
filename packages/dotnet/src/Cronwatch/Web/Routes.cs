@@ -451,10 +451,11 @@ public sealed class Routes
     // ---- serving
 
     /// <summary>
-    /// Answers one request as the SDK's routes answer it. A store failure (or anything else thrown)
-    /// is reported to the client's error handler as <c>routes</c> and answered 500. A request whose
-    /// <paramref name="cancellationToken"/> is cancelled (its client went away) reports nothing and
-    /// ends with an <see cref="OperationCanceledException"/>.
+    /// Answers one request as the SDK's routes answer it. A <c>HEAD</c> is answered as its
+    /// <c>GET</c> would be, without the body, and never runs the check. A store failure (or
+    /// anything else thrown) is reported to the client's error handler as <c>routes</c> and
+    /// answered 500. A request whose <paramref name="cancellationToken"/> is cancelled (its client
+    /// went away) reports nothing and ends with an <see cref="OperationCanceledException"/>.
     /// </summary>
     public async Task<CronwatchResponse> HandleAsync(CronwatchRequest request, CancellationToken cancellationToken = default)
     {
@@ -470,7 +471,9 @@ public sealed class Routes
         bool wantsHtml = !path.StartsWith("/api", StringComparison.Ordinal);
         try
         {
-            return await ServeAsync(request, pathname, path, rawQuery, b, wantsHtml, cancellationToken).ConfigureAwait(false);
+            CronwatchResponse answer = await ServeAsync(request, pathname, path, rawQuery, b, wantsHtml, cancellationToken).ConfigureAwait(false);
+            // A HEAD is answered as its GET would be, without the body.
+            return string.Equals(request.Method, "HEAD", StringComparison.OrdinalIgnoreCase) ? answer.WithOwnedBody([]) : answer;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -667,8 +670,9 @@ public sealed class Routes
             parts.Add(decoded);
         }
 
-        // HTML
-        if (method == "GET" && path == "/")
+        // HTML. A HEAD reads what a GET would; HandleAsync sends it without a body.
+        bool reads = method is "GET" or "HEAD";
+        if (reads && path == "/")
         {
             IReadOnlyList<JobWithRuns> entries = await _cw.JobsWithRunsAsync(BoardPageRuns, ct).ConfigureAwait(false);
             long now = _cw.NowMs;
@@ -682,7 +686,7 @@ public sealed class Routes
             List<LaneInput> lanes = await BoardLanesAsync(entries, now, ct).ConfigureAwait(false);
             return Page(_cw.Evaluated(() => Html.DashboardPage(jobs, runsByJob, now, basePath, null, lanes)), 200);
         }
-        if (method == "GET" && parts.Count == 2 && parts[0] == "jobs")
+        if (reads && parts.Count == 2 && parts[0] == "jobs")
         {
             string name = parts[1];
             JobSummary? job = await _cw.JobSummaryAsync(name, ct).ConfigureAwait(false);
@@ -820,11 +824,12 @@ public sealed class Routes
         int n = rest.Count;
         string first = n > 0 ? rest[0] : "";
         // What is serving the API, so a client such as @cronwatch/mcp can tell.
-        if (method == "GET" && n == 0)
+        bool reads = method is "GET" or "HEAD";
+        if (reads && n == 0)
         {
             return Api(new JsObject().Set("ok", true).Set("library", Library).Set("language", Language).Set("version", CronwatchClient.Version).Set("api", ApiVersion), 200);
         }
-        if (method == "GET" && n == 1 && first == "jobs")
+        if (reads && n == 1 && first == "jobs")
         {
             var list = new List<object?>();
             foreach (JobSummary j in await _cw.JobsAsync(ct).ConfigureAwait(false))
@@ -836,7 +841,7 @@ public sealed class Routes
         if (n == 2 && first == "jobs")
         {
             string name = rest[1];
-            if (method == "GET")
+            if (reads)
             {
                 JobSummary? job = await _cw.JobSummaryAsync(name, ct).ConfigureAwait(false);
                 if (job == null)
@@ -914,7 +919,7 @@ public sealed class Routes
                 return Api(body, 200);
             }
         }
-        if (method == "GET" && n == 2 && first == "runs")
+        if (reads && n == 2 && first == "runs")
         {
             Run? run = await _cw.GetRunAsync(rest[1], ct).ConfigureAwait(false);
             return run != null ? Api(new JsObject().Set("ok", true).Set("run", run.ToValue()), 200) : Api(ErrorBody("No such run"), 404);

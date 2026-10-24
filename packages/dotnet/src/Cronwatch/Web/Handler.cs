@@ -16,8 +16,9 @@ namespace Cronwatch.Web;
 /// Safe to share between threads.
 /// </summary>
 /// <remarks>
-/// A request must send <c>Authorization: Bearer &lt;secret&gt;</c> (compared in constant time):
-/// the options' secret, else the client's cron secret. With no secret at all it answers 503 and
+/// A request must send <c>Authorization: Bearer &lt;secret&gt;</c> (the scheme in any case, the
+/// secret compared in constant time): the options' secret, else the client's cron secret. With no
+/// secret at all it answers 503 and
 /// reports it once to the error handler as <c>handler</c>, unless the environment is development
 /// or <see cref="HandlerSecret.None"/> (or the client's <see cref="CronSecret.None"/>) lets anyone
 /// in; a wrong or missing bearer is 401. Each request it lets in runs the function in the request
@@ -100,7 +101,8 @@ public sealed class Handler
                     "CRON_SECRET is not set, so this job will not run for an unauthenticated request. Set it, or pass Secret = HandlerSecret.None to Handler() to allow anyone."),
                 503);
         }
-        if (_secret.Length > 0 && !WebText.ConstantTimeEquals(request.Header("authorization") ?? "", "Bearer " + _secret))
+        // Read as the dashboard's routes read it: the scheme in any case.
+        if (_secret.Length > 0 && (Routes.Bearer(request) is not { } sent || !WebText.ConstantTimeEquals(sent, _secret)))
         {
             return Json(new JsObject().Set("ok", false).Set("error", "Unauthorized"), 401);
         }

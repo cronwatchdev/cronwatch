@@ -57,7 +57,7 @@ public class HealthConformanceTests
     public void Every_section_is_replayed()
     {
         var f = Fixtures.Load("health");
-        DurationConformanceTests.Known(f, "jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck",
+        DurationConformanceTests.Known(f, "jobHealth", "summarize", "percentile", "median", "normalizeState", "muteOpens", "isStuck", "isStranded",
             "unevaluableSummary", "applySilence", "staleAlert", "runDuration", "stateVersion", "failureCount", "silenceEnd", "delivery");
         Known(Fixtures.Object(f, "delivery"), "maxUndelivered", "sendLeaseMs", "maxPendingRuns", "alertKey", "normalizeState",
             "queueUndelivered", "holdAlerts", "releaseSending", "recordSent", "claimUndelivered", "holdRun", "releaseRun",
@@ -130,6 +130,12 @@ public class HealthConformanceTests
             fails.Same("isStuck " + i++, got, c.Get("stuck"));
         }
         i = 0;
+        foreach (var c in Fixtures.Objects(f, "isStranded"))
+        {
+            cases++;
+            fails.Same("isStranded " + i++, Evaluate.IsStranded(EvaluateCases.Run(c.Get("run"))!, Fixtures.Integer(c, "now")), c.Get("stranded"));
+        }
+        i = 0;
         foreach (var c in Fixtures.Objects(f, "unevaluableSummary"))
         {
             cases++;
@@ -198,7 +204,7 @@ public class HealthConformanceTests
             fails.Same("silenceEnd " + i++, Evaluate.SilenceEnd(Fixtures.Integer(c, "now"), ms), c.Get("silencedUntil"));
         }
         cases += Delivery(Fixtures.Object(f, "delivery"), fails);
-        Assert.Equal(355, cases);
+        Assert.Equal(361, cases);
         fails.Check("health");
     }
 

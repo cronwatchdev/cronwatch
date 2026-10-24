@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 
 namespace Cronwatch.Internal;
@@ -22,8 +23,12 @@ internal sealed class OutputLines
     private long _size;
     private readonly List<string> _head = [];
     private long _headSize;
-    private string? _whole = "";
-    private string _tail = "";
+    // Appended in place, so a run of short lines does not copy what it holds on each one.
+    private StringBuilder? _whole = new();
+    // The raw lines behind ExpectText's tail, joined only when it is read: each line's last 16 KB,
+    // the oldest dropped once what is left still holds 16 KB.
+    private readonly LinkedList<string> _raw = new();
+    private long _rawSize;
     private bool _logged;
 
     /// <summary>Whether anything was logged.</summary>
@@ -45,10 +50,18 @@ internal sealed class OutputLines
         {
             string separator = _logged ? "\n" : "";
             _logged = true;
-            if (_whole != null) { _whole = _whole.Length + separator.Length + line.Length <= 2 * OutputText.OutputCap ? _whole + separator + line : null; }
+            if (_whole != null)
+            {
+                _whole = _whole.Length + separator.Length + line.Length <= 2 * OutputText.OutputCap ? _whole.Append(separator).Append(line) : null;
+            }
             string last = line[^System.Math.Min(line.Length, OutputText.OutputCap)..];
-            string joined = _tail + separator + last;
-            _tail = joined[^System.Math.Min(joined.Length, OutputText.OutputCap)..];
+            _raw.AddLast(last);
+            _rawSize += last.Length + 1;
+            while (_raw.Count > 1 && _rawSize - (_raw.First!.Value.Length + 1) > OutputText.OutputCap)
+            {
+                _rawSize -= _raw.First.Value.Length + 1;
+                _raw.RemoveFirst();
+            }
             if (_headSize < OutputText.OutputCap)
             {
                 _head.Add(line[..System.Math.Min(line.Length, (int)(OutputText.OutputCap - _headSize))]);
@@ -96,8 +109,12 @@ internal sealed class OutputLines
             {
                 return null;
             }
-            if (_whole != null) { return _whole; }
-            return Js.Head(string.Join('\n', _head), OutputText.OutputCap) + "\n" + _tail;
+            if (_whole != null)
+            {
+                return _whole.ToString();
+            }
+            string tail = string.Join('\n', _raw);
+            return Js.Head(string.Join('\n', _head), OutputText.OutputCap) + "\n" + tail[^System.Math.Min(tail.Length, OutputText.OutputCap)..];
         }
     }
 }

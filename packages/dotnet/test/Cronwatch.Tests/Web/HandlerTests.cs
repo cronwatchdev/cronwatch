@@ -49,6 +49,24 @@ public class HandlerTests
         new("POST", "/") { Headers = [new("authorization", "Bearer " + secret)] };
 
     [Fact]
+    public async Task A_jobs_handler_reads_the_bearer_scheme_in_any_case_as_the_routes_do()
+    {
+        await using var cw = Client(Secret);
+        int ran = 0;
+        Handler h = cw.Job("hook").Handler((j, req, ct) =>
+        {
+            ran++;
+            return Task.CompletedTask;
+        });
+        Assert.Equal(200, (await h.HandleAsync(Get("bearer  " + Secret))).Status);
+        Assert.Equal(200, (await h.HandleAsync(Get("BEARER\t" + Secret))).Status);
+        Assert.Equal(401, (await h.HandleAsync(Get("Bearer wrong"))).Status);
+        Assert.Equal(401, (await h.HandleAsync(Get("Bearer" + Secret))).Status);
+        Assert.Equal(401, (await h.HandleAsync(Get(Secret))).Status);
+        Assert.Equal(2, ran);
+    }
+
+    [Fact]
     public async Task The_handler_checks_the_bearer_and_reports_the_run()
     {
         var time = Support.Clock();
@@ -66,7 +84,7 @@ public class HandlerTests
         Assert.Equal(401, (await h.HandleAsync(Get(null))).Status);
         CronwatchResponse wrong = await h.HandleAsync(Get("Bearer wrong"));
         Assert.Equal("{\"ok\":false,\"error\":\"Unauthorized\"}", wrong.Text());
-        Assert.Equal(401, (await h.HandleAsync(Get("bearer " + Secret))).Status);
+        Assert.Equal(401, (await h.HandleAsync(Get(Secret))).Status);
         CronwatchResponse res = await h.HandleAsync(Get("Bearer " + Secret));
         Assert.Equal(200, res.Status);
         Assert.Equal("application/json; charset=utf-8", res.Header("content-type"));

@@ -397,4 +397,69 @@ public class OutboxTests
         await m.Cw.CheckAsync();
         Assert.Empty(m.Alerts.Types());
     }
+
+    [Fact]
+    public async Task An_evaluated_import_whose_state_write_fails_and_is_not_retried_is_closed_by_a_check()
+    {
+        var store = new Wrapped();
+        await using var m = Make(store: store);
+        m.Cw.Job("imported", new JobOptions { Schedule = "every 5m", Timeout = "1m" });
+        await m.Cw.CheckAsync();
+        long now = m.Clock.Ms();
+        var run = new Run
+        {
+            Id = "lost-import",
+            Job = "imported",
+            Status = RunStatus.Failed,
+            StartedAt = now - 2 * Min,
+            FinishedAt = now - Min,
+            DurationMs = Min,
+            Error = "boom",
+            Trigger = "source",
+        };
+        store.Break("compareAndSetState");
+        await Assert.ThrowsAsync<CronwatchException>(() => m.Cw.RecordRunAsync(run));
+        store.Mend("compareAndSetState");
+        await m.Cw.CheckAsync();
+        Assert.Equal(RunStatus.Running, (await store.Inner.GetRunAsync(run.Id))!.Status);
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs + Min));
+        await m.Cw.CheckAsync();
+        Run closed = (await store.Inner.GetRunAsync(run.Id))!;
+        Assert.Equal(RunStatus.Timeout, closed.Status);
+        Assert.Equal(Min, closed.DurationMs);
+        Assert.Equal("Imported, but its finish was never written; marked as timed out\nboom", closed.Error);
+        Assert.Equal(["stuck"], m.Alerts.Types());
+        Assert.NotEqual(JobHealth.Healthy, (await m.Cw.JobSummaryAsync("imported"))!.Health);
+    }
+
+    [Fact]
+    public async Task An_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_by_a_check_and_a_late_success_recovers_it()
+    {
+        var store = new Wrapped();
+        await using var m = Make(store: store);
+        m.Cw.Job("imported", new JobOptions { Schedule = "0 * * * *", Timeout = "1m" });
+        await m.Cw.CheckAsync();
+        long now = m.Clock.Ms();
+        var run = new Run
+        {
+            Id = "lost-finish",
+            Job = "imported",
+            Status = RunStatus.Ok,
+            StartedAt = now,
+            FinishedAt = now,
+            DurationMs = 0,
+            Trigger = "source",
+        };
+        store.Break("updateRunIf");
+        await Assert.ThrowsAsync<CronwatchException>(() => m.Cw.RecordRunAsync(run));
+        store.Mend("updateRunIf");
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs + Min));
+        await m.Cw.CheckAsync();
+        Assert.Equal(RunStatus.Timeout, (await store.Inner.GetRunAsync(run.Id))!.Status);
+        Assert.Null((await store.Inner.GetStateAsync(run.Job))!.PendingRuns);
+        Assert.Equal(["stuck"], m.Alerts.Types());
+        await m.Cw.RecordRunAsync(run);
+        Assert.Equal(RunStatus.Ok, (await store.Inner.GetRunAsync(run.Id))!.Status);
+        Assert.Equal(["stuck", "recovered"], m.Alerts.Types());
+    }
 }

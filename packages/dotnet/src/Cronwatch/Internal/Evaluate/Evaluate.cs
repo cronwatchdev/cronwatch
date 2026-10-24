@@ -1100,6 +1100,17 @@ internal static class Evaluate
     }
 
     /// <summary>
+    /// Whether a finished import was left as its placeholder: <c>RecordRunAsync</c> writes one as
+    /// running, with <c>FinishedAt</c> set to when it was written, and the finish that follows
+    /// never landed (the importer stopped, or a store write failed and it was not retried). A
+    /// check closes one <see cref="SendLeaseMs"/> after it was written, as it closes a stuck run.
+    /// </summary>
+    public static bool IsStranded(Run run, long now)
+    {
+        return run.Status == RunStatus.Running && run.FinishedAt is long finishedAt && SaturatingSub(now, finishedAt) > SendLeaseMs;
+    }
+
+    /// <summary>
     /// <paramref name="next"/> with nothing opened that was not open in <paramref name="previous"/>.
     /// While a job is silenced conditions may close but none may open, so the first problem after
     /// the silence ends alerts normally.

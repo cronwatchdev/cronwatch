@@ -192,7 +192,8 @@ public sealed partial class CronwatchClient
             Evaluable(stored);
             def = stored.Definition;
         }
-        if (!Evaluated(() => Evaluate.IsStuck(def, listed, now)))
+        bool stranded = Evaluate.IsStranded(listed, now);
+        if (!stranded && !Evaluated(() => Evaluate.IsStuck(def, listed, now)))
         {
             return [];
         }
@@ -203,13 +204,22 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        Run marked = run with
-        {
-            Status = RunStatus.Timeout,
-            FinishedAt = now,
-            DurationMs = Evaluate.RunDuration(run.StartedAt, now),
-            Error = TimeoutText(def),
-        };
+        // A stranded import's own status was never written; a late finish of it is judged as one
+        // after a timeout, so a success still recovers.
+        Run marked = stranded
+            ? run with
+            {
+                Status = RunStatus.Timeout,
+                DurationMs = run.DurationMs ?? Evaluate.RunDuration(run.StartedAt, run.FinishedAt ?? now),
+                Error = StrandedError + (run.Error == null ? "" : "\n" + run.Error),
+            }
+            : run with
+            {
+                Status = RunStatus.Timeout,
+                FinishedAt = now,
+                DurationMs = Evaluate.RunDuration(run.StartedAt, now),
+                Error = TimeoutText(def),
+            };
         // Only over a row still running: a finish that landed meanwhile wins.
         if (await WriteRunIfAsync(marked, OnlyRunning).ConfigureAwait(false))
         {
