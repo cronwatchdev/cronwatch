@@ -861,7 +861,9 @@ defmodule Cronwatch.Web.RoutesTest do
 
     w = web()
     assert req(w, "POST", "/cronwatch/sw.js").status == 401, "a write to the shell"
-    assert req(w, "HEAD", "/cronwatch/", [@auth]).status == 404, "HEAD elsewhere"
+    head = req(w, "HEAD", "/cronwatch/", [@auth])
+    assert {head.status, head.body} == {200, ""}, "HEAD reads a page without its body"
+    assert req(w, "HEAD", "/cronwatch/api/check", [@auth]).status == 404, "HEAD never runs the check"
     open = web(token: false)
     assert Cronwatch.Web.token(open.opts) == nil
     assert get(open, "/cronwatch/api/jobs").status == 200
@@ -1022,6 +1024,35 @@ defmodule Cronwatch.Web.RoutesTest do
     assert res.status == 200
     assert res.body =~ ~s(<span class="k">cost</span> 1.2500</span><span><span class="k">n</span> 3<)
     refute res.body =~ ~r/class="k">(rows|label)</
+  end
+
+  test "record_run refuses fields evaluation cannot read" do
+    w = web(token: false)
+    Cronwatch.job!("imported", instance: w.cw)
+
+    run = %Cronwatch.Run{
+      id: "r",
+      job: "imported",
+      status: "ok",
+      started_at: 1,
+      finished_at: 2,
+      duration_ms: 1,
+      trigger: "source"
+    }
+
+    for {patch, message} <- [
+          {[status: "succeeded"], "record_run: status must be"},
+          {[started_at: :nan], "record_run: started_at must be a finite number"},
+          {[finished_at: "2"], "record_run: finished_at must be a finite number or nil"},
+          {[duration_ms: :infinity], "record_run: duration_ms must be a finite number or nil"},
+          {[error: 5], "record_run: error must be a string or nil"},
+          {[trigger: nil], "record_run: trigger must be a string"}
+        ] do
+      assert {:error, e} = Cronwatch.record_run(struct(run, patch), instance: w.cw)
+      assert Exception.message(e) =~ message
+    end
+
+    assert Cronwatch.get_run!("r", instance: w.cw) == nil
   end
 
   test "text helpers keep JavaScript's answers" do

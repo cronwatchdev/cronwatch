@@ -164,6 +164,15 @@ defmodule Cronwatch.Conformance.CoreTest do
 
     fails =
       f
+      |> list("isStranded")
+      |> Enum.with_index()
+      |> Enum.reduce(fails, fn {c, i}, acc ->
+        got = Evaluate.stranded?(run(field(c, "run")), field(c, "now"))
+        same(acc, "isStranded #{i}", got, field(c, "stranded"))
+      end)
+
+    fails =
+      f
       |> list("unevaluableSummary")
       |> Enum.with_index()
       |> Enum.reduce(fails, fn {c, i}, acc ->

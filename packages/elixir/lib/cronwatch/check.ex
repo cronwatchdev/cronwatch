@@ -17,6 +17,8 @@ defmodule Cronwatch.Check do
   alias Cronwatch.Telemetry
 
   @prune_interval 60 * 60_000
+  # The error a check gives an import whose finish never landed (Evaluate.stranded?).
+  @stranded_error "Imported, but its finish was never written; marked as timed out"
 
   @doc """
   Looks for missed and stuck runs across every job, sends alerts, retries
@@ -209,21 +211,35 @@ defmodule Cronwatch.Check do
         end
       end
 
+    stranded = Evaluate.stranded?(listed, now)
+
     # Read again just before the write: lines and metrics flushed since the
     # list was read (while earlier stuck runs were sent, say) are kept.
     with %Object{} <- definition,
-         {:ok, true} <- ok!(Evaluate.stuck?(definition, listed, now)),
+         true <- stranded or ok!(Evaluate.stuck?(definition, listed, now)) == {:ok, true},
          %Run{status: "running", job: job_name} = run when job_name == listed.job <-
            Core.store!(c, :get_run, [listed.id]) do
-      {:ok, timeout} = ok!(Evaluate.timeout_ms(definition))
+      run =
+        if stranded do
+          # Its own status was never written; a late finish of it is judged
+          # as one after a timeout, so a success still recovers.
+          %{
+            run
+            | status: "timeout",
+              duration_ms: run.duration_ms || Evaluate.run_duration(run.started_at, run.finished_at),
+              error: if(run.error == nil, do: @stranded_error, else: @stranded_error <> "\n" <> run.error)
+          }
+        else
+          {:ok, timeout} = ok!(Evaluate.timeout_ms(definition))
 
-      run = %{
-        run
-        | status: "timeout",
-          finished_at: now,
-          duration_ms: Evaluate.run_duration(run.started_at, now),
-          error: "Still running after #{Duration.format(timeout)}; marked as timed out"
-      }
+          %{
+            run
+            | status: "timeout",
+              finished_at: now,
+              duration_ms: Evaluate.run_duration(run.started_at, now),
+              error: "Still running after #{Duration.format(timeout)}; marked as timed out"
+          }
+        end
 
       # Only over a row still running: a finish that landed meanwhile wins.
       if Core.write_run_if!(c, run, ["running"]), do: Core.finish_run(c, definition, run, now), else: []
@@ -380,6 +396,8 @@ defmodule Cronwatch.Check do
       raise Error.invalid("record_run: run ids cannot contain a NUL character (job #{Cronwatch.JS.quote(input.job)})")
     end
 
+    validate_fields!(input)
+
     # Refused as metric/3 refuses them: a store keeps NaN and Infinity as null.
     for {metric, value} <- metric_pairs(input.metrics), not (is_number(value) and Cronwatch.Duration.double?(value)) do
       raise Error.invalid(
@@ -410,8 +428,11 @@ defmodule Cronwatch.Check do
 
     case Core.store!(c, :get_run, [run.id]) do
       nil ->
-        # Keep an evaluated import retryable until its pending marker is durable.
-        staged = if evaluate?, do: %{run | status: "running"}, else: run
+        # Keep an evaluated import retryable until its pending marker is
+        # durable. The placeholder's finished_at is when it was written, so a
+        # check can tell one whose finish never landed (Evaluate.stranded?);
+        # the finish writes the run's own.
+        staged = if evaluate?, do: %{run | status: "running", finished_at: Core.now(c)}, else: run
 
         inserted =
           try do
@@ -446,6 +467,32 @@ defmodule Cronwatch.Check do
         record_over(c, definition, stored, run, evaluate?)
     end
   end
+
+  # The fields evaluation reads, checked for callers that built the struct by hand.
+  defp validate_fields!(input) do
+    where = "job #{Cronwatch.JS.quote(input.job)}, run #{Cronwatch.JS.quote(input.id)}"
+    fail = fn message -> raise Error.invalid("record_run: #{message} (#{where})") end
+
+    if input.status not in ["running", "ok", "failed", "timeout"],
+      do: fail.(~s(status must be "running", "ok", "failed", or "timeout"))
+
+    if not finite?(input.started_at), do: fail.("started_at must be a finite number")
+
+    if input.finished_at != nil and not finite?(input.finished_at),
+      do: fail.("finished_at must be a finite number or nil")
+
+    if input.duration_ms != nil and not finite?(input.duration_ms),
+      do: fail.("duration_ms must be a finite number or nil")
+
+    for {field, value} <- [error: input.error, output: input.output], value != nil and not is_binary(value) do
+      fail.("#{field} must be a string or nil")
+    end
+
+    if not is_binary(input.trigger), do: fail.("trigger must be a string")
+    :ok
+  end
+
+  defp finite?(n), do: is_number(n) and Cronwatch.Duration.double?(n)
 
   defp record_over(c, definition, stored, run, evaluate?) do
     cond do

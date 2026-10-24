@@ -19,7 +19,8 @@ defmodule Cronwatch.Alerts.Slack do
       instance's, else `Cronwatch.Transport.HTTP`.
 
   The message goes in a code block cut to 2,900 characters, a triage in a
-  block of its own cut to 3,000, and Slack's `&`, `<`, and `>` are escaped,
+  block of its own cut to 3,000 (neither cut splits an escape or a character
+  outside the Basic Multilingual Plane), and Slack's `&`, `<`, and `>` are escaped,
   so job output cannot mention `@channel` or add links.
   """
 
@@ -30,7 +31,6 @@ defmodule Cronwatch.Alerts.Slack do
   alias Cronwatch.Alerts.Shared
   alias Cronwatch.JS
   alias Cronwatch.JS.Object
-  alias Cronwatch.JS.Units
 
   @derive {Inspect, except: [:webhook_url, :transport]}
   defstruct [:webhook_url, link: nil, transport: nil]
@@ -57,13 +57,13 @@ defmodule Cronwatch.Alerts.Slack do
     head =
       "#{emoji(alert.type)} *#{escape(alert.title)}*" <> if(link != "", do: " (<#{link_target(link)}|open>)", else: "")
 
-    code = Units.concat(["```", Units.head(code_block_safe(escape(alert.message)), 2900), "```"])
+    code = "```" <> cut_escaped(code_block_safe(escape(alert.message)), 2900) <> "```"
     blocks = [section(head), section(code)]
     triage = Shared.triage(alert)
 
     # Its own block, so a long diagnosis cannot push a block past Slack's
     # 3000 character limit.
-    blocks = if triage != "", do: blocks ++ [section(Units.head("_Triage:_ " <> escape(triage), 3000))], else: blocks
+    blocks = if triage != "", do: blocks ++ [section(cut_escaped("_Triage:_ " <> escape(triage), 3000))], else: blocks
 
     payload =
       Object.new([
@@ -76,7 +76,7 @@ defmodule Cronwatch.Alerts.Slack do
     headers = [{"content-type", "application/json"}]
 
     # A redirect is refused, not followed: a webhook URL is its own credential.
-    with {:ok, answer} <- Post.fetch(transport, Post.timeout(), o.webhook_url, headers, JS.stringify_lone(payload)) do
+    with {:ok, answer} <- Post.fetch(transport, Post.timeout(), o.webhook_url, headers, JS.stringify(payload)) do
       if Post.ok?(answer),
         do: :ok,
         # The start of the answer, with the URL's credential cut out in case a proxy echoes the request.
@@ -103,6 +103,20 @@ defmodule Cronwatch.Alerts.Slack do
   # <!channel> and <url|links>.
   defp escape(text),
     do: text |> String.replace("&", "&amp;") |> String.replace("<", "&lt;") |> String.replace(">", "&gt;")
+
+  # Escaped text cut to at most `max` UTF-16 units, splitting neither an
+  # entity escape/1 wrote nor a surrogate pair.
+  defp cut_escaped(text, max) do
+    kept = Post.cut(text, max)
+
+    case :binary.matches(kept, "&") |> List.last() do
+      {at, _} ->
+        if String.contains?(binary_part(kept, at, byte_size(kept) - at), ";"), do: kept, else: binary_part(kept, 0, at)
+
+      nil ->
+        kept
+    end
+  end
 
   # A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|`
   # percent-encoded, which ends neither the link nor its text.

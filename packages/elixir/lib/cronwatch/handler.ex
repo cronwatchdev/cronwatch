@@ -9,8 +9,8 @@ if Code.ensure_loaded?(Plug.Conn) do
         forward "/cron/nightly", Cronwatch.Handler,
           job: "nightly-report", run: {MyApp.Reports, :nightly, []}
 
-    Each request whose `Authorization` is `Bearer <secret>` (compared in
-    constant time) runs the function as a recorded run with the trigger
+    Each request whose `Authorization` is `Bearer <secret>` (the scheme in
+    any case, the secret compared in constant time) runs the function as a recorded run with the trigger
     `"handler"`, and is answered with
     `{"ok","job","run","status","durationMs"}`, 200 when the run was ok and
     500 when it failed, with the error's first line as `error` for a caller
@@ -161,9 +161,12 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     defp secret(_opts, c), do: {Routes.cron_secret(c), c.cron_secret == false}
 
+    # Read as the dashboard's routes read it: the scheme in any case.
     defp authorized?(conn, secret) do
-      sent = %Request{headers: conn.req_headers} |> Request.header("authorization") |> Kernel.||("") |> Text.latin1()
-      Text.constant_time_eq(sent, "Bearer " <> secret)
+      case Routes.bearer(%Request{headers: conn.req_headers}) do
+        nil -> false
+        sent -> Text.constant_time_eq(sent, secret)
+      end
     end
 
     defp run(conn, opts, secret) do

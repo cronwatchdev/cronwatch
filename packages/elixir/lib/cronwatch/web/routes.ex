@@ -32,6 +32,8 @@ defmodule Cronwatch.Web.Routes do
   # Runs per job the board reads in one go: the table's sparkline, and most
   # jobs' lanes.
   @board_page_runs 20
+  # The methods the pages and the API's reads answer; a HEAD's body is dropped in handle/2.
+  @reads ["GET", "HEAD"]
   @cookie_max_age 60 * 60 * 24 * 30
   @default_base "/cronwatch"
 
@@ -254,8 +256,10 @@ defmodule Cronwatch.Web.Routes do
   # The token an Authorization header carries: what follows the scheme when
   # the scheme is Bearer (any case) and whitespace follows it, else nil. Any
   # other scheme (a proxy's Basic auth, say) is no bearer at all, so the
-  # cookie and ?token= are read as if no header came.
-  defp bearer(req) do
+  # cookie and ?token= are read as if no header came. A job's handler
+  # (Cronwatch.Handler) reads its secret the same way.
+  @doc false
+  def bearer(req) do
     case header_text(req, "authorization") do
       <<b::binary-size(6), rest::binary>> when rest != "" ->
         trimmed = JS.trim_start(rest)
@@ -346,9 +350,13 @@ defmodule Cronwatch.Web.Routes do
 
     try do
       # Not under the base at all: nothing here answers it, signed in or not.
-      if path == nil,
-        do: page("Not found", pathname, base, 404),
-        else: serve(opts, req, pathname, path, base, wants_html)
+      if path == nil do
+        page("Not found", pathname, base, 404)
+      else
+        # A HEAD is answered as its GET would be, without the body.
+        {status, headers, body} = serve(opts, req, pathname, path, base, wants_html)
+        {status, headers, if(String.upcase(req.method) == "HEAD", do: "", else: body)}
+      end
     rescue
       e -> failed(opts, e, base, wants_html)
     catch
@@ -580,7 +588,7 @@ defmodule Cronwatch.Web.Routes do
 
       parts ->
         case {said.method, parts} do
-          {"GET", []} when path == "/" ->
+          {method, []} when method in @reads and path == "/" ->
             entries = Cronwatch.jobs_with_runs!(@board_page_runs, inst)
             now = Config.now(Config.get(opts.instance))
             runs_by_job = Map.new(entries, fn {job, runs} -> {job.name, runs} end)
@@ -588,7 +596,7 @@ defmodule Cronwatch.Web.Routes do
             lanes = board_lanes(entries, now, inst)
             html(HTML.dashboard_page(jobs, runs_by_job, now, base, nil, lanes), 200)
 
-          {"GET", ["jobs", name]} ->
+          {method, ["jobs", name]} when method in @reads ->
             case Cronwatch.job_summary!(name, inst) do
               nil ->
                 page("No such job", "#{name} is not in the store.", base, 404)
@@ -720,7 +728,7 @@ defmodule Cronwatch.Web.Routes do
   defp serve_api(req, method, rest, said, inst) do
     case {method, rest} do
       # What is serving the API, so a client such as @cronwatch/mcp can tell.
-      {"GET", []} ->
+      {method, []} when method in @reads ->
         api(
           ok_body([
             {"library", @library},
@@ -731,11 +739,11 @@ defmodule Cronwatch.Web.Routes do
           200
         )
 
-      {"GET", ["jobs"]} ->
+      {method, ["jobs"]} when method in @reads ->
         jobs = Cronwatch.jobs!(inst)
         api(ok_body([{"jobs", Enum.map(jobs, &JobSummary.to_value/1)}]), 200)
 
-      {"GET", ["jobs", name]} ->
+      {method, ["jobs", name]} when method in @reads ->
         case Cronwatch.job_summary!(name, inst) do
           nil ->
             no_such_job()
@@ -801,7 +809,7 @@ defmodule Cronwatch.Web.Routes do
             api(error_body("Not found"), 404)
         end
 
-      {"GET", ["runs", id]} ->
+      {method, ["runs", id]} when method in @reads ->
         case Cronwatch.get_run!(id, inst) do
           nil -> api(error_body("No such run"), 404)
           run -> api(ok_body([{"run", Run.to_value(run)}]), 200)

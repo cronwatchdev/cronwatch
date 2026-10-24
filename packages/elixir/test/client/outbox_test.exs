@@ -347,5 +347,83 @@ defmodule Cronwatch.OutboxTest do
     assert Capture.types(alerts) == []
   end
 
+  # A store whose `call` raises `message` once, after `arm` is called.
+  defp failing_once(inner, call, message) do
+    armed = :atomics.new(1, [])
+
+    fail = fn ->
+      if :atomics.compare_exchange(armed, 1, 1, 0) == :ok, do: raise(Cronwatch.Error.store(message))
+    end
+
+    {Wrap.spec(inner: inner, before: %{call => fail}), fn -> :atomics.put(armed, 1, 1) end}
+  end
+
+  test "an evaluated import whose state write fails and is not retried is closed by a check" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    {store, arm} = failing_once(shared, :compare_and_set_state, "state unavailable")
+    %{cw: cw, alerts: alerts} = make(store: store, clock_ref: clock, on_error: fn _, _ -> :ok end)
+    Cronwatch.job!("imported", schedule: "every 5m", timeout: "1m", instance: cw)
+    Cronwatch.check!(instance: cw)
+    now = Clock.now(clock)
+
+    run = %Cronwatch.Run{
+      id: "lost-import",
+      job: "imported",
+      status: "failed",
+      started_at: now - 2 * @min,
+      finished_at: now - @min,
+      duration_ms: @min,
+      error: "boom",
+      trigger: "source"
+    }
+
+    arm.()
+    assert {:error, %Cronwatch.Error{message: message}} = Cronwatch.record_run(run, instance: cw)
+    assert message =~ "state unavailable"
+    Cronwatch.check!(instance: cw)
+    assert Cronwatch.get_run!(run.id, instance: cw).status == "running"
+    Clock.advance(clock, Evaluate.send_lease_ms() + @min)
+    Cronwatch.check!(instance: cw)
+    closed = Cronwatch.get_run!(run.id, instance: cw)
+    assert closed.status == "timeout"
+    assert closed.duration_ms == @min
+    assert closed.error == "Imported, but its finish was never written; marked as timed out\nboom"
+    assert Capture.types(alerts) == ["stuck"]
+    assert Cronwatch.job_summary!("imported", instance: cw).health != "healthy"
+  end
+
+  test "an evaluated import whose finish write fails after its marker is closed by a check, and a late success recovers it" do
+    clock = Clock.new()
+    shared = Wrap.memory(shared_memory())
+    {store, arm} = failing_once(shared, :update_run_if, "store unavailable")
+    %{cw: cw, alerts: alerts} = make(store: store, clock_ref: clock, on_error: fn _, _ -> :ok end)
+    Cronwatch.job!("imported", schedule: "0 * * * *", timeout: "1m", instance: cw)
+    Cronwatch.check!(instance: cw)
+    now = Clock.now(clock)
+
+    run = %Cronwatch.Run{
+      id: "lost-finish",
+      job: "imported",
+      status: "ok",
+      started_at: now,
+      finished_at: now,
+      duration_ms: 0,
+      trigger: "source"
+    }
+
+    arm.()
+    assert {:error, %Cronwatch.Error{message: message}} = Cronwatch.record_run(run, instance: cw)
+    assert message =~ "store unavailable"
+    Clock.advance(clock, Evaluate.send_lease_ms() + @min)
+    Cronwatch.check!(instance: cw)
+    assert Cronwatch.get_run!(run.id, instance: cw).status == "timeout"
+    assert state(shared, "imported").pending_runs == nil
+    assert Capture.types(alerts) == ["stuck"]
+    Cronwatch.record_run!(run, instance: cw)
+    assert Cronwatch.get_run!(run.id, instance: cw).status == "ok"
+    assert Capture.types(alerts) == ["stuck", "recovered"]
+  end
+
   defp store_of(cw), do: Cronwatch.Config.get(cw).store
 end

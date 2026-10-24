@@ -38,7 +38,7 @@ defmodule Cronwatch.HandlerTest do
     assert call(h).status == 401, "no auth"
     wrong = call(h, [{"authorization", "Bearer wrong"}])
     assert wrong.resp_body == ~s({"ok":false,"error":"Unauthorized"})
-    assert call(h, [{"authorization", "bearer " <> @secret}]).status == 401, "a lowercase bearer"
+    assert call(h, [{"authorization", @secret}]).status == 401, "no scheme"
     res = call(h, [{"authorization", "Bearer " <> @secret}])
     assert res.status == 200
     assert get_resp_header(res, "content-type") == ["application/json; charset=utf-8"]
@@ -54,6 +54,15 @@ defmodule Cronwatch.HandlerTest do
     assert newest.trigger == "handler"
     assert newest.error == "nope\nsecond line"
     refute inspect(h) =~ @secret
+  end
+
+  test "the handler reads the bearer scheme in any case, as the routes do" do
+    %{cw: cw} = make(cron_secret: @secret)
+    h = handler(cw, "hook", {Handlers, :count, [self()]})
+    assert call(h, [{"authorization", "bearer  " <> @secret}]).status == 200
+    assert call(h, [{"authorization", "Bearer wrong"}]).status == 401
+    assert call(h, [{"authorization", @secret}]).status == 401
+    assert length(runs(cw, "hook")) == 1
   end
 
   test "a secret of its own replaces the instance's" do

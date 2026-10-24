@@ -149,12 +149,13 @@ end
 
 defmodule Cronwatch.Test.Endpoint do
   @moduledoc """
-  A minimal Phoenix endpoint: `Plug.Parsers` reads a form or JSON body before
-  the router, as every Phoenix app's endpoint does, so the dashboard is
-  handed a body already read.
+  A minimal Phoenix endpoint: `Plug.Head` turns a `HEAD` into a `GET` and
+  `Plug.Parsers` reads a form or JSON body before the router, as every
+  Phoenix app's endpoint does, so the dashboard is handed a body already read.
   """
   use Phoenix.Endpoint, otp_app: :cronwatch
 
+  plug(Plug.Head)
   plug(Plug.Parsers, parsers: [:urlencoded, :multipart, :json], pass: ["*/*"], json_decoder: JSON)
   plug(Cronwatch.Test.PhoenixRouter)
 

@@ -168,7 +168,7 @@ if Code.ensure_loaded?(Plug.Conn) do
           else: conn.req_headers ++ [{"host", authority(conn)}]
 
       %Request{
-        method: conn.method,
+        method: method(conn),
         path: conn.request_path,
         query: conn.query_string,
         headers: headers,
@@ -177,6 +177,14 @@ if Code.ensure_loaded?(Plug.Conn) do
         body: fn limit -> read_body(key, limit) end
       }
     end
+
+    # The method as sent. Plug.Head (in every generated Phoenix endpoint)
+    # turns a HEAD into a GET before the router; the adapters Plug, Bandit,
+    # and Cowboy hand over keep the method that came over the wire, so such a
+    # GET is read as the HEAD it was, which never runs the check or signs in
+    # with ?token=.
+    defp method(%{method: "GET", adapter: {_, %{method: "HEAD"}}}), do: "HEAD"
+    defp method(conn), do: conn.method
 
     # HTTP/2 sends the host as :authority, which the adapter puts in
     # conn.host and conn.port.

@@ -4,7 +4,7 @@ defmodule Cronwatch.JS.Units do
   #
   # Text held as JavaScript holds it, UTF-16 code units (big endian), so a
   # cut through a surrogate pair can keep its lone half. The two places the
-  # SDK sends such a half on the wire (Slack's and Discord's cut bodies,
+  # SDK sends such a half on the wire (Discord's cut message and triage,
   # triage's prompt) build their text as `Units` and write it with
   # `Cronwatch.JS.stringify_lone/1`, which writes a lone half as `\\udXXX`,
   # as `JSON.stringify` does.

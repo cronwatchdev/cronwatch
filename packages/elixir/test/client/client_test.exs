@@ -13,6 +13,19 @@ defmodule Cronwatch.ClientTest do
   @min 60_000
   @hour 3_600_000
 
+  test "the child spec's start call does not show the options' credentials" do
+    hook = "https://hooks.slack.example/T/B/" <> "not" <> "areal"
+    name = :"cw_spec_#{System.unique_integer([:positive])}"
+    opts = [name: name, alerts: [{Cronwatch.Alerts.Slack, webhook_url: hook}], cron_secret: "cron-" <> "pass"]
+    spec = Cronwatch.child_spec(opts)
+    shown = inspect(spec)
+    refute shown =~ "notareal"
+    refute shown =~ "cron-pass"
+    assert shown =~ "#Cronwatch.Supervisor.Opts<name, alerts, cron_secret>"
+    start_supervised!(spec)
+    assert Cronwatch.check!(instance: name).jobs == []
+  end
+
   test "run records output, metrics, and duration, and returns the result" do
     %{cw: cw, clock: c} = make()
     job = Cronwatch.job!("report", schedule: "0 2 * * *", instance: cw)
