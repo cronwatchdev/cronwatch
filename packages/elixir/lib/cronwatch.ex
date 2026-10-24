@@ -343,13 +343,16 @@ defmodule Cronwatch do
   whose `trigger` is not a string.
 
   If a store write fails, retry with the same run and id. An evaluated run
-  is stored as provisionally running until its pending evaluation marker
-  and finish are written, with a `finished_at` of when it was stored, so a
-  concurrent check does not mark it stuck. One whose finish is still not
-  written five minutes later (the importer stopped, or never retried) is
-  closed by the next check as timed out, with an error saying so, and
-  alerts as a stuck run; a later retry that succeeds still recovers it.
-  Runs stored with `evaluate: false` are not evaluated by a retry.
+  that has finished is stored as provisionally running until its pending
+  evaluation marker and finish are written, with a `finished_at` of when it
+  was stored, so a concurrent check does not mark it stuck. One whose
+  finish is still not written five minutes later (the importer stopped, or
+  never retried) is closed by the next check as timed out, with an error
+  saying so, and alerts as a stuck run; a later retry that succeeds still
+  recovers it. A run imported while still running keeps a nil
+  `finished_at`, so it is never closed that way: it times out by the job's
+  timeout, as any running run does. Runs stored with `evaluate: false` are
+  not evaluated by a retry.
   """
   @spec record_run(Run.t(), keyword()) :: {:ok, [Cronwatch.Alert.t()]} | {:error, Error.t()}
   def record_run(%Run{} = run, opts \\ []) do
