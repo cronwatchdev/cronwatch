@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use super::post::{self, Transport};
+use super::post::{self, Transport, cut};
 use super::shared::{LinkFn, invalid, link_for, triage};
 use crate::deliver::{Channel, ChannelContext};
 use crate::error::Error;
-use crate::js::{self, LoneJson, Object, Value};
+use crate::js::{LoneJson, Object, Value};
 use crate::store::{BoxError, BoxFuture};
 use crate::types::{Alert, AlertType};
 
@@ -68,7 +68,7 @@ impl Channel for Slack {
             }
             let mut lone = LoneJson::new();
             let mut code: Vec<u16> = "```".encode_utf16().collect();
-            code.extend(js::head16_units(&code_block_safe(&escape(&alert.message)), 2900));
+            code.extend(cut_escaped(&code_block_safe(&escape(&alert.message)), 2900).encode_utf16());
             code.extend("```".encode_utf16());
             let section = |text: Value| {
                 Value::Object(
@@ -80,8 +80,8 @@ impl Channel for Slack {
             let mut blocks = vec![section(Value::from(head)), section(lone.string(&code))];
             if !triage(alert).is_empty() {
                 // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
-                let text = js::head16_units(&format!("_Triage:_ {}", escape(triage(alert))), 3000);
-                blocks.push(section(lone.string(&text)));
+                let text = cut_escaped(&format!("_Triage:_ {}", escape(triage(alert))), 3000);
+                blocks.push(section(Value::from(text)));
             }
             let payload = Value::Object(
                 Object::new()
@@ -119,6 +119,18 @@ impl Channel for Slack {
 /// `<!channel>` and `<url|links>`.
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Escaped text cut to at most `max` UTF-16 code units, splitting neither
+/// an entity [`escape`] wrote nor a surrogate pair.
+fn cut_escaped(text: &str, max: usize) -> String {
+    let mut kept = cut(text, max);
+    if let Some(amp) = kept.rfind('&') {
+        if !kept[amp..].contains(';') {
+            kept.truncate(amp);
+        }
+    }
+    kept
 }
 
 /// A link's URL as Slack's `<url|text>` can hold it: `<`, `>`, and `|`

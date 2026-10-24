@@ -1044,7 +1044,7 @@ async fn the_app_shell_is_public_and_only_for_reads() {
     }
     let w = Web::new();
     status("a write to the shell", &w.send("POST", "/cronwatch/sw.js", &[], "").await, 401);
-    status("HEAD elsewhere", &w.send("HEAD", "/cronwatch/", &[AUTH], "").await, 404);
+    status("HEAD a page", &w.send("HEAD", "/cronwatch/", &[AUTH], "").await, 200);
     let open = Kit::new().cw.routes(RoutesOptions::new().no_token()).unwrap();
     assert_eq!(open.token(), None);
     status("open", &serve(&open, "GET", "http://app.test/cronwatch/api/jobs", &[], "").await, 200);
@@ -1179,4 +1179,30 @@ async fn huge_durations_neither_hang_nor_wrap() {
     );
     let until = field(&silenced, &["job", "silencedUntil"]).as_f64().unwrap();
     assert!(until > w.k.now() as f64, "a long silence ended at once: {until}");
+}
+
+#[tokio::test]
+async fn head_answers_the_pages_and_reads_a_get_answers_without_a_body_and_never_runs_the_check() {
+    let w = Web::new();
+    w.ok("nightly").await;
+    for path in ["/", "/jobs/nightly", "/api", "/api/jobs", "/api/jobs/nightly"] {
+        let got = w.send("HEAD", &format!("/cronwatch{path}"), &[AUTH], "").await;
+        status(path, &got, 200);
+        assert!(got.body.is_empty(), "{path}");
+        let get = w.get(&format!("/cronwatch{path}"), &[AUTH]).await;
+        assert_eq!(got.header_str("content-type"), get.header_str("content-type"), "{path}");
+    }
+    let run = w.k.runs("nightly").await.remove(0);
+    status("a run", &w.send("HEAD", &format!("/cronwatch/api/runs/{}", run.id), &[AUTH], "").await, 200);
+    let missing = w.send("HEAD", "/cronwatch/jobs/missing", &[AUTH], "").await;
+    status("missing", &missing, 404);
+    assert!(missing.body.is_empty());
+    // A check now would alert that the hourly job missed its runs.
+    w.k.cw.job("hourly", cronwatch::JobOptions::new().schedule("@hourly")).unwrap();
+    w.k.check().await;
+    w.k.advance(3 * 60 * 60_000);
+    status("check", &w.send("HEAD", "/cronwatch/api/check", &[AUTH], "").await, 404);
+    assert!(w.k.types().is_empty(), "{:?}", w.k.types());
+    status("check", &w.send("POST", "/cronwatch/api/check", &[AUTH], "").await, 200);
+    assert_eq!(w.k.types(), ["missed"]);
 }

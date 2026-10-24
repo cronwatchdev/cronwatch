@@ -27,8 +27,8 @@ use super::html::{dashboard_page, job_page, message_page};
 use super::origin::{bare_origin, configured_origin, is_loopback_origin, request_origin};
 use super::pwa::{ShellAsset, static_asset};
 use super::request::{
-    body_field, form_encode, header, normalize_path, param, parse_form, read_limited, request_target, safe_decode,
-    strip_base, valid_body,
+    bearer, body_field, form_encode, header, normalize_path, param, parse_form, read_limited, request_target,
+    safe_decode, strip_base, valid_body,
 };
 use super::text::{constant_time_eq, latin1};
 use super::timeline::{BOARD_BEHIND_MS, BOARD_LANES, BOARD_RUNS, LaneInput, week_runs_limit};
@@ -378,22 +378,6 @@ fn cross_site(req: &Request, public_origin: &str) -> bool {
     header(req, "sec-fetch-site").is_some_and(|s| *s != *b"same-origin" && *s != *b"none")
 }
 
-/// The token an `Authorization` header carries: what follows the scheme
-/// when the scheme is `Bearer` (in any case) and one or more whitespace
-/// characters follow it, else `None`. Any other scheme (a proxy's Basic
-/// auth, say) is not a bearer at all, so the cookie and `?token=` are read
-/// as if no header came.
-fn bearer(req: &Request) -> Option<String> {
-    let text = latin1(&header(req, "authorization")?);
-    if text.len() > 6 && text.is_char_boundary(6) && text[..6].eq_ignore_ascii_case("bearer") {
-        let rest = text[6..].trim_start_matches(js::is_space);
-        if rest.len() < text.len() - 6 {
-            return Some(rest.to_string());
-        }
-    }
-    None
-}
-
 /// Where a sign-in through the form goes next: the page it was posted from
 /// (the `Referer`) when that is on the public origin and its query has no
 /// `token` parameter, else the dashboard.
@@ -538,7 +522,13 @@ impl Routes {
         let wants_html = !path.starts_with("/api");
         let outcome = CatchUnwind(Box::pin(self.serve(&mut req, &pathname, &path, &query, &base, wants_html))).await;
         let err = match outcome {
-            Ok(Ok(answer)) => return answer,
+            Ok(Ok(mut answer)) => {
+                // A HEAD is answered as its GET would be, without the body.
+                if req.method.eq_ignore_ascii_case("HEAD") {
+                    answer.body = Vec::new();
+                }
+                return answer;
+            }
             Ok(Err(err)) => err,
             Err(panic) => Error::Other(format!("panic: {}", panic_text(&*panic))),
         };
@@ -752,9 +742,10 @@ impl Routes {
         }
         let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
 
-        // HTML
+        // HTML. A HEAD reads what a GET would; `handle` sends it without a
+        // body.
         match (method, parts.as_slice()) {
-            ("GET", _) if path == "/" => {
+            ("GET" | "HEAD", _) if path == "/" => {
                 let entries = cw.jobs_with_runs(BOARD_PAGE_RUNS).await?;
                 let now = cw.now();
                 let runs_by_job: HashMap<String, Vec<Run>> =
@@ -763,7 +754,7 @@ impl Routes {
                 let lanes = self.board_lanes(&entries, now).await?;
                 return Ok(page(dashboard_page(&jobs, &runs_by_job, now, base, None, &lanes), 200));
             }
-            ("GET", ["jobs", name]) => {
+            ("GET" | "HEAD", ["jobs", name]) => {
                 let Some(job) = cw.job_summary(name).await? else {
                     return Ok(page(
                         message_page("No such job", &format!("{name} is not in the store."), base, false),
@@ -846,7 +837,7 @@ impl Routes {
         let no_such_job = || api(error_body("No such job"), 404);
         match (method, rest) {
             // What is serving the API, so a client such as @cronwatch/mcp can tell.
-            ("GET", []) => {
+            ("GET" | "HEAD", []) => {
                 let about = Object::new()
                     .with("ok", true)
                     .with("library", LIBRARY)
@@ -855,12 +846,12 @@ impl Routes {
                     .with("api", API_VERSION);
                 return Ok(api(about, 200));
             }
-            ("GET", ["jobs"]) => {
+            ("GET" | "HEAD", ["jobs"]) => {
                 let jobs = cw.jobs().await?;
                 let list: Vec<Value> = jobs.iter().map(JobSummary::to_value).collect();
                 return Ok(api(Object::new().with("ok", true).with("jobs", list), 200));
             }
-            ("GET", ["jobs", name]) => {
+            ("GET" | "HEAD", ["jobs", name]) => {
                 let Some(job) = cw.job_summary(name).await? else {
                     return Ok(no_such_job());
                 };
@@ -931,7 +922,7 @@ impl Routes {
                     return Ok(api(body, 200));
                 }
             }
-            ("GET", ["runs", id]) => {
+            ("GET" | "HEAD", ["runs", id]) => {
                 return Ok(match cw.get_run(id).await? {
                     Some(run) => api(Object::new().with("ok", true).with("run", run.to_value()), 200),
                     None => api(error_body("No such run"), 404),

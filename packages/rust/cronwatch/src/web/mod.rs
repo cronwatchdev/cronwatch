@@ -32,7 +32,8 @@ pub use routes::{DEFAULT_BASE_PATH, Routes, RoutesOptions};
 pub use adapter::Tls;
 #[cfg(feature = "tower")]
 pub(crate) use adapter::tower_answer;
-pub(crate) use text::{constant_time_eq, latin1};
+pub(crate) use request::bearer;
+pub(crate) use text::constant_time_eq;
 
 /// The most of a request body the dashboard reads: its forms and JSON are a
 /// few bytes. A body past it is answered 413; the SDK leaves this to the

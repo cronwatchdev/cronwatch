@@ -679,13 +679,28 @@ impl Client {
         prepare: impl Future<Output = Result<P, Error>>,
         mut change: impl FnMut(JobState, &P) -> Result<(JobState, R), Error>,
     ) -> Result<(JobState, R), Error> {
+        self.update_state_with(job, prepare, |state, prepared| std::future::ready(change(state, prepared))).await
+    }
+
+    /// [`update_state`](Self::update_state) for a `change` that reads the
+    /// store again on each attempt (Go's `updateState` with a change that
+    /// reads). It may run more than once and must write nothing itself.
+    pub(crate) async fn update_state_with<P, R, F>(
+        &self,
+        job: &str,
+        prepare: impl Future<Output = Result<P, Error>>,
+        mut change: impl FnMut(JobState, &P) -> F,
+    ) -> Result<(JobState, R), Error>
+    where
+        F: Future<Output = Result<(JobState, R), Error>>,
+    {
         let job_lock = self.job_lock(job);
         let _turn = job_lock.lock().await;
         let prepared = prepare.await?;
         let mut attempt = 1;
         loop {
             let current = self.read_state(job).await?;
-            let (mut next, result) = change(current.clone(), &prepared)?;
+            let (mut next, result) = change(current.clone(), &prepared).await?;
             if next.to_json() == current.to_json() {
                 return Ok((current, result));
             }
@@ -703,35 +718,21 @@ impl Client {
         }
     }
 
-    /// Makes an import's evaluation durable before its row is finished. Read the
-    /// row again on every CAS attempt so a completed evaluation is not resurrected.
+    /// Makes an import's evaluation durable before its row is finished. The
+    /// row is read again on every attempt, so a completed evaluation is not
+    /// resurrected by another importer.
     pub(crate) async fn hold_imported_run(&self, def: &Definition, run: &crate::types::Run) -> Result<(), Error> {
-        let job_lock = self.job_lock(&run.job);
-        let _turn = job_lock.lock().await;
-        for attempt in 1..=STATE_ATTEMPTS {
-            let before = self.read_state(&run.job).await?;
+        self.update_state_with(&run.job, async { Ok(()) }, |before, _| async move {
             let current = self.inner.store.get_run(&run.id).await.map_err(Error::store)?;
-            let Some(_) = current.filter(|r| r.job == run.job && r.status == crate::types::RunStatus::Running) else {
-                return Ok(());
-            };
-            if before.pending_runs.as_ref().is_some_and(|ids| ids.contains(&run.id)) {
-                return Ok(());
+            let held = before.pending_runs.as_ref().is_some_and(|ids| ids.contains(&run.id));
+            if held || !current.is_some_and(|r| r.job == run.job && r.status == crate::types::RunStatus::Running) {
+                return Ok((before, ()));
             }
-            let mut next =
-                crate::evaluate::hold_run(&crate::evaluate::on_run_start(def, run, &before, self.now()), &run.id);
-            let version = before.counted_version();
-            next.version = Some(version + 1);
-            if self.write_state(&next, version).await? {
-                return Ok(());
-            }
-            if attempt == STATE_ATTEMPTS {
-                return Err(Error::Other(format!(
-                    "the state of {} changed under {STATE_ATTEMPTS} attempts in a row to update it; gave up",
-                    run.job
-                )));
-            }
-        }
-        Ok(())
+            let started = crate::evaluate::on_run_start(def, run, &before, self.now());
+            Ok((crate::evaluate::hold_run(&started, &run.id), ()))
+        })
+        .await
+        .map(|_| ())
     }
 
     /// A conditional write, or for a store without `compare_and_set_state`,

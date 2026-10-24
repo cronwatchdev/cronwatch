@@ -6,8 +6,8 @@ use super::{Failures, digest, field, fixture, int, objects, opt_int};
 use crate::evaluate::{
     Evaluation, HELD_MESSAGE_CAP, HELD_TEXT_CAP, HELD_TEXT_SLACK, MAX_PENDING_RUNS, MAX_UNDELIVERED, SEND_LEASE_MS,
     after_send, alert_key, apply_silence, channel_keys, claim_undelivered, held_alert, held_run, hold_alerts, hold_run,
-    is_stuck, job_health, mute_opens, normalize_state, owed_channels, queue_undelivered, record_sent, release_run,
-    release_sending, silence_end, summarize, unevaluable_summary, without_owed,
+    is_stranded, is_stuck, job_health, mute_opens, normalize_state, owed_channels, queue_undelivered, record_sent,
+    release_run, release_sending, silence_end, summarize, unevaluable_summary, without_owed,
 };
 use crate::js::{Object, Value};
 use crate::stats::{median, percentile};
@@ -109,6 +109,11 @@ fn conformance_health() {
         let got = is_stuck(&definition(field(c, "definition")), &r, int(c, "now"))
             .map_or_else(|e| Value::from(format!("error: {e}")), Value::from);
         fails.same(&format!("isStuck {i}"), &got, field(c, "stuck"));
+    }
+    for (i, c) in objects(&f, "isStranded").into_iter().enumerate() {
+        cases += 1;
+        let r = run(field(c, "run")).expect("a run");
+        fails.same(&format!("isStranded {i}"), &is_stranded(&r, int(c, "now")).into(), field(c, "stranded"));
     }
     for (i, c) in objects(&f, "unevaluableSummary").into_iter().enumerate() {
         cases += 1;

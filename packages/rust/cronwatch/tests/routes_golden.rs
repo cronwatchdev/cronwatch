@@ -71,7 +71,7 @@ fn read_golden() -> Vec<Capture> {
             }
         })
         .collect();
-    assert_eq!(captures.len(), 98, "golden.json's captures");
+    assert_eq!(captures.len(), 105, "golden.json's captures");
     captures
 }
 

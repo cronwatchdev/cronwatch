@@ -338,3 +338,53 @@ async fn a_finished_import_retries_after_its_pending_marker_write_fails() {
     assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Failed);
     assert_eq!(state(&store.inner, "imported").await.pending_runs, None);
 }
+
+#[tokio::test]
+async fn an_evaluated_import_whose_state_write_fails_and_is_not_retried_is_closed_by_a_check() {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    k.cw.job("imported", JobOptions::new().schedule("every 5m").timeout("1m")).unwrap();
+    k.check().await;
+    let mut run = Run::new("lost-import", "imported", RunStatus::Failed, k.now() - 2 * MIN);
+    run.finished_at = Some(k.now() - MIN);
+    run.duration_ms = Some(MIN);
+    run.error = Some("boom".into());
+    run.trigger = "source".into();
+    store.breaks(&["compare_and_set_state"]);
+    assert!(k.cw.record_run(run.clone(), RecordOptions::new()).await.is_err());
+    store.mends(&[]);
+    k.check().await;
+    assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Running);
+    k.advance(SEND_LEASE_MS + MIN);
+    k.check().await;
+    let closed = store.inner.get_run(&run.id).await.unwrap().unwrap();
+    assert_eq!(closed.status, RunStatus::Timeout);
+    assert_eq!(closed.duration_ms, Some(MIN));
+    assert_eq!(closed.error.as_deref(), Some("Imported, but its finish was never written; marked as timed out\nboom"));
+    assert_eq!(k.types(), ["stuck"]);
+    assert_ne!(k.cw.job_summary("imported").await.unwrap().unwrap().health, cronwatch::JobHealth::Healthy);
+}
+
+#[tokio::test]
+async fn an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_by_a_check_and_a_late_success_recovers_it()
+ {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    k.cw.job("imported", JobOptions::new().schedule("0 * * * *").timeout("1m")).unwrap();
+    k.check().await;
+    let mut run = Run::new("lost-finish", "imported", RunStatus::Ok, k.now());
+    run.finished_at = Some(k.now());
+    run.duration_ms = Some(0);
+    run.trigger = "source".into();
+    store.breaks(&["update_run_if"]);
+    assert!(k.cw.record_run(run.clone(), RecordOptions::new()).await.is_err());
+    store.mends(&[]);
+    k.advance(SEND_LEASE_MS + MIN);
+    k.check().await;
+    assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Timeout);
+    assert_eq!(state(&store.inner, "imported").await.pending_runs, None);
+    assert_eq!(k.types(), ["stuck"]);
+    k.cw.record_run(run.clone(), RecordOptions::new()).await.unwrap();
+    assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Ok);
+    assert_eq!(k.types(), ["stuck", "recovered"]);
+}

@@ -29,6 +29,22 @@ pub(crate) fn header<'a>(req: &'a Request, name: &str) -> Option<Cow<'a, [u8]>> 
     Some(Cow::Owned(out))
 }
 
+/// The token an `Authorization` header carries: what follows the scheme
+/// when the scheme is `Bearer` (in any case) and one or more whitespace
+/// characters follow it, else `None`. Any other scheme (a proxy's Basic
+/// auth, say) is not a bearer at all, so the cookie and `?token=` are read
+/// as if no header came.
+pub(crate) fn bearer(req: &Request) -> Option<String> {
+    let text = super::text::latin1(&header(req, "authorization")?);
+    if text.len() > 6 && text.is_char_boundary(6) && text[..6].eq_ignore_ascii_case("bearer") {
+        let rest = text[6..].trim_start_matches(js::is_space);
+        if rest.len() < text.len() - 6 {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
 /// The path and query the client sent. A target in the absolute form a
 /// proxy is sent starts its path after the host; a fragment is dropped.
 pub(crate) fn request_target(target: &str) -> (String, String) {

@@ -702,23 +702,34 @@ fn sms_bodies_stay_inside_twilio_limits() {
 }
 
 #[tokio::test]
-async fn a_json_body_cut_through_a_surrogate_pair_keeps_the_lone_half() {
+async fn slack_cuts_its_escaped_text_without_splitting_an_entity_or_a_surrogate_pair() {
     let rec = Recorder::new(200, "");
     let mut a = sample();
-    a.message = format!("{}\u{1F600} and on", "a".repeat(2899));
-    a.triage = Some(format!("{}\u{1F600}", "b".repeat(2989)));
+    a.title = "t".into();
+    a.message = format!("{}<<<", "a".repeat(2897));
+    a.triage = Some(format!("{}\u{1F600}<", "b".repeat(2989)));
     let ch = slack(SlackOptions {
-        webhook_url: "https://hooks.slack.example/T/B/secret".into(),
+        webhook_url: "https://hooks.slack.example/T/B/x".into(),
         transport: some(&rec),
         ..Default::default()
     })
     .unwrap();
     ch.send(&a, &quiet()).await.unwrap();
     let body = String::from_utf8(rec.taken()[0].body.clone()).unwrap();
-    assert!(body.contains(&format!("{}\\ud83d```", "a".repeat(2899))), "{}", &body[body.len() - 80..]);
-    assert!(body.contains(&format!("{}\\ud83d\"", "b".repeat(2989))));
-    assert!(matches!(crate::js::parse(&body), Ok(Value::Object(_))));
+    let Ok(Value::Object(payload)) = crate::js::parse(&body) else { panic!("a JSON object: {body}") };
+    let Some(Value::Array(blocks)) = payload.get("blocks") else { panic!("blocks: {body}") };
+    let text = |i: usize| {
+        let Value::Object(block) = &blocks[i] else { panic!("a block") };
+        let Some(Value::Object(text)) = block.get("text") else { panic!("a text object") };
+        text.get("text").and_then(Value::as_str).expect("a text").to_string()
+    };
+    assert_eq!(text(1), format!("```{}```", "a".repeat(2897)));
+    assert_eq!(text(2), format!("_Triage:_ {}", "b".repeat(2989)));
+}
 
+#[tokio::test]
+async fn a_json_body_cut_through_a_surrogate_pair_keeps_the_lone_half() {
+    let mut a = sample();
     // Discord's description holds 4096 units, so the message and the triage
     // are cut at their own caps in two sends.
     let rec = Recorder::new(204, "");
