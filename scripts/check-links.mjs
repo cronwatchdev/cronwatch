@@ -5,7 +5,9 @@
  * id on the target page carries, or when a page carries one id twice. Links
  * to other origins are not fetched. It also fails on what the site's CSP
  * would block in production: a style="" attribute, a <style> element, or a
- * <script> with its code inline (JSON-LD, which is data, is the exception).
+ * <script> with its code inline (JSON-LD, which is data, is the exception),
+ * a script or style sheet from an origin the CSP in deploy/nginx.conf does
+ * not allow, or a script origin the CSP allows that no page loads from.
  *
  *   node scripts/check-links.mjs [site/dist]
  */
@@ -53,8 +55,20 @@ function resolveFile(urlPath) {
   return null;
 }
 
+/** The CSP's sources for one directive, from the add_header line in deploy/nginx.conf. */
+const NGINX = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "deploy", "nginx.conf");
+const csp = /Content-Security-Policy "([^"]+)"/.exec(readFileSync(NGINX, "utf8"))?.[1] ?? "";
+function sources(directive) {
+  const entry = csp.split(";").map((d) => d.trim().split(/\s+/)).find(([name]) => name === directive);
+  return new Set(entry ? entry.slice(1) : []);
+}
+const scriptSrc = sources("script-src");
+const styleSrc = sources("style-src");
+const scriptOrigins = new Set();
+
 const problems = [];
 let checked = 0;
+if (!csp) problems.push("deploy/nginx.conf: no Content-Security-Policy header found");
 for (const page of pages) {
   const html = readFileSync(page, "utf8");
   const rel = `/${path.relative(DIST, page).split(path.sep).join("/")}`;
@@ -78,6 +92,16 @@ for (const page of pages) {
     problems.push(`${rel}: an inline <script>, which the CSP blocks`);
   }
   const pageUrl = new URL(rel, "https://site.invalid");
+  // Other origins a page loads code or styles from must be in the CSP.
+  for (const m of html.matchAll(/<script\b[^>]*\ssrc="(https?:[^"]*)"/gi)) {
+    const origin = new URL(decodeEntities(m[1])).origin;
+    scriptOrigins.add(origin);
+    if (!scriptSrc.has(origin)) problems.push(`${rel}: a script from ${origin}, which the CSP's script-src does not allow`);
+  }
+  for (const m of html.matchAll(/<link\b(?=[^>]*\srel="stylesheet")[^>]*\shref="(https?:[^"]*)"/gi)) {
+    const origin = new URL(decodeEntities(m[1])).origin;
+    if (!styleSrc.has(origin)) problems.push(`${rel}: a style sheet from ${origin}, which the CSP's style-src does not allow`);
+  }
   for (const m of html.matchAll(/\s(?:href|src)="([^"]*)"/g)) {
     const raw = decodeEntities(m[1]);
     if (raw === "" || /^(mailto:|tel:|javascript:|data:)/i.test(raw)) continue;
@@ -96,8 +120,13 @@ for (const page of pages) {
   }
 }
 
+// An origin the CSP still trusts for script after the pages stopped using it.
+for (const source of scriptSrc) {
+  if (/^https?:/.test(source) && !scriptOrigins.has(source)) problems.push(`deploy/nginx.conf: script-src allows ${source}, which no page loads a script from`);
+}
+
 if (problems.length > 0) {
-  console.error(`check-links: ${problems.length} problem${problems.length === 1 ? "" : "s"} (broken links, repeated ids, or inline style or script)`);
+  console.error(`check-links: ${problems.length} problem${problems.length === 1 ? "" : "s"} (broken links, repeated ids, inline style or script, or the CSP)`);
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }

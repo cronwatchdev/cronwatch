@@ -175,6 +175,10 @@ const assets = { css: "", js: "", theme: "", search: "", index: "" };
    dark paper when the sheet is turned over. */
 const THEME_COLOR = "#09090b";
 
+/* Runlight, the owner's analytics. Left off the contact pages, so a script
+   from another origin never shares a page with what someone types there. */
+const ANALYTICS = `<script defer src="https://analytics.joncp.dev/s.js?site=cronwatch.dev" data-site="cronwatch.dev"></script>\n`;
+
 function layout({ title, description, body, path: pagePath, kind = "page", index = true, head = "" }) {
   const canonical = `${SITE}${pagePath}`;
   const fullTitle = pagePath === "/" ? "CronWatch | Cron fails silently. This doesn’t." : `${title} | CronWatch`;
@@ -209,9 +213,7 @@ ${index ? `<meta property="og:url" content="${canonical}">\n` : ""}<meta propert
 <link rel="stylesheet" href="https://use.typekit.net/gie6nes.css">
 <script src="${assets.js}" defer></script>
 <script src="${assets.search}" data-index="${assets.index}" defer></script>
-
-<script defer src="https://analytics.joncp.dev/s.js?site=cronwatch.dev" data-site="cronwatch.dev"></script>
-</head>
+${pagePath.startsWith("/contact/") ? "" : ANALYTICS}</head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="page">

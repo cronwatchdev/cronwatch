@@ -12,13 +12,15 @@
 #   DRUPAL_SPLIT_ENABLED     "true" to push the module
 #   DRUPAL_SPLIT_REPOSITORY  the drupal.org repository's SSH URL
 #                            (git@git.drupal.org:project/cronwatch.git)
-#   DRUPAL_SPLIT_SSH_KEY     secret, the private half of an SSH key with push
-#                            access to it
+#   DRUPAL_SPLIT_SSH_KEY     secret of the drupal-split environment (deployments
+#                            limited to v* tags and main), the private half of an
+#                            SSH key with push access to it
 #   CRAFT_SPLIT_ENABLED      "true" to push the plugin
 #   CRAFT_SPLIT_REPOSITORY   the plugin's GitHub repository as owner/name
 #                            (cronwatchdev/cronwatch-craft)
-#   CRAFT_SPLIT_DEPLOY_KEY   secret, the private half of a deploy key with
-#                            write access to it
+#   CRAFT_SPLIT_DEPLOY_KEY   secret of the craft-split environment (deployments
+#                            limited to v* tags and main), the private half of a
+#                            deploy key with write access to it
 name: PHP plugins split
 
 on:
@@ -54,6 +56,8 @@ jobs:
   drupal:
     needs: ci
     if: vars.DRUPAL_SPLIT_ENABLED == 'true' && vars.DRUPAL_SPLIT_REPOSITORY != ''
+    # Environment secrets: a workflow pushed to another branch cannot read the key.
+    environment: drupal-split
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -99,6 +103,7 @@ jobs:
   craft:
     needs: ci
     if: vars.CRAFT_SPLIT_ENABLED == 'true' && vars.CRAFT_SPLIT_REPOSITORY != ''
+    environment: craft-split
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
