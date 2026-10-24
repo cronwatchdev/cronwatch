@@ -17,6 +17,7 @@ import static dev.cronwatch.web.WebKit.tokenCookie;
 import static dev.cronwatch.web.WebKit.with;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1140,6 +1141,29 @@ class RoutesTest {
   }
 
   @Test
+  void headAnswersThePagesAndReadsAGetAnswersWithoutABodyAndNeverRunsTheCheck() {
+    try (WebKit w = new WebKit()) {
+      w.cw.job("nightly").run(j -> {});
+      for (String path : List.of("/", "/jobs/nightly", "/api/jobs", "/api/jobs/nightly", "/api")) {
+        Response r = w.send("HEAD", "/cronwatch" + path, headers(AUTH), "");
+        status(path, r, 200);
+        assertEquals(0, r.bodyLength(), path);
+        Response get = w.send("GET", "/cronwatch" + path, headers(AUTH), "");
+        assertEquals(get.headers(), r.headers(), path);
+      }
+      String id = w.cw.runs("nightly", 1).get(0).id();
+      status("a run", w.send("HEAD", "/cronwatch/api/runs/" + id, headers(AUTH), ""), 200);
+      Response missing = w.send("HEAD", "/cronwatch/jobs/missing", headers(AUTH), "");
+      status("missing", missing, 404);
+      assertEquals(0, missing.bodyLength());
+      Response check = w.send("HEAD", "/cronwatch/api/check", headers(AUTH), "");
+      assertNotEquals(200, check.status());
+      assertEquals(0, check.bodyLength());
+      status("signed out", w.send("HEAD", "/cronwatch/", NONE, ""), 401);
+    }
+  }
+
+  @Test
   void theAppShellIsPublicAndOnlyForReads() {
     for (RoutesOptions options :
         List.of(
@@ -1169,7 +1193,6 @@ class RoutesTest {
     }
     try (WebKit w = new WebKit()) {
       status("a write to the shell", w.send("POST", "/cronwatch/sw.js", NONE, ""), 401);
-      status("HEAD elsewhere", w.send("HEAD", "/cronwatch/", headers(AUTH), ""), 404);
     }
     try (WebKit open = new WebKit(RoutesOptions.builder().noToken().build(), b -> {})) {
       assertNull(open.routes.token());

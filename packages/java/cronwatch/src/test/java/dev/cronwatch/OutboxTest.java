@@ -3,6 +3,7 @@ package dev.cronwatch;
 import static dev.cronwatch.Support.MIN;
 import static dev.cronwatch.Support.T0;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -576,6 +577,119 @@ class OutboxTest {
       clock.advance(Evaluate.SEND_LEASE_MS + MIN);
       cw.check();
       assertEquals(List.of(), capture.types());
+    }
+  }
+
+  /**
+   * {@code inner}, with the first call to {@code method} once {@code fail} is set throwing {@code
+   * message} instead.
+   */
+  private static Store failingOnce(Store inner, String method, String message, AtomicBoolean fail) {
+    return (Store)
+        Proxy.newProxyInstance(
+            Store.class.getClassLoader(),
+            new Class<?>[] {Store.class},
+            (proxy, m, args) -> {
+              if (m.getName().equals(method) && fail.getAndSet(false)) {
+                throw new IllegalStateException(message);
+              }
+              try {
+                return m.invoke(inner, args);
+              } catch (InvocationTargetException e) {
+                throw e.getCause();
+              }
+            });
+  }
+
+  @Test
+  void aRunningImportIsLeftToItsJobsTimeoutNotClosedAsStranded() throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    Capture capture = new Capture();
+    try (Cronwatch cw = Support.builder(clock, capture, new Errors()).store(shared).build()) {
+      cw.job("imported", JobOptions.builder().timeout("1h"));
+      Run run = Run.running("still-going", "imported", clock.now(), "source");
+      cw.recordRun(run);
+      assertNull(Objects.requireNonNull(shared.getRun(run.id())).finishedAt());
+      clock.advance(6 * MIN);
+      cw.check();
+      assertEquals(RunStatus.RUNNING, Objects.requireNonNull(shared.getRun(run.id())).status());
+      assertEquals(List.of(), capture.types());
+    }
+  }
+
+  @Test
+  void anEvaluatedImportWhoseStateWriteFailsAndIsNotRetriedIsClosedByACheck() throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    AtomicBoolean fail = new AtomicBoolean();
+    Store store = failingOnce(shared, "compareAndSetState", "state unavailable", fail);
+    Capture capture = new Capture();
+    try (Cronwatch cw = Support.builder(clock, capture, new Errors()).store(store).build()) {
+      cw.job("imported", JobOptions.builder().schedule("every 5m").timeout("1m"));
+      cw.check();
+      Run run =
+          Run.of(
+              "lost-import",
+              "imported",
+              RunStatus.FAILED,
+              clock.now() - 2 * MIN,
+              clock.now() - MIN,
+              MIN,
+              "boom",
+              null,
+              Metrics.empty(),
+              "source");
+      fail.set(true);
+      assertThrows(CronwatchException.class, () -> cw.recordRun(run));
+      cw.check();
+      assertEquals(RunStatus.RUNNING, Objects.requireNonNull(shared.getRun(run.id())).status());
+      clock.advance(Evaluate.SEND_LEASE_MS + MIN);
+      cw.check();
+      Run closed = Objects.requireNonNull(shared.getRun(run.id()));
+      assertEquals(RunStatus.TIMEOUT, closed.status());
+      assertEquals(MIN, closed.durationMs());
+      assertEquals(
+          "Imported, but its finish was never written; marked as timed out\nboom", closed.error());
+      assertEquals(List.of("stuck"), capture.types());
+      assertNotEquals(
+          JobHealth.HEALTHY, Objects.requireNonNull(cw.jobSummary("imported")).health());
+    }
+  }
+
+  @Test
+  void anEvaluatedImportWhoseFinishWriteFailsAfterItsMarkerIsClosedByACheckAndALateSuccessRecovers()
+      throws Exception {
+    Clock clock = new Clock();
+    MemoryStore shared = new MemoryStore();
+    AtomicBoolean fail = new AtomicBoolean();
+    Store store = failingOnce(shared, "updateRunIf", "store unavailable", fail);
+    Capture capture = new Capture();
+    try (Cronwatch cw = Support.builder(clock, capture, new Errors()).store(store).build()) {
+      cw.job("imported", JobOptions.builder().schedule("0 * * * *").timeout("1m"));
+      cw.check();
+      Run run =
+          Run.of(
+              "lost-finish",
+              "imported",
+              RunStatus.OK,
+              clock.now(),
+              clock.now(),
+              0L,
+              null,
+              null,
+              Metrics.empty(),
+              "source");
+      fail.set(true);
+      assertThrows(CronwatchException.class, () -> cw.recordRun(run));
+      clock.advance(Evaluate.SEND_LEASE_MS + MIN);
+      cw.check();
+      assertEquals(RunStatus.TIMEOUT, Objects.requireNonNull(shared.getRun(run.id())).status());
+      assertNull(shared.getState(run.job()).pendingRuns());
+      assertEquals(List.of("stuck"), capture.types());
+      cw.recordRun(run);
+      assertEquals(RunStatus.OK, Objects.requireNonNull(shared.getRun(run.id())).status());
+      assertEquals(List.of("stuck", "recovered"), capture.types());
     }
   }
 }

@@ -166,7 +166,7 @@ try (Cronwatch cw = Cronwatch.builder().build()) {
 }
 ```
 
-Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie holds a digest of it. Without a token (or with one that is empty or only whitespace) it is `CRONWATCH_TOKEN`, itself unset when empty or only whitespace, and either is trimmed, as a header's value is; with none at all it answers 503, except in development (`CRONWATCH_ENV` or `APP_ENV` naming it), where it makes one and prints a sign-in link to standard output, showing the host only when `origin` is set or the request came to a loopback host. `RoutesOptions.noToken()` serves it open behind your own auth; `origin(...)` and `trustProxy()` are for an app behind a proxy. A body past 1 MiB is answered 413.
+Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie holds a digest of it. Without a token (or with one that is empty or only whitespace) it is `CRONWATCH_TOKEN`, itself unset when empty or only whitespace, and either is trimmed, as a header's value is; with none at all it answers 503, except in development (`CRONWATCH_ENV` or `APP_ENV` naming it), where it makes one and prints a sign-in link to standard output, showing the host only when `origin` is set or the request came to a loopback host. `RoutesOptions.noToken()` serves it open behind your own auth; `origin(...)` and `trustProxy()` are for an app behind a proxy. A body past 1 MiB is answered 413. A `HEAD` is answered as its `GET` would be, without the body, and never runs the check.
 
 In a servlet container (Tomcat 10.1, Jetty 12, any Jakarta EE 10 or 11 server), `dev.cronwatch:cronwatch-servlet` has `CronwatchFilter`, which answers the requests under its path (`/cronwatch` by default, within the web app's context) and passes every other one down the chain, so it can sit ahead of your own servlets and security. In a Spring Boot app, `dev.cronwatch:cronwatch-spring-boot-starter` registers it on Spring MVC, or a `WebFilter` on WebFlux, from `cronwatch.web.*`:
 
@@ -196,11 +196,11 @@ try (Cronwatch cw = Cronwatch.builder().build()) {
 }
 ```
 
-In a servlet container, `new CronwatchServlet(handler)` serves it.
+In a servlet container, `new CronwatchServlet(handler)` serves it. The `Bearer` scheme is read in any case. With no secret at all it answers 503, unless `CRONWATCH_ENV` or `APP_ENV` names development or `HandlerOptions.noSecret()` lets anyone in.
 
 ## Spring Boot
 
-`dev.cronwatch:cronwatch-spring-boot-starter`, for Spring Boot 3.5 and 4, makes the client a bean from `cronwatch.*` properties and the app's own beans: a `Store` bean is the store (else `SqlStore` over the app's one `DataSource`, else the memory store), every `Channel` bean is a channel, and a `Triage`, `Source` beans, and an `ErrorHandler` are used when the app has them. When neither `CRONWATCH_ENV` nor `APP_ENV` is set, the environment is the app's active profile (`dev` and `local` are development, `prod` production). An app's own `Cronwatch` bean replaces it.
+`dev.cronwatch:cronwatch-spring-boot-starter`, for Spring Boot 3.5 and 4, makes the client a bean from `cronwatch.*` properties and the app's own beans: a `Store` bean is the store (else `SqlStore` over the app's one `DataSource`, else the memory store), every `Channel` bean is a channel, and a `Triage`, `Source` beans, and an `ErrorHandler` are used when the app has them. When neither `CRONWATCH_ENV` nor `APP_ENV` is set, the environment is the app's active profile (`dev` and `local` are development, `prod` production); a development profile makes the dashboard's development token, but never lets a job's handler run without a secret. An app's own `Cronwatch` bean replaces it.
 
 ```properties
 # auto, memory, or jdbc (the app's DataSource)

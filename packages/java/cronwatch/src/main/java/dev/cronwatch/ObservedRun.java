@@ -43,6 +43,18 @@ public final class ObservedRun {
   }
 
   /**
+   * Clears the calling thread's current run ({@link Cronwatch#current()}), and the MDC keys that
+   * name it, when that run's function has ended. A run closed from another thread than the one that
+   * opened it leaves both in the opening thread, which alone can put them back; a scheduler's
+   * listener whose attempts may end without a word (JobRunr's after an {@code Error}) calls this as
+   * each attempt starts on a pooled thread, so a job that is not watched does not log under a run
+   * that has ended. Opening a run does it too. Does nothing when the current run is still going.
+   */
+  public static void clearEnded() {
+    Runs.clearEnded();
+  }
+
+  /**
    * Ends the part of the run in which the function runs: the current run and the MDC keys are put
    * back as they were, in the thread that opened it, and the timeout no longer applies. For a
    * listener that learns how the run went only later; {@link #close} does it anyway.

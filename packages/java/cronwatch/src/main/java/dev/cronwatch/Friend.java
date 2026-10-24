@@ -20,6 +20,11 @@ final class Friend implements Access.Client {
   }
 
   @Override
+  public String variablesEnvironment() {
+    return Env.environment();
+  }
+
+  @Override
   public boolean declares(Cronwatch cw, String name) {
     return cw.core.declared(name) != null;
   }

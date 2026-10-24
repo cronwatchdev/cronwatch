@@ -1110,6 +1110,19 @@ public final class Evaluate {
   }
 
   /**
+   * Whether a finished import was left as its placeholder: {@code recordRun} writes one as running,
+   * with {@code finishedAt} set to when it was written, and the finish that follows never landed
+   * (the importer stopped, or a store write failed and it was not retried). A check closes one
+   * {@link #SEND_LEASE_MS} after it was written, as it closes a stuck run.
+   */
+  public static boolean isStranded(Run run, long now) {
+    Long finishedAt = run.finishedAt();
+    return run.status().equals(RunStatus.RUNNING)
+        && finishedAt != null
+        && saturatingSub(now, finishedAt) > SEND_LEASE_MS;
+  }
+
+  /**
    * {@code next} with nothing opened that was not open in {@code previous}. While a job is silenced
    * nothing new is recorded as an incident: conditions may close (so a job that recovered during
    * the silence shows as healthy) but none may open, so the first problem after the silence ends

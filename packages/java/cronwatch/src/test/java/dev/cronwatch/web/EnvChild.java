@@ -400,5 +400,21 @@ public final class EnvChild {
         Cronwatch.builder().noCronSecret().noShutdownHook().environment("prod").build()) {
       assertNull(cw.routes().token(), "locked in production");
     }
+    // The fallback is a guess (a profile left on in production, say), so it makes the dashboard's
+    // development token but never opens a job's handler without a secret.
+    AtomicInteger ran = new AtomicInteger();
+    try (Cronwatch cw =
+        Cronwatch.builder().noShutdownHook().onError((where, e) -> {}).environment("dev").build()) {
+      assertTrue(cw.routes().token() != null, "the dashboard's development token");
+      Handler h =
+          cw.job("guarded", JobOptions.builder())
+              .handler(
+                  (j, r) -> {
+                    ran.incrementAndGet();
+                    return null;
+                  });
+      assertEquals(503, h.handle(Request.of("GET", "/")).status());
+      assertEquals(0, ran.get(), "ran");
+    }
   }
 }

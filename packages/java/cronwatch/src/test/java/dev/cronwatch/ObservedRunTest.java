@@ -44,6 +44,44 @@ class ObservedRunTest {
   }
 
   @Test
+  void aRunClosedFromAnotherThreadIsClearedFromTheOneThatOpenedIt() throws Exception {
+    Support.Made m = Support.make();
+    java.util.concurrent.ExecutorService worker =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    try (Cronwatch cw = m.cw()) {
+      Job job = cw.job("listened", JobOptions.builder());
+      ObservedRun first = worker.submit(() -> job.open(RunOptions.defaults())).get();
+      first.close(null);
+      assertSame(first.context(), worker.submit(Cronwatch::current).get(), "left behind");
+      ObservedRun.clearEnded();
+      assertNull(
+          worker
+              .submit(
+                  () -> {
+                    ObservedRun.clearEnded();
+                    return Cronwatch.current();
+                  })
+              .get());
+      // A run opened over one left behind does not put it back when it ends.
+      ObservedRun second = worker.submit(() -> job.open(RunOptions.defaults())).get();
+      second.close(null);
+      ObservedRun third =
+          worker
+              .submit(
+                  () -> {
+                    ObservedRun r = job.open(RunOptions.defaults());
+                    r.close(null);
+                    return r;
+                  })
+              .get();
+      assertFalse(third.isOpen());
+      assertNull(worker.submit(Cronwatch::current).get());
+    } finally {
+      worker.shutdownNow();
+    }
+  }
+
+  @Test
   void aClosedFailureIsJudged() throws Exception {
     Support.Made m = Support.make();
     try (Cronwatch cw = m.cw()) {

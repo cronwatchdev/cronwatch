@@ -28,7 +28,14 @@ public final class Recorder {
   private final List<String> head = new ArrayList<>();
   private long headSize;
   private @Nullable String whole = "";
-  private String tail = "";
+
+  /**
+   * The raw lines behind {@link #expectText}'s tail, each cut to the cap, joined only when it is
+   * read: building the tail on every call copied 16 KB a line.
+   */
+  private final ArrayDeque<String> raw = new ArrayDeque<>();
+
+  private long rawSize;
   private boolean logged;
 
   /** Set in place, as the SDK sets a metric: a copy per call made a run of many quadratic. */
@@ -52,7 +59,13 @@ public final class Recorder {
                 ? whole + separator + line
                 : null;
       }
-      tail = Js.tail(tail + separator + Js.tail(line, Output.OUTPUT_CAP), Output.OUTPUT_CAP);
+      String last = Js.tail(line, Output.OUTPUT_CAP);
+      raw.addLast(last);
+      rawSize += last.length() + 1;
+      // Drops the oldest only while what is left still holds the cap.
+      while (raw.size() > 1 && rawSize - (raw.getFirst().length() + 1) > Output.OUTPUT_CAP) {
+        rawSize -= raw.removeFirst().length() + 1;
+      }
       if (headSize < Output.OUTPUT_CAP) {
         head.add(line.substring(0, Math.min(line.length(), (int) (Output.OUTPUT_CAP - headSize))));
         headSize += line.length() + 1;
@@ -99,7 +112,9 @@ public final class Recorder {
       if (whole != null) {
         return whole;
       }
-      return Js.head(String.join("\n", head), Output.OUTPUT_CAP) + "\n" + tail;
+      return Js.head(String.join("\n", head), Output.OUTPUT_CAP)
+          + "\n"
+          + Js.tail(String.join("\n", raw), Output.OUTPUT_CAP);
     } finally {
       lock.unlock();
     }

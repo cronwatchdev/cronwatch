@@ -49,7 +49,7 @@ public final class Golden {
   private static final long DAY = 24 * HOUR;
 
   /** How many captures golden.json holds. */
-  public static final int CAPTURES = 98;
+  public static final int CAPTURES = 105;
 
   /** One capture: the request sent and the SDK's answer. */
   public record Capture(

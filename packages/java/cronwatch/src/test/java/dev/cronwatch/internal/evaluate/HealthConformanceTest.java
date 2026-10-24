@@ -89,6 +89,7 @@ class HealthConformanceTest {
             "normalizeState",
             "muteOpens",
             "isStuck",
+            "isStranded",
             "unevaluableSummary",
             "applySilence",
             "staleAlert",
@@ -173,6 +174,13 @@ class HealthConformanceTest {
                       Cases.run(c.get("run")),
                       Fixtures.integer(c, "now")));
       fails.same("isStuck " + i++, got, c.get("stuck"));
+    }
+    i = 0;
+    for (JsObject c : Fixtures.objects(f, "isStranded")) {
+      cases++;
+      Object got =
+          orError(() -> Evaluate.isStranded(Cases.run(c.get("run")), Fixtures.integer(c, "now")));
+      fails.same("isStranded " + i++, got, c.get("stranded"));
     }
     i = 0;
     for (JsObject c : Fixtures.objects(f, "unevaluableSummary")) {
@@ -286,7 +294,7 @@ class HealthConformanceTest {
           Evaluate.silenceEnd(Fixtures.integer(c, "now"), ms),
           c.get("silencedUntil"));
     }
-    assertTrue(cases == 199, "health.json cases: " + cases);
+    assertTrue(cases == 205, "health.json cases: " + cases);
     fails.check("health");
   }
 

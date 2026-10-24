@@ -106,6 +106,26 @@ class AutoConfigurationTest {
   }
 
   @Test
+  void aDevelopmentProfileMakesTheDashboardsTokenButNeverOpensAHandler() {
+    for (String v : List.of("CRONWATCH_ENV", "APP_ENV", "CRON_SECRET")) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv(v) == null, v + " is set");
+    }
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(
+            Plain.class,
+            new MemoryStore(),
+            new Apps.Errors(),
+            "spring.profiles.active=dev",
+            "cronwatch.check-mode=none")) {
+      Cronwatch cw = ctx.getBean(Cronwatch.class);
+      assertTrue(cw.routes().token() != null, "a development token from the profile");
+      dev.cronwatch.web.Handler h = cw.job("hook").handler((j, r) -> null);
+      assertEquals(503, h.handle(dev.cronwatch.web.Request.of("GET", "/")).status());
+      assertTrue(cw.runs("hook", 10).isEmpty(), "the job did not run");
+    }
+  }
+
+  @Test
   void theEnvironmentIsTheActiveProfile() {
     assertEquals("prod", CronwatchAutoConfiguration.profile(new String[] {"cloud", "prod"}));
     assertEquals("cloud", CronwatchAutoConfiguration.profile(new String[] {"cloud", "eu"}));

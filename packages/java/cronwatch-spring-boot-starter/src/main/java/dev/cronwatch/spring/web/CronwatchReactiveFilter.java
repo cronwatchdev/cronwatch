@@ -124,11 +124,12 @@ public final class CronwatchReactiveFilter implements WebFilter, Ordered {
     for (Map.Entry<String, String> h : answer.headers()) {
       res.getHeaders().add(h.getKey(), h.getValue());
     }
+    // The whole body is at hand: its length, so no server frames it as chunked (Netty frames an
+    // empty answer to a HEAD so when it is given none).
+    res.getHeaders().setContentLength(answer.bodyLength());
     if (answer.bodyLength() == 0) {
       return res.setComplete();
     }
-    // The whole body is at hand: its length, so no server frames it as chunked.
-    res.getHeaders().setContentLength(answer.bodyLength());
     DataBuffer buffer = res.bufferFactory().wrap(answer.body());
     return res.writeWith(Mono.just(buffer));
   }

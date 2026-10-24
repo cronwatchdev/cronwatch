@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPOutputStream;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -691,8 +692,10 @@ class ChannelHardeningTest {
                 .build());
     slack.send(a, QUIET);
     String body = Recorder.body(rec.taken().get(0));
-    assertTrue(body.contains("a".repeat(2899) + "\\ud83d```"), body.substring(body.length() - 80));
-    assertTrue(body.contains("b".repeat(2989) + "\\ud83d\""));
+    // Slack cuts its escaped text without splitting the pair (see the next test).
+    assertTrue(body.contains("a".repeat(2899) + "```"), body.substring(body.length() - 80));
+    assertTrue(body.contains("b".repeat(2989) + "\""));
+    assertFalse(body.contains("\\ud83d"));
     assertInstanceOf(dev.cronwatch.json.JsObject.class, Json.parse(body));
 
     rec.answerWith(204, "");
@@ -715,6 +718,33 @@ class ChannelHardeningTest {
         QUIET);
     body = Recorder.body(rec.taken().get(1));
     assertTrue(body.contains("d".repeat(999) + "\\ud83d\""), body);
+  }
+
+  @Test
+  void slackCutsItsEscapedTextWithoutSplittingAnEntityOrASurrogatePair() throws Exception {
+    Recorder rec = new Recorder(200, "ok");
+    Alert sample = ChannelsConformanceTest.sample();
+    Alert a =
+        ChannelsConformanceTest.withText(
+            sample, "t", "a".repeat(2897) + "<<<", "b".repeat(2989) + "\ud83d\ude00<");
+    Slack.channel(
+            SlackOptions.builder()
+                .webhookUrl("https://hooks.slack.example/T/B/x")
+                .transport(rec)
+                .build())
+        .send(a, QUIET);
+    dev.cronwatch.json.JsObject body =
+        (dev.cronwatch.json.JsObject) Json.parse(Recorder.body(rec.taken().get(0)));
+    List<?> blocks = (List<?>) body.get("blocks");
+    assertNotNull(blocks);
+    assertEquals("```" + "a".repeat(2897) + "```", blockText(blocks.get(1)));
+    assertEquals("_Triage:_ " + "b".repeat(2989), blockText(blocks.get(2)));
+  }
+
+  private static @Nullable Object blockText(@Nullable Object block) {
+    dev.cronwatch.json.JsObject text =
+        (dev.cronwatch.json.JsObject) ((dev.cronwatch.json.JsObject) block).get("text");
+    return text == null ? null : text.get("text");
   }
 
   /**

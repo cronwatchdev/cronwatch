@@ -24,6 +24,7 @@ public final class JobContext {
   private final ReentrantLock lock = new ReentrantLock();
   private final List<Runnable> onCancel = new ArrayList<>();
   private volatile boolean cancelled;
+  private volatile boolean ended;
 
   JobContext(String name, String runId, long startedAt, Recorder recorder, Executor callbacks) {
     this.name = name;
@@ -125,12 +126,18 @@ public final class JobContext {
 
   /** Drops the callbacks of a run that has ended. */
   void end() {
+    ended = true;
     lock.lock();
     try {
       onCancel.clear();
     } finally {
       lock.unlock();
     }
+  }
+
+  /** Whether the run's function has ended. */
+  boolean ended() {
+    return ended;
   }
 
   Recorder recorder() {
