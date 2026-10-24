@@ -1098,10 +1098,11 @@ export class Cronwatch {
     if (stored) return this.recordOver(definition, stored, run, evaluate);
     // An evaluated import stays retryable until its durable evaluation marker
     // is written. A finished row alone cannot distinguish lost evaluation
-    // from history deliberately imported without evaluation. The placeholder's
-    // finishedAt is when it was written, so a check can tell one whose finish
-    // never landed (isStranded); the finish writes the run's own.
-    const inserted: Run = evaluate ? { ...run, status: "running", finishedAt: this.now() } : run;
+    // from history deliberately imported without evaluation. A finished
+    // import's placeholder has finishedAt when it was written, so a check can
+    // tell one whose finish never landed (isStranded); the finish writes the
+    // run's own. One still running has none, and times out as any run does.
+    const inserted: Run = evaluate ? { ...run, status: "running", finishedAt: run.status === "running" ? null : this.now() } : run;
     try {
       await this.store.insertRun(inserted);
     } catch (e) {

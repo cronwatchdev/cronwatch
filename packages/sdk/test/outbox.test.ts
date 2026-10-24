@@ -515,3 +515,20 @@ test("an evaluated import whose finish write fails after its marker is closed by
   assert.equal((await store.getRun(run.id))!.status, "ok");
   assert.deepEqual(sent.types(), ["stuck", "recovered"]);
 });
+
+test("an import still running is left to the job's timeout, not closed as stranded", async () => {
+  const c = clock();
+  const store = memory();
+  const sent = capture();
+  const cw = cronwatch({ store, now: c.now, alerts: [sent] });
+  cw.job("long", { timeout: "1h" });
+  await cw.recordRun({ id: "long-run", job: "long", status: "running", startedAt: c.now(), finishedAt: null, durationMs: null, error: null, output: null, metrics: {}, trigger: "source" });
+  c.advance(SEND_LEASE_MS + MIN);
+  await cw.check();
+  assert.equal((await store.getRun("long-run"))!.status, "running");
+  assert.equal((await store.getRun("long-run"))!.finishedAt, null);
+  c.advance(60 * MIN);
+  await cw.check();
+  assert.equal((await store.getRun("long-run"))!.status, "timeout");
+  assert.deepEqual(sent.types(), ["stuck"]);
+});
