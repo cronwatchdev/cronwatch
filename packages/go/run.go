@@ -653,11 +653,15 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	// Keep evaluated imports retryable until their pending marker is
 	// durable. The placeholder's FinishedAt is when it was written, so a
 	// check can tell one whose finish never landed (isStranded); the finish
-	// writes the run's own.
+	// writes the run's own. One still running has none, and times out as any
+	// run does.
 	inserted := run.clone()
 	if evaluate {
+		inserted.FinishedAt = nil
+		if run.Status != StatusRunning {
+			inserted.FinishedAt = ptr(c.now())
+		}
 		inserted.Status = StatusRunning
-		inserted.FinishedAt = ptr(c.now())
 	}
 	if err := c.store.InsertRun(ctx, inserted); err != nil {
 		// Another process recorded it first.
