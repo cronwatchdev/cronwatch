@@ -321,3 +321,41 @@ test("an empty token counts as unset; null opts out explicitly", async () => {
     assert.equal((await routes.GET(new Request("http://app.test/cronwatch/api/jobs", { headers: { authorization: "Bearer envtok" } }))).status, 200);
   });
 });
+
+test("HEAD answers the pages and reads a GET answers, without a body, and never runs the check", async () => {
+  const cw = cronwatch({ alerts: [], cronSecret: null });
+  await cw.job("nightly").run(() => {});
+  const routes = cw.routes({ token: "tok" });
+  const head = (path: string) => routes.GET(new Request(`https://app.test/cronwatch${path}`, { method: "HEAD", headers: { authorization: "Bearer tok" } }));
+  for (const path of ["/", "/jobs/nightly", "/api/jobs", "/api/jobs/nightly"]) {
+    const response = await head(path);
+    assert.equal(response.status, 200, path);
+    assert.equal(await response.text(), "", path);
+  }
+  assert.equal((await head("/jobs/missing")).status, 404);
+  assert.notEqual((await head("/api/check")).status, 200);
+});
+
+test("a job's handler reads the bearer scheme in any case, as the routes do", async () => {
+  const cw = cronwatch({ alerts: [], cronSecret: "s3cret" });
+  let ran = 0;
+  const handler = cw.job("hook").handler(async () => { ran++; });
+  assert.equal((await handler(new Request("http://x/", { headers: { authorization: "bearer  s3cret" } }))).status, 200);
+  assert.equal((await handler(new Request("http://x/", { headers: { authorization: "Bearer wrong" } }))).status, 401);
+  assert.equal((await handler(new Request("http://x/", { headers: { authorization: "s3cret" } }))).status, 401);
+  assert.equal(ran, 1);
+});
+
+test("recordRun refuses fields evaluation cannot read", async () => {
+  const cw = cronwatch({ alerts: [], cronSecret: null });
+  cw.job("imported");
+  const run = { id: "r", job: "imported", status: "ok" as const, startedAt: 1, finishedAt: 2, durationMs: 1, error: null, output: null, metrics: {}, trigger: "source" };
+  const bad = (patch: Record<string, unknown>) => cw.recordRun({ ...run, ...patch } as never);
+  await assert.rejects(bad({ status: "succeeded" }), /recordRun: status must be/);
+  await assert.rejects(bad({ startedAt: Number.NaN }), /recordRun: startedAt must be a finite number/);
+  await assert.rejects(bad({ finishedAt: "2" }), /recordRun: finishedAt must be a finite number or null/);
+  await assert.rejects(bad({ durationMs: Infinity }), /recordRun: durationMs must be a finite number or null/);
+  await assert.rejects(bad({ error: 5 }), /recordRun: error must be a string or null/);
+  await assert.rejects(bad({ trigger: null }), /recordRun: trigger must be a string/);
+  assert.equal(await cw.store.getRun("r"), null);
+});

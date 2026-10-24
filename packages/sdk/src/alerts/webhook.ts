@@ -1,5 +1,5 @@
 import type { AlertChannel } from "../types.js";
-import { drain, fetchPost } from "./shared.js";
+import { drain, fetchPost, origin } from "./shared.js";
 
 export interface WebhookOptions {
   url: string;
@@ -36,14 +36,6 @@ export interface WebhookOptions {
  * https://cronwatch.dev/schemas/webhook/1.json.
  */
 export const WEBHOOK_SCHEMA = 1;
-
-function origin(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "(invalid URL)";
-  }
-}
 
 /**
  * POSTs the alert as JSON to any URL. The body is the Alert object after a

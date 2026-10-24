@@ -1,5 +1,5 @@
 import type { Alert, AlertChannel } from "../types.js";
-import { drain, errorBody, errorText, fetchPost, urlSecrets } from "./shared.js";
+import { cut, drain, errorBody, errorText, fetchPost, urlSecrets } from "./shared.js";
 
 export interface SlackOptions {
   /** An incoming webhook URL from api.slack.com/messaging/webhooks. */
@@ -30,7 +30,7 @@ export function slack(options: SlackOptions): AlertChannel {
     async send(alert) {
       const url = options.link?.(alert);
       const title = `${EMOJI[alert.type]} *${escape(alert.title)}*${url ? ` (<${linkTarget(url)}|open>)` : ""}`;
-      const body = codeBlockSafe(escape(alert.message)).slice(0, 2900);
+      const body = cutEscaped(codeBlockSafe(escape(alert.message)), 2900);
       const response = await fetchPost(options.webhookUrl, {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -40,7 +40,7 @@ export function slack(options: SlackOptions): AlertChannel {
             { type: "section", text: { type: "mrkdwn", text: title } },
             { type: "section", text: { type: "mrkdwn", text: "```" + body + "```" } },
             // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
-            ...(alert.triage ? [{ type: "section", text: { type: "mrkdwn", text: `_Triage:_ ${escape(alert.triage)}`.slice(0, 3000) } }] : []),
+            ...(alert.triage ? [{ type: "section", text: { type: "mrkdwn", text: cutEscaped(`_Triage:_ ${escape(alert.triage)}`, 3000) } }] : []),
           ],
         }),
       });
@@ -54,6 +54,13 @@ export function slack(options: SlackOptions): AlertChannel {
 /** Slack's three control characters. Escaping < and > also stops <!channel> and <url|links>. */
 function escape(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Escaped text cut to at most `max` units, splitting neither an entity escape() wrote nor a surrogate pair. */
+function cutEscaped(text: string, max: number): string {
+  const kept = cut(text, max);
+  const amp = kept.lastIndexOf("&");
+  return amp !== -1 && !kept.includes(";", amp) ? kept.slice(0, amp) : kept;
 }
 
 /** A link's URL as Slack's <url|text> can hold it: `<`, `>`, and `|` percent-encoded, which ends neither the link nor its text. */

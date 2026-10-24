@@ -42,16 +42,59 @@ function stringify(part: unknown): string {
   }
 }
 
+/**
+ * Lines kept newest last, each counted with the newline that joins it,
+ * dropped from the front by moving a start index (no shift() per line).
+ */
+class LineWindow {
+  private items: string[] = [];
+  private start = 0;
+  private size = 0;
+
+  get count(): number {
+    return this.items.length - this.start;
+  }
+
+  push(line: string): void {
+    this.items.push(line);
+    this.size += line.length + 1;
+  }
+
+  /** Drops the oldest lines while over `max`, always keeping the newest. */
+  keepAtMost(max: number): void {
+    while (this.size > max && this.count > 1) this.drop();
+  }
+
+  /** Drops the oldest lines only while what is left still holds `min`. */
+  keepAtLeast(min: number): void {
+    while (this.count > 1 && this.size - (this.items[this.start]!.length + 1) > min) this.drop();
+  }
+
+  join(): string {
+    return this.items.slice(this.start).join("\n");
+  }
+
+  private drop(): void {
+    this.size -= this.items[this.start]!.length + 1;
+    this.start += 1;
+    // Compact now and then, so the array does not grow with every line logged.
+    if (this.start >= 1024 && this.start * 2 >= this.items.length) {
+      this.items = this.items.slice(this.start);
+      this.start = 0;
+    }
+  }
+}
+
 export function createRecorder(run: Run): RunRecorder {
   // One byte past redactAndCap's look-behind ensures a cut inside a secret is discarded there.
   const window = OUTPUT_CAP + REDACT_EDGE + 2;
   const copy = (text: string): string => JSON.parse(JSON.stringify(text)) as string;
-  const lines: string[] = [];
-  let size = 0;
+  const lines = new LineWindow();
   const head: string[] = [];
   let headSize = 0;
   let whole: string | null = "";
-  let tail = "";
+  // The raw lines behind expectText()'s tail, joined only when it is read.
+  const raw = new LineWindow();
   let logged = false;
   const metrics: Record<string, number> = {};
   const controller = new AbortController();
@@ -66,7 +109,8 @@ export function createRecorder(run: Run): RunRecorder {
       const separator = logged ? "\n" : "";
       logged = true;
       if (whole !== null) whole = whole.length + separator.length + line.length <= 2 * OUTPUT_CAP ? whole + separator + line : null;
-      tail = copy((tail + separator + copy(line.slice(-OUTPUT_CAP))).slice(-OUTPUT_CAP));
+      raw.push(copy(line.slice(-OUTPUT_CAP)));
+      raw.keepAtLeast(OUTPUT_CAP);
       if (headSize < OUTPUT_CAP) {
         head.push(copy(line.slice(0, OUTPUT_CAP - headSize)));
         headSize += line.length + 1;
@@ -77,11 +121,8 @@ export function createRecorder(run: Run): RunRecorder {
         line = copy(line.slice(-(window - 1)));
       }
       lines.push(line);
-      size += line.length + 1;
       // Drop from the front once well past the cap; redactAndCap trims exactly at the end.
-      while (size > window && lines.length > 1) {
-        size -= lines.shift()!.length + 1;
-      }
+      lines.keepAtMost(window);
     },
     metric(name, value) {
       if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -96,10 +137,10 @@ export function createRecorder(run: Run): RunRecorder {
 
   return {
     context,
-    output: () => (lines.length === 0 ? null : lines.join("\n")),
+    output: () => (lines.count === 0 ? null : lines.join()),
     expectText: () => {
       if (!logged) return null;
-      return whole ?? head.join("\n").slice(0, OUTPUT_CAP) + "\n" + tail;
+      return whole ?? head.join("\n").slice(0, OUTPUT_CAP) + "\n" + raw.join().slice(-OUTPUT_CAP);
     },
     metrics: () => ({ ...metrics }),
     abort: () => controller.abort(),
