@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -354,5 +355,70 @@ func contains(t *testing.T, what, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
 		t.Errorf("%s: %q is not in %q", what, want, got)
+	}
+}
+
+// panicky is a memory store whose job and state calls panic while armed,
+// as an app's store might.
+type panicky struct {
+	*cronwatch.MemoryStore
+	armed atomic.Bool
+}
+
+func (s *panicky) trip() {
+	if s.armed.Load() {
+		panic("store exploded")
+	}
+}
+
+func (s *panicky) GetJob(ctx context.Context, name string) (*cronwatch.StoredJob, error) {
+	s.trip()
+	return s.MemoryStore.GetJob(ctx, name)
+}
+
+func (s *panicky) ListJobs(ctx context.Context) ([]cronwatch.StoredJob, error) {
+	s.trip()
+	return s.MemoryStore.ListJobs(ctx)
+}
+
+func (s *panicky) UpsertJob(ctx context.Context, definition cronwatch.Definition, now int64) error {
+	s.trip()
+	return s.MemoryStore.UpsertJob(ctx, definition, now)
+}
+
+func TestASyncThatPanicsIsReportedAndWaitStillReturns(t *testing.T) {
+	store := &panicky{MemoryStore: cronwatch.NewMemoryStore()}
+	errs := &storetest.Errors{}
+	cw, err := cronwatch.New(cronwatch.WithStore(store), cronwatch.WithAlerts(&storetest.Capture{}), cronwatch.WithErrorHandler(errs.Add))
+	check(t, err)
+	w := robfigcron.New(cw, robfigcron.Options{Logger: quiet})
+	c := cron.New(w.Option())
+	_, err = c.AddFunc("0 3 * * *", NightlyReport)
+	check(t, err)
+	store.armed.Store(true)
+	c.Start()
+	defer c.Stop()
+	waitFor(t, "the sync's panic to be reported", func() bool {
+		return slices.Contains(errs.List(), "robfig/cron: panicked: store exploded")
+	})
+	waited := make(chan struct{})
+	go func() {
+		w.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait never returned after a sync panicked")
+	}
+	store.armed.Store(false)
+	// So is the declaration's write, in the bridge's goroutine of its own.
+	if !slices.Contains(errs.List(), "declaring robfigcron_test.NightlyReport: panicked: store exploded") {
+		t.Errorf("the save's panic was not reported: %q", errs.List())
+	}
+	// The watcher carries on: the next sync declares the job.
+	check(t, w.Sync(context.Background()))
+	if job, _ := store.GetJob(context.Background(), "robfigcron_test.NightlyReport"); job == nil {
+		t.Error("the job was not declared after the panic")
 	}
 }

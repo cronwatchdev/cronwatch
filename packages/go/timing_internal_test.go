@@ -508,3 +508,35 @@ func TestATriageWhoseStoreReadHangsDoesNotHoldTheCheck(t *testing.T) {
 	}
 	alerts.mu.Unlock()
 }
+
+// panickingStore panics on a check's first read, as an app's store might.
+type panickingStore struct{ *MemoryStore }
+
+func (s panickingStore) RunningRuns(context.Context) ([]Run, error) { panic("store exploded") }
+
+func TestTheIntervalReportsACheckThatPanickedAndGoesOn(t *testing.T) {
+	shorten(t, &firstCheckDelay, 10*time.Millisecond)
+	reported := make(chan string, 4)
+	cw := MustNew(WithStore(panickingStore{NewMemoryStore()}), WithoutCronSecret(), WithErrorHandler(func(err error, where string) {
+		reported <- where + ": " + err.Error()
+	}))
+	cw.StartChecking(time.Hour)
+	select {
+	case got := <-reported:
+		if got != "check: the check panicked: store exploded" {
+			t.Errorf("reported %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the panic was not reported")
+	}
+	// The interval's goroutine is still there to stop.
+	done := cw.stopTicking()
+	if done == nil {
+		t.Fatal("the interval was gone")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the interval did not stop")
+	}
+}

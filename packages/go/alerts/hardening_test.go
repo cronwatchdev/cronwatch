@@ -13,6 +13,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -527,28 +528,45 @@ func TestSMSBodiesStayInsideTwilioLimits(t *testing.T) {
 
 func nan() float64 { var zero float64; return zero / zero }
 
-func TestAJSONBodyCutThroughASurrogatePairKeepsTheLoneHalf(t *testing.T) {
+func TestSlackCutsItsEscapedTextWithoutSplittingAnEntityOrASurrogatePair(t *testing.T) {
 	rec := &recorder{}
 	a := sample(t)
-	a.Message = strings.Repeat("a", 2899) + "\U0001F600 and on"
-	a.Triage = ptr(strings.Repeat("b", 2989) + "\U0001F600")
-	ch, _ := Slack(SlackOptions{WebhookURL: "https://hooks.slack.example/T/B/secret", HTTPClient: &http.Client{Transport: rec}})
+	a.Message = strings.Repeat("a", 2897) + "<<<"
+	a.Triage = ptr(strings.Repeat("b", 2989) + "\U0001F600<")
+	ch, _ := Slack(SlackOptions{WebhookURL: "https://hooks.slack.example/T/B/x", HTTPClient: &http.Client{Transport: rec}})
 	if err := ch.Send(bg, a, cronwatch.ChannelContext{}); err != nil {
 		t.Fatal(err)
 	}
-	body := rec.taken()[0].body
-	if !strings.Contains(body, strings.Repeat("a", 2899)+"\\ud83d```") || !strings.Contains(body, strings.Repeat("b", 2989)+"\\ud83d\"") {
-		t.Fatalf("the lone half is not JSON.stringify's: %s", body[len(body)-80:])
+	var sent struct {
+		Blocks []struct {
+			Text struct {
+				Text string `json:"text"`
+			} `json:"text"`
+		} `json:"blocks"`
 	}
+	if err := json.Unmarshal([]byte(rec.taken()[0].body), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sent.Blocks[1].Text.Text, "```"+strings.Repeat("a", 2897)+"```"; got != want {
+		t.Errorf("body block ends %q", got[len(got)-20:])
+	}
+	if got, want := sent.Blocks[2].Text.Text, "_Triage:_ "+strings.Repeat("b", 2989); got != want {
+		t.Errorf("triage block ends %q", got[len(got)-20:])
+	}
+}
+
+func TestAJSONBodyCutThroughASurrogatePairKeepsTheLoneHalf(t *testing.T) {
+	rec := &recorder{}
+	a := sample(t)
 	// Discord's description holds both parts to 4096 together, so each is
 	// sent with a short other part to reach its own cap.
 	a.Message, a.Triage = strings.Repeat("c", 3799)+"\U0001F600", nil
-	ch, _ = Discord(DiscordOptions{WebhookURL: "https://discord.example/api/webhooks/1/x", HTTPClient: &http.Client{Transport: rec}})
+	ch, _ := Discord(DiscordOptions{WebhookURL: "https://discord.example/api/webhooks/1/x", HTTPClient: &http.Client{Transport: rec}})
 	rec.reset(204, "")
 	if err := ch.Send(bg, a, cronwatch.ChannelContext{}); err != nil {
 		t.Fatal(err)
 	}
-	body = rec.taken()[0].body
+	body := rec.taken()[0].body
 	if !strings.Contains(body, strings.Repeat("c", 3799)+"\\ud83d\\n```") {
 		t.Fatalf("the lone half is not JSON.stringify's: %s", body)
 	}

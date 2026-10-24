@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +232,18 @@ func TestRoutesPagesRenderAndTheAPIAnswers(t *testing.T) {
 	status(t, "api missing", w.get("/cronwatch/api/jobs/missing", auth), 404)
 	status(t, "page missing", w.get("/cronwatch/jobs/missing", auth), 404)
 	status(t, "nope", w.get("/cronwatch/nope", auth), 404)
+}
+
+func TestRecordRunRefusesAStatusEvaluationCannotRead(t *testing.T) {
+	w := newWeb(t, nil)
+	w.cw.MustJob("imported")
+	_, err := w.cw.RecordRun(bg, cronwatch.Run{ID: "r", Job: "imported", Status: "succeeded", StartedAt: 1, FinishedAt: ptr(int64(2)), DurationMs: ptr(int64(1)), Metrics: cronwatch.Metrics{}, Trigger: "source"})
+	if err == nil || err.Error() != `recordRun: status must be "running", "ok", "failed", or "timeout" (job "imported", run "r")` {
+		t.Fatalf("recordRun: %v", err)
+	}
+	if r := must[*cronwatch.Run](t)(w.cw.GetRun(bg, "r")); r != nil {
+		t.Fatal("a refused run was written")
+	}
 }
 
 func TestRoutesARunWhoseMetricsAreNoFiniteNumbersStillShowsItsJobPage(t *testing.T) {
@@ -870,7 +883,21 @@ func TestRoutesAppShellIsPublic(t *testing.T) {
 	}
 	w := newWeb(t, nil)
 	status(t, "a write to the shell", w.send("POST", "/cronwatch/sw.js", nil, ""), 401)
-	status(t, "HEAD elsewhere", w.send("HEAD", "/cronwatch/", auth, ""), 404)
+	status(t, "HEAD of the board", w.send("HEAD", "/cronwatch/", auth, ""), 200)
+}
+
+func TestRoutesHeadAnswersTheReadsWithoutABodyAndNeverRunsTheCheck(t *testing.T) {
+	w := newWeb(t, nil)
+	check(t, w.cw.Run(bg, "nightly", ok))
+	for _, path := range []string{"/", "/jobs/nightly", "/api", "/api/jobs", "/api/jobs/nightly"} {
+		get, head := w.get("/cronwatch"+path, auth), w.send("HEAD", "/cronwatch"+path, auth, "")
+		status(t, "HEAD "+path, head, 200)
+		eq(t, "HEAD "+path+" body", head.Body.Len(), 0)
+		eq(t, "HEAD "+path+" type", head.Header().Get("Content-Type"), get.Header().Get("Content-Type"))
+		eq(t, "HEAD "+path+" length", head.Header().Get("Content-Length"), strconv.Itoa(get.Body.Len()))
+	}
+	status(t, "HEAD of a missing job", w.send("HEAD", "/cronwatch/jobs/missing", auth, ""), 404)
+	status(t, "HEAD of the check", w.send("HEAD", "/cronwatch/api/check", auth, ""), 404)
 }
 
 func TestRoutesBasePath(t *testing.T) {

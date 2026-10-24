@@ -976,6 +976,15 @@ func isStuck(def Definition, run Run, now int64) (bool, error) {
 	return elapsedMs(run.StartedAt, now) > timeout, nil
 }
 
+// isStranded reports whether a finished import was left as its placeholder:
+// RecordRun writes one as running, with FinishedAt set to when it was
+// written, and the finish that follows never landed (the importer stopped,
+// or a store write failed and it was not retried). A check closes one
+// sendLeaseMs after it was written, as it closes a stuck run.
+func isStranded(run Run, now int64) bool {
+	return run.Status == StatusRunning && run.FinishedAt != nil && elapsedMs(*run.FinishedAt, now) > sendLeaseMs
+}
+
 // maxDurationMs is the longest duration written: 2^53 - 1, the largest
 // integer JavaScript holds exactly, which every port and store reads back
 // unchanged (the SDK's MAX_DURATION_MS).

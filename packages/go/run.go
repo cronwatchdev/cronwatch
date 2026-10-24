@@ -591,8 +591,9 @@ func WithoutEvaluation() RecordOption { return func(r *recordConfig) { r.skipEva
 // finished. A stored run of another job is left alone and reported. A
 // finished run is judged as if it had been wrapped here (expect, failures,
 // duration, budgets) and its output and error are redacted the same way. A
-// metric that is not a finite number is refused before anything is
-// written, as JobContext.Metric refuses it. Returns the alerts it sent.
+// status other than the four RunStatus values, and a metric that is not a
+// finite number (as JobContext.Metric refuses it), are refused before
+// anything is written. Returns the alerts it sent.
 func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOption) ([]Alert, error) {
 	var cfg recordConfig
 	for _, o := range options {
@@ -609,6 +610,13 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	}
 	if strings.Contains(input.ID, "\x00") {
 		return nil, fmt.Errorf("recordRun: run ids cannot contain a NUL character (job %s)", js.Quote(input.Job))
+	}
+	// The one field evaluation reads that Go's types let be wrong: the
+	// SDK's other checks (finite times, strings or null) the types hold.
+	switch input.Status {
+	case StatusRunning, StatusOK, StatusFailed, StatusTimeout:
+	default:
+		return nil, fmt.Errorf(`recordRun: status must be "running", "ok", "failed", or "timeout" (job %s, run %s)`, js.Quote(input.Job), js.Quote(input.ID))
 	}
 	// Refused as JobContext.Metric refuses them: a store keeps NaN and
 	// infinities as null, or refuses them.
@@ -642,10 +650,14 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 	if stored != nil {
 		return c.recordOver(ctx, def.stored, *stored, run, evaluate)
 	}
-	// Keep evaluated imports retryable until their pending marker is durable.
+	// Keep evaluated imports retryable until their pending marker is
+	// durable. The placeholder's FinishedAt is when it was written, so a
+	// check can tell one whose finish never landed (isStranded); the finish
+	// writes the run's own.
 	inserted := run.clone()
 	if evaluate {
 		inserted.Status = StatusRunning
+		inserted.FinishedAt = ptr(c.now())
 	}
 	if err := c.store.InsertRun(ctx, inserted); err != nil {
 		// Another process recorded it first.

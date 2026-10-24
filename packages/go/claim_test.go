@@ -172,7 +172,7 @@ func TestImportedFinishRetriesPendingMarkerFailure(t *testing.T) {
 		t.Fatal("expected state write failure")
 	}
 	eq(t, "retryable", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusRunning)
-	clock.Advance(24 * 60 * MIN)
+	clock.Advance(MIN)
 	checkNow(t, cw)
 	eq(t, "completed import is not stuck", len(sent.List()), 0)
 	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))
@@ -188,4 +188,68 @@ func TestImportedFinishRetriesPendingMarkerFailure(t *testing.T) {
 	clock.Advance(sendLease + MIN)
 	checkNow(t, cw)
 	sameList(t, "history stays quiet", alertTypes(sent.List()), []string{"failed"})
+}
+
+func TestAnEvaluatedImportWhoseStateWriteFailsAndIsNotRetriedIsClosedByACheck(t *testing.T) {
+	clock := storetest.NewClock(T0)
+	shared := cronwatch.NewMemoryStore()
+	store := newTestStore()
+	store.inner = shared
+	fail := true
+	store.cas = func(s cronwatch.JobState, version int64) (bool, error) {
+		if fail {
+			fail = false
+			return false, errors.New("state unavailable")
+		}
+		return shared.CompareAndSetState(bg, s, version)
+	}
+	sent := &storetest.Capture{}
+	cw := cronwatch.MustNew(cronwatch.WithStore(store), cronwatch.WithClock(clock.Now), cronwatch.WithAlerts(sent),
+		cronwatch.WithoutCronSecret(), cronwatch.WithErrorHandler(quiet))
+	cw.MustJob("imported", cronwatch.Schedule("every 5m"), cronwatch.Timeout("1m"))
+	checkNow(t, cw)
+	run := cronwatch.Run{ID: "lost-import", Job: "imported", Status: cronwatch.StatusFailed, StartedAt: clock.Now() - 2*MIN, FinishedAt: ptr(clock.Now() - MIN),
+		DurationMs: ptr(MIN), Error: ptr("boom"), Metrics: cronwatch.Metrics{}, Trigger: "source"}
+	if _, err := cw.RecordRun(bg, run); err == nil || err.Error() != "state unavailable" {
+		t.Fatalf("expected the state write to fail, got %v", err)
+	}
+	checkNow(t, cw)
+	eq(t, "left at first", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusRunning)
+	clock.Advance(sendLease + MIN)
+	checkNow(t, cw)
+	closed := must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID))
+	eq(t, "closed", closed.Status, cronwatch.StatusTimeout)
+	eq(t, "duration kept", *closed.DurationMs, MIN)
+	eq(t, "error", *closed.Error, "Imported, but its finish was never written; marked as timed out\nboom")
+	sameList(t, "alerted", alertTypes(sent.List()), []string{"stuck"})
+	if summary := must[*cronwatch.JobSummary](t)(cw.JobSummary(bg, "imported")); summary.Health == cronwatch.HealthHealthy {
+		t.Errorf("health: %s", summary.Health)
+	}
+}
+
+func TestAnEvaluatedImportWhoseFinishWriteFailsIsClosedByACheckAndALateSuccessRecoversIt(t *testing.T) {
+	clock := storetest.NewClock(T0)
+	shared := cronwatch.NewMemoryStore()
+	store := newTestStore()
+	store.inner = shared
+	sent := &storetest.Capture{}
+	cw := cronwatch.MustNew(cronwatch.WithStore(store), cronwatch.WithClock(clock.Now), cronwatch.WithAlerts(sent),
+		cronwatch.WithoutCronSecret(), cronwatch.WithErrorHandler(quiet))
+	cw.MustJob("imported", cronwatch.Schedule("0 * * * *"), cronwatch.Timeout("1m"))
+	checkNow(t, cw)
+	run := cronwatch.Run{ID: "lost-finish", Job: "imported", Status: cronwatch.StatusOK, StartedAt: clock.Now(), FinishedAt: ptr(clock.Now()),
+		DurationMs: ptr(int64(0)), Metrics: cronwatch.Metrics{}, Trigger: "source"}
+	store.breaks("UpdateRunIf")
+	if _, err := cw.RecordRun(bg, run); err == nil {
+		t.Fatal("expected the finish write to fail")
+	}
+	store.mends("UpdateRunIf")
+	clock.Advance(sendLease + MIN)
+	checkNow(t, cw)
+	eq(t, "closed", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusTimeout)
+	eq(t, "released", must[*cronwatch.JobState](t)(shared.GetState(bg, run.Job)).PendingRuns == nil, true)
+	sameList(t, "alerted", alertTypes(sent.List()), []string{"stuck"})
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))
+	eq(t, "late success", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusOK)
+	sameList(t, "recovered", alertTypes(sent.List()), []string{"stuck", "recovered"})
 }

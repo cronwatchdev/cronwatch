@@ -401,6 +401,16 @@ func TestConformanceHealth(t *testing.T) {
 			t.Errorf("isStuck %d: %v %v", i, stuck, err)
 		}
 	}
+	stranded := 0
+	for i, c := range objects(f, "isStranded") {
+		if got := isStranded(*fixtureRun(t, field(c, "run")), now(c)); got != field(c, "stranded") {
+			t.Errorf("isStranded %d: %v", i, got)
+		}
+		stranded++
+	}
+	if stranded == 0 {
+		t.Error("no isStranded cases")
+	}
 	durations := 0
 	for i, c := range objects(f, "runDuration") {
 		got := runDuration(int64(field(c, "startedAt").(float64)), int64(field(c, "finishedAt").(float64)))

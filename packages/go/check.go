@@ -131,9 +131,12 @@ func (c *Client) runCheck(ctx context.Context) (*CheckResult, error) {
 				}
 				def = job.Definition
 			}
-			stuck, err := isStuck(def, run, now)
-			if err != nil || !stuck {
-				return err
+			stranded := isStranded(run, now)
+			if !stranded {
+				stuck, err := isStuck(def, run, now)
+				if err != nil || !stuck {
+					return err
+				}
 			}
 			// Read again just before the write: lines and metrics flushed since
 			// the list was read (while earlier stuck runs were sent, say) are kept.
@@ -142,11 +145,24 @@ func (c *Client) runCheck(ctx context.Context) (*CheckResult, error) {
 				return err
 			}
 			run := *fresh
-			timeout, _ := timeoutMs(def)
 			run.Status = StatusTimeout
-			run.FinishedAt = ptr(now)
-			run.DurationMs = ptr(runDuration(run.StartedAt, now))
-			run.Error = ptr(fmt.Sprintf("Still running after %s; marked as timed out", schedule.FormatDuration(timeout)))
+			if stranded {
+				// Its own status was never written; a late finish of it is
+				// judged as one after a timeout, so a success still recovers.
+				if run.DurationMs == nil {
+					run.DurationMs = ptr(runDuration(run.StartedAt, *run.FinishedAt))
+				}
+				message := strandedError
+				if run.Error != nil {
+					message += "\n" + *run.Error
+				}
+				run.Error = ptr(message)
+			} else {
+				timeout, _ := timeoutMs(def)
+				run.FinishedAt = ptr(now)
+				run.DurationMs = ptr(runDuration(run.StartedAt, now))
+				run.Error = ptr(fmt.Sprintf("Still running after %s; marked as timed out", schedule.FormatDuration(timeout)))
+			}
 			// Only over a row still running: a finish that landed meanwhile wins.
 			ok, err := c.writeRunIf(ctx, run, StatusRunning)
 			if err != nil || !ok {
@@ -483,6 +499,13 @@ func (c *Client) StartChecking(every time.Duration) {
 				return
 			default:
 			}
+			// A panic outside the shared check (which recovers its own) is
+			// reported as the check's, and the interval goes on.
+			defer func() {
+				if p := recover(); p != nil {
+					c.report(fmt.Errorf("the check panicked: %v", p), "check")
+				}
+			}()
 			if _, err := c.Check(context.Background()); err != nil {
 				c.report(err, "check")
 			}

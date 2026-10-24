@@ -19,21 +19,60 @@ const window = OutputCap + RedactEdge + 2
 // from goroutines of its own.
 type Recorder struct {
 	mu sync.Mutex
-	// lines and their lengths in code units; the front is dropped once the
-	// total passes window.
+	// lines is what is stored; the front is dropped once it passes window.
+	lines lineWindow
+	// head is the first lines logged, until they reach OutputCap, kept for
+	// expect even after the window has dropped them.
+	head     []string
+	headSize int
+	// whole is everything logged while it fits in 2*OutputCap, with its
+	// length in code units, so a line costs only its own length.
+	whole     strings.Builder
+	wholeSize int
+	wholeLost bool
+	// raw is the lines behind ExpectText's tail, joined only when it is read.
+	raw     lineWindow
+	logged  bool
+	metrics *js.Object
+}
+
+// lineWindow is lines kept newest last, each counted in code units with the
+// newline that joins it. The oldest are dropped by reslicing, never by
+// copying what is left (append moves only the live lines when it grows).
+type lineWindow struct {
 	lines   []string
 	lengths []int
 	size    int
-	// head is the first lines logged, until they reach OutputCap, kept for
-	// expect even after the window has dropped them.
-	head      []string
-	headSize  int
-	whole     string
-	wholeLost bool
-	tail      string
-	logged    bool
-	metrics   *js.Object
 }
+
+func (w *lineWindow) push(line string, n int) {
+	w.lines = append(w.lines, line)
+	w.lengths = append(w.lengths, n)
+	w.size += n + 1
+}
+
+// keepAtMost drops the oldest lines while over max, always keeping the newest.
+func (w *lineWindow) keepAtMost(max int) {
+	for w.size > max && len(w.lines) > 1 {
+		w.drop()
+	}
+}
+
+// keepAtLeast drops the oldest lines only while what is left still holds min.
+func (w *lineWindow) keepAtLeast(min int) {
+	for len(w.lines) > 1 && w.size-(w.lengths[0]+1) > min {
+		w.drop()
+	}
+}
+
+func (w *lineWindow) drop() {
+	w.size -= w.lengths[0] + 1
+	w.lines[0] = ""
+	w.lines = w.lines[1:]
+	w.lengths = w.lengths[1:]
+}
+
+func (w *lineWindow) join() string { return strings.Join(w.lines, "\n") }
 
 // NewRecorder is an empty recorder.
 func NewRecorder() *Recorder {
@@ -56,14 +95,18 @@ func (r *Recorder) Log(parts ...any) {
 	}
 	r.logged = true
 	if !r.wholeLost {
-		if js.Length16(r.whole)+len(separator)+n <= 2*OutputCap {
-			r.whole += separator + line
+		if r.wholeSize+len(separator)+n <= 2*OutputCap {
+			r.whole.WriteString(separator)
+			r.whole.WriteString(line)
+			r.wholeSize += len(separator) + n
 		} else {
 			r.wholeLost = true
-			r.whole = ""
+			r.whole = strings.Builder{}
 		}
 	}
-	r.tail = strings.Clone(tail(r.tail+separator+tail(line, OutputCap), OutputCap))
+	kept := tail(line, OutputCap)
+	r.raw.push(strings.Clone(kept), js.Length16(kept))
+	r.raw.keepAtLeast(OutputCap)
 	if r.headSize < OutputCap {
 		r.head = append(r.head, strings.Clone(js.Head16(line, OutputCap-r.headSize)))
 		r.headSize += n + 1
@@ -74,16 +117,9 @@ func (r *Recorder) Log(parts ...any) {
 		line = strings.Clone(js.Tail16(line, window-1))
 		n = js.Length16(line)
 	}
-	r.lines = append(r.lines, line)
-	r.lengths = append(r.lengths, n)
-	r.size += n + 1
+	r.lines.push(line, n)
 	// Drop from the front once well past the cap; RedactAndCap trims exactly at the end.
-	for r.size > window && len(r.lines) > 1 {
-		r.size -= r.lengths[0] + 1
-		r.lines[0] = ""
-		r.lines = r.lines[1:]
-		r.lengths = r.lengths[1:]
-	}
+	r.lines.keepAtMost(window)
 }
 
 // Output is the lines still held (past the window the oldest are let go),
@@ -92,10 +128,10 @@ func (r *Recorder) Log(parts ...any) {
 func (r *Recorder) Output() *string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.lines) == 0 {
+	if len(r.lines.lines) == 0 {
 		return nil
 	}
-	s := strings.Join(r.lines, "\n")
+	s := r.lines.join()
 	return &s
 }
 
@@ -106,14 +142,14 @@ func (r *Recorder) Output() *string {
 func (r *Recorder) ExpectText() *string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.lines) == 0 {
+	if len(r.lines.lines) == 0 {
 		return nil
 	}
 	if !r.wholeLost {
-		s := r.whole
+		s := r.whole.String()
 		return &s
 	}
-	s := js.Head16(strings.Join(r.head, "\n"), OutputCap) + "\n" + r.tail
+	s := js.Head16(strings.Join(r.head, "\n"), OutputCap) + "\n" + tail(r.raw.join(), OutputCap)
 	return &s
 }
 
