@@ -9,7 +9,7 @@
 # at then, without waiting for CI.
 #
 # Stays off until the repository variable DEPLOY_ENABLED is "true". Needs two
-# repository secrets:
+# secrets of the production environment (deployments limited to main):
 #   DEPLOY_SSH_KEY      private key whose public half is in ~joncphillips/.ssh/authorized_keys
 #                       on the server, restricted there to running deploy/release-deploy only
 #                       (which reads the commit from SSH_ORIGINAL_COMMAND)
@@ -41,6 +41,8 @@ jobs:
           github.event.workflow_run.head_branch == 'main'
         )
       )
+    # Environment secrets: a workflow pushed to another branch cannot read the key.
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

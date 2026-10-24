@@ -98,9 +98,12 @@ if [ -e "$LIVE" ] && [ ! -L "$LIVE" ] && ! $PREPARE; then
 fi
 export PATH="$NODE_PREFIX/bin:$PATH"
 
-# One deploy at a time; rollback takes the same lock.
+# One deploy at a time; rollback takes the same lock. Waits for one under
+# way (a deploy by hand, or a rollback) rather than failing, so CI's deploy
+# of a newer commit is not lost; a commit older than the live one by then is
+# skipped below.
 exec 9>"$RELEASES/.deploy.lock"   # not /tmp, where any local user could pre-create or symlink it
-flock -n 9 || { echo "Another deploy is already running." >&2; exit 1; }
+flock -w 900 9 || { echo "Another deploy held the lock for 15 minutes; giving up." >&2; exit 1; }
 
 echo "Fetching..."
 git -C "$REPO" fetch --quiet origin
