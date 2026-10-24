@@ -36,28 +36,13 @@
 
   <dependencyManagement>
     <dependencies>
-      <!-- Patch the test server and JSON stack until Boot's next maintenance BOM includes them. -->
+      <!-- Patch the JSON stack until Boot's next maintenance BOM includes it (Jackson 3, which only Boot 4 uses); the test server's patch is in the boot4-tomcat profile below. -->
       <dependency>
         <groupId>tools.jackson</groupId>
         <artifactId>jackson-bom</artifactId>
         <version>3.1.7</version>
         <type>pom</type>
         <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.tomcat.embed</groupId>
-        <artifactId>tomcat-embed-core</artifactId>
-        <version>11.0.25</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.tomcat.embed</groupId>
-        <artifactId>tomcat-embed-el</artifactId>
-        <version>11.0.25</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.tomcat.embed</groupId>
-        <artifactId>tomcat-embed-websocket</artifactId>
-        <version>11.0.25</version>
       </dependency>
       <!-- Spring's modules at one release; what the parent manages (JUnit, SLF4J, the servlet API) stays its own. -->
       <dependency>
@@ -212,4 +197,43 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!--
+      Patches the test server until Boot's next maintenance BOM includes it.
+      Tomcat 11 is Boot 4's, so the pin applies only to the default build
+      (Boot 4, as spring-boot.version above): a run that picks a release with
+      -Dspring-boot.version= (the java-frameworks CI job's oldest, Boot 3.5 on
+      its own Tomcat 10.1) takes that release's Tomcat from its BOM. Maven 3
+      reads only properties given on the command line for an activation, so
+      the job's newest entry leaves spring-boot.version unset to get the pin.
+    -->
+    <profile>
+      <id>boot4-tomcat</id>
+      <activation>
+        <property>
+          <name>!spring-boot.version</name>
+        </property>
+      </activation>
+      <dependencyManagement>
+        <dependencies>
+          <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-core</artifactId>
+            <version>11.0.25</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-el</artifactId>
+            <version>11.0.25</version>
+          </dependency>
+          <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-websocket</artifactId>
+            <version>11.0.25</version>
+          </dependency>
+        </dependencies>
+      </dependencyManagement>
+    </profile>
+  </profiles>
 </project>

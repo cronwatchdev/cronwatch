@@ -167,7 +167,10 @@ final class Checks {
     return new CheckResult(now, jobs, alerts, pruned);
   }
 
-  /** A running run marked timed out once it has gone on past its job's timeout, and judged. */
+  /**
+   * A running run marked timed out once it has gone on past its job's timeout, or an import whose
+   * finish was never written once {@link Evaluate#isStranded} holds, and judged.
+   */
   private void checkRunning(Run listed, long now, Consumer<List<Alert>> alerts) {
     JobDef declared = core.declared(listed.job());
     Definition def;
@@ -182,7 +185,8 @@ final class Checks {
       evaluable(stored);
       def = stored.definition();
     }
-    if (!Evaluate.isStuck(def, listed, now)) {
+    boolean stranded = Evaluate.isStranded(listed, now);
+    if (!stranded && !Evaluate.isStuck(def, listed, now)) {
       return;
     }
     // Read again just before the write: lines and metrics flushed since the list was read (while
@@ -191,14 +195,30 @@ final class Checks {
     if (run == null || !run.status().equals(RunStatus.RUNNING) || !run.job().equals(listed.job())) {
       return;
     }
-    Run marked =
-        run.finished(
-            RunStatus.TIMEOUT,
-            now,
-            Evaluate.runDuration(run.startedAt(), now),
-            Runs.timeoutText(def),
-            run.output(),
-            run.metrics());
+    Run marked;
+    Long finishedAt = run.finishedAt();
+    if (stranded && finishedAt != null) {
+      // Its own status was never written; a late finish of it is judged as one after a timeout, so
+      // a success still recovers.
+      Long durationMs = run.durationMs();
+      marked =
+          run.finished(
+              RunStatus.TIMEOUT,
+              finishedAt,
+              durationMs != null ? durationMs : Evaluate.runDuration(run.startedAt(), finishedAt),
+              Runs.STRANDED_ERROR + (run.error() == null ? "" : "\n" + run.error()),
+              run.output(),
+              run.metrics());
+    } else {
+      marked =
+          run.finished(
+              RunStatus.TIMEOUT,
+              now,
+              Evaluate.runDuration(run.startedAt(), now),
+              Runs.timeoutText(def),
+              run.output(),
+              run.metrics());
+    }
     // Only over a row still running: a finish that landed meanwhile wins.
     if (core.writeRunIf(marked, List.of(RunStatus.RUNNING))) {
       alerts.accept(runs.finishRun(def, marked, now));

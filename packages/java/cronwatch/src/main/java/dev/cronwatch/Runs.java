@@ -82,6 +82,10 @@ final class Runs {
     }
   }
 
+  /** The error a check gives an import whose finish never landed ({@code Evaluate.isStranded}). */
+  static final String STRANDED_ERROR =
+      "Imported, but its finish was never written; marked as timed out";
+
   /** A stuck run's error: {@code Still running after 30m; marked as timed out}. */
   static String timeoutText(Definition def) {
     return "Still running after "
@@ -273,9 +277,25 @@ final class Runs {
       o.timer = null;
     }
     o.open = listed ? open : null;
+    // A run closed from another thread left its context here; it is not one to put back.
+    clearEnded();
     o.previous = CurrentRun.set(context);
     o.saved = Mdc.put(def.name(), run.id());
     return o;
+  }
+
+  /**
+   * Clears the calling thread's current run, and the MDC keys that name it, when that run's
+   * function has ended: what a run opened in this thread and closed from another leaves, since only
+   * the opening thread can put them back. See {@link ObservedRun#clearEnded()}.
+   */
+  static void clearEnded() {
+    JobContext current = CurrentRun.get();
+    if (current == null || !current.ended()) {
+      return;
+    }
+    CurrentRun.restore(null);
+    Mdc.clear(current.name(), current.runId());
   }
 
   /**
@@ -779,6 +799,16 @@ final class Runs {
               + dev.cronwatch.json.Json.stringify(input.job())
               + ")");
     }
+    // The one field evaluation reads that the types let be wrong: a status another writer named.
+    if (!List.of(RunStatus.RUNNING, RunStatus.OK, RunStatus.FAILED, RunStatus.TIMEOUT)
+        .contains(input.status())) {
+      throw CronwatchException.invalid(
+          "recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" (job "
+              + dev.cronwatch.json.Json.stringify(input.job())
+              + ", run "
+              + dev.cronwatch.json.Json.stringify(input.id())
+              + ")");
+    }
     // Refused as job.metric() refuses them: a store keeps NaN and Infinity as null.
     for (var m : input.metrics().toValue().entries()) {
       if (!(m.getValue() instanceof Number n) || !Double.isFinite(n.doubleValue())) {
@@ -810,8 +840,20 @@ final class Runs {
     if (stored != null) {
       return recordOver(def.stored(), stored, run, evaluate);
     }
-    // Keep an evaluated import retryable until its pending marker is durable.
-    Run inserted = evaluate ? run.withStatus(RunStatus.RUNNING) : run;
+    // Keep an evaluated import retryable until its pending marker is durable. A finished import's
+    // placeholder has finishedAt of when it was written, so a check can tell one whose finish never
+    // landed (isStranded); the finish writes the run's own. A running import keeps none, so it
+    // times out by the job's timeout.
+    Run inserted =
+        evaluate
+            ? run.finished(
+                RunStatus.RUNNING,
+                run.status().equals(RunStatus.RUNNING) ? null : core.now(),
+                run.durationMs(),
+                run.error(),
+                run.output(),
+                run.metrics())
+            : run;
     try {
       Core.call(
           () -> {

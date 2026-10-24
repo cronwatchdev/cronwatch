@@ -75,7 +75,6 @@ class HandlerTest {
       assertEquals(401, h.handle(get(null, false)).status(), "no auth");
       Response wrong = h.handle(get("Bearer wrong", false));
       assertEquals("{\"ok\":false,\"error\":\"Unauthorized\"}", wrong.text());
-      assertEquals(401, h.handle(get("bearer " + secret, false)).status(), "a lowercase bearer");
       Response res = h.handle(get("Bearer " + secret, false));
       assertEquals(200, res.status());
       assertEquals("application/json; charset=utf-8", res.header("content-type"));
@@ -95,6 +94,20 @@ class HandlerTest {
       assertEquals("/api/cron/hourly", runs.get(1).output());
       assertEquals("handler", runs.get(0).trigger());
       assertTrue(runs.get(0).error().startsWith("IOException: nope\nsecond line\n"));
+    }
+  }
+
+  @Test
+  void theHandlerReadsTheBearerSchemeInAnyCaseAsTheRoutesDo() {
+    String secret = secret();
+    try (WebKit k = new WebKit(RoutesOptions.defaults(), b -> b.cronSecret(secret))) {
+      Handler h = k.cw.job("hook").handler((j, req) -> null);
+      assertEquals(200, h.handle(get("bearer  " + secret, false)).status());
+      assertEquals(200, h.handle(get("BEARER\t" + secret, false)).status());
+      assertEquals(401, h.handle(get("Bearer wrong", false)).status());
+      assertEquals(401, h.handle(get(secret, false)).status());
+      assertEquals(401, h.handle(get("Bearer" + secret, false)).status());
+      assertEquals(2, runs(k.cw, "hook").size());
     }
   }
 

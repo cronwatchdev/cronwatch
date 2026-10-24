@@ -36,6 +36,18 @@ public final class Mdc {
     }
   }
 
+  /** Removes the run's keys when they still name {@code job} and {@code run}. */
+  public static void clear(String job, String run) {
+    if (!PRESENT) {
+      return;
+    }
+    try {
+      Slf4j.clear(job, run);
+    } catch (LinkageError | RuntimeException e) {
+      // SLF4J went away or failed; nothing to clear.
+    }
+  }
+
   /** Puts back what {@link #put} replaced. */
   public static void restore(@Nullable Saved saved) {
     if (saved == null) {
@@ -56,6 +68,14 @@ public final class Mdc {
       org.slf4j.MDC.put("cronwatch_job", job);
       org.slf4j.MDC.put("cronwatch_run", run);
       return saved;
+    }
+
+    static void clear(String job, String run) {
+      if (job.equals(org.slf4j.MDC.get("cronwatch_job"))
+          && run.equals(org.slf4j.MDC.get("cronwatch_run"))) {
+        org.slf4j.MDC.remove("cronwatch_job");
+        org.slf4j.MDC.remove("cronwatch_run");
+      }
     }
 
     static void restore(Saved saved) {

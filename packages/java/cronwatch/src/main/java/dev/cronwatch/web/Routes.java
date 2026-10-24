@@ -363,9 +363,9 @@ public final class Routes implements Endpoint {
    * The token an {@code Authorization} header carries: what follows the scheme when the scheme is
    * {@code Bearer} (in any case) and one or more whitespace characters follow it, else null. Any
    * other scheme (a proxy's Basic auth, say) is not a bearer at all, so the cookie and {@code
-   * ?token=} are read as if no header came.
+   * ?token=} are read as if no header came. A job's {@link Handler} reads its secret the same way.
    */
-  private static @Nullable String bearer(Request req) {
+  static @Nullable String bearer(Request req) {
     String text = req.header("authorization");
     if (text == null || !isBearerPrefix(text)) {
       return null;
@@ -494,7 +494,8 @@ public final class Routes implements Endpoint {
     }
     boolean wantsHtml = !path.startsWith("/api");
     try {
-      return serve(req, pathname, path, target[1], b, wantsHtml);
+      Response answer = serve(req, pathname, path, target[1], b, wantsHtml);
+      return req.method().equalsIgnoreCase("HEAD") ? withoutBody(answer) : answer;
     } catch (Error e) {
       cw.reportError(e, "routes");
       throw e;
@@ -508,6 +509,15 @@ public final class Routes implements Endpoint {
       }
       return api(errorBody("Internal error"), 500);
     }
+  }
+
+  /** A HEAD's answer: its GET's status and headers, without the body. */
+  private static Response withoutBody(Response answer) {
+    Response out = Response.of(answer.status());
+    for (Map.Entry<String, String> h : answer.headers()) {
+      out = out.withHeader(h.getKey(), h.getValue());
+    }
+    return out;
   }
 
   private Said read(Request req, String rawQuery) {
@@ -687,7 +697,9 @@ public final class Routes implements Endpoint {
     }
 
     // HTML
-    if (method.equals("GET") && path.equals("/")) {
+    // A HEAD reads what a GET would; handle() sends it without a body.
+    boolean reads = method.equals("GET") || method.equals("HEAD");
+    if (reads && path.equals("/")) {
       List<JobWithRuns> entries = cw.jobsWithRuns(BOARD_PAGE_RUNS);
       long now = cw.now();
       Map<String, List<Run>> runsByJob = new HashMap<>();
@@ -699,7 +711,7 @@ public final class Routes implements Endpoint {
       List<LaneInput> lanes = boardLanes(entries, now);
       return page(Html.dashboardPage(jobs, runsByJob, now, base, null, lanes), 200);
     }
-    if (method.equals("GET") && parts.size() == 2 && parts.get(0).equals("jobs")) {
+    if (reads && parts.size() == 2 && parts.get(0).equals("jobs")) {
       String name = parts.get(1);
       JobSummary job = cw.jobSummary(name);
       if (job == null) {
@@ -846,8 +858,9 @@ public final class Routes implements Endpoint {
   private Response serveApi(Request req, String method, List<String> rest, Said said) {
     int n = rest.size();
     String first = n > 0 ? rest.get(0) : "";
+    boolean reads = method.equals("GET") || method.equals("HEAD");
     // What is serving the API, so a client such as @cronwatch/mcp can tell.
-    if (method.equals("GET") && n == 0) {
+    if (reads && n == 0) {
       return api(
           new JsObject()
               .set("ok", true)
@@ -857,7 +870,7 @@ public final class Routes implements Endpoint {
               .set("api", API_VERSION),
           200);
     }
-    if (method.equals("GET") && n == 1 && first.equals("jobs")) {
+    if (reads && n == 1 && first.equals("jobs")) {
       List<Object> list = new ArrayList<>();
       for (JobSummary j : cw.jobs()) {
         list.add(j.toValue());
@@ -866,7 +879,7 @@ public final class Routes implements Endpoint {
     }
     if (n == 2 && first.equals("jobs")) {
       String name = rest.get(1);
-      if (method.equals("GET")) {
+      if (reads) {
         JobSummary job = cw.jobSummary(name);
         if (job == null) {
           return api(errorBody("No such job"), 404);
@@ -934,7 +947,7 @@ public final class Routes implements Endpoint {
         return api(body, 200);
       }
     }
-    if (method.equals("GET") && n == 2 && first.equals("runs")) {
+    if (reads && n == 2 && first.equals("runs")) {
       Run run = cw.getRun(rest.get(1));
       return run != null
           ? api(new JsObject().set("ok", true).set("run", run.toValue()), 200)

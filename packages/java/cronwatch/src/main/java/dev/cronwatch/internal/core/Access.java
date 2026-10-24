@@ -44,6 +44,12 @@ public final class Access {
     /** The environment as the client reads it, the builder's fallback included. */
     String environment(Cronwatch cw);
 
+    /**
+     * The environment as the variables alone name it, the builder's fallback left out: what lets a
+     * job's handler run without a secret, which a guess such as a Spring profile must not.
+     */
+    String variablesEnvironment();
+
     /** Whether the client declares {@code name} now (not forgotten since it was declared). */
     boolean declares(Cronwatch cw, String name);
 

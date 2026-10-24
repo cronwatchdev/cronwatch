@@ -237,6 +237,108 @@ class CronwatchJobRunrTest {
     }
   }
 
+  /** What this thread holds of a run: the current run's id and the MDC keys, or nulls. */
+  private static List<String> held() {
+    JobContext current = Cronwatch.current();
+    return java.util.Arrays.asList(
+        current == null ? null : current.runId(),
+        org.slf4j.MDC.get("cronwatch_job"),
+        org.slf4j.MDC.get("cronwatch_run"));
+  }
+
+  @Test
+  void aPooledWorkerKeepsNoRunOfAnAttemptJobRunrNeverReportedTheEndOf() throws Exception {
+    // An Error skips every filter, so the attempt's run stays current on the worker's thread, with
+    // its MDC keys, until something closes it: on that thread as it starts its next job, or on
+    // another (the job's next attempt on another worker, or a state JobRunr applied), after which
+    // the worker clears what that run left.
+    MemoryStore store = new MemoryStore();
+    List<String> errors = new CopyOnWriteArrayList<>();
+    InMemoryStorageProvider storage = new InMemoryStorageProvider();
+    java.util.concurrent.ExecutorService worker =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    List<String> none = java.util.Arrays.asList(null, null, null);
+    try (Cronwatch cw = client(store, errors);
+        CronwatchJobRunr w =
+            CronwatchJobRunr.watch(
+                cw, storage, JobRunrOptions.defaults().app("billing").watchJob("report"))) {
+      JobScheduler scheduler =
+          JobRunr.configure().useStorageProvider(storage).initialize().getJobScheduler();
+      org.jobrunr.jobs.Job job = storage.getJobById(scheduler.enqueue(() -> Work.report()));
+      org.jobrunr.jobs.Job other = storage.getJobById(scheduler.enqueue(() -> Work.ok()));
+
+      // Closed on the worker's thread as it starts a job that is not watched.
+      List<String> opened =
+          worker
+              .submit(
+                  () -> {
+                    w.onProcessing(attempt(job, 1));
+                    return held();
+                  })
+              .get();
+      assertEquals("report", opened.get(1));
+      assertEquals(opened.get(0), opened.get(2));
+      assertEquals(
+          none,
+          worker
+              .submit(
+                  () -> {
+                    w.onProcessing(attempt(other, 1));
+                    return held();
+                  })
+              .get());
+      List<Run> runs = finished(cw, "report");
+      assertEquals(1, runs.size(), runs.toString());
+      assertTrue(runs.get(0).error().contains("without JobRunr reporting how"));
+
+      // Closed from another thread: the worker clears what it left as it starts its next job.
+      opened =
+          worker
+              .submit(
+                  () -> {
+                    w.onProcessing(attempt(job, 2));
+                    return held();
+                  })
+              .get();
+      assertEquals("report", opened.get(1));
+      org.jobrunr.jobs.states.ProcessingState processing =
+          new org.jobrunr.jobs.states.ProcessingState(java.util.UUID.randomUUID(), "test");
+      org.jobrunr.jobs.states.FailedState orphaned =
+          new org.jobrunr.jobs.states.FailedState(
+              "Orphaned job", new IllegalThreadStateException("the server stopped"));
+      w.onStateApplied(attempt(job, 2, orphaned), processing, orphaned);
+      assertEquals(2, finished(cw, "report").size());
+      assertEquals(opened, worker.submit(CronwatchJobRunrTest::held).get(), "left behind");
+      assertEquals(
+          none,
+          worker
+              .submit(
+                  () -> {
+                    w.onProcessing(attempt(other, 2));
+                    return held();
+                  })
+              .get());
+
+      // And a watched job's run, opened over such a leftover, ends with nothing to put back.
+      worker.submit(() -> w.onProcessing(attempt(job, 3))).get();
+      w.onStateApplied(attempt(job, 3, orphaned), processing, orphaned);
+      assertEquals(
+          none,
+          worker
+              .submit(
+                  () -> {
+                    w.onProcessing(attempt(job, 4));
+                    w.onProcessingSucceeded(attempt(job, 4));
+                    return held();
+                  })
+              .get());
+      assertEquals(4, finished(cw, "report").size());
+      assertTrue(errors.isEmpty(), errors.toString());
+    } finally {
+      worker.shutdownNow();
+    }
+  }
+
   @Test
   void anAttemptDeletedWhileItRanIsGivenBackNotFailed() throws Exception {
     MemoryStore store = new MemoryStore();

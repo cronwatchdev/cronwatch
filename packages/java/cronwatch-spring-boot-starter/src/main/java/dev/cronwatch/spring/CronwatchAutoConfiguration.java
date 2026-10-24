@@ -30,8 +30,10 @@ import org.springframework.core.env.Environment;
  * (else the console), and a {@link Triage}, {@link Source} beans, and an {@link ErrorHandler} are
  * used when the app has them. When neither {@code CRONWATCH_ENV} nor {@code APP_ENV} is set, the
  * environment is the app's active Spring profile ({@code dev} and {@code local} are development,
- * {@code prod} production). The client is closed when the context closes. An app's own {@link
- * Cronwatch} bean replaces this one, and {@code cronwatch.enabled=false} turns the starter off.
+ * {@code prod} production): it makes the dashboard's development token, but a job's handler with no
+ * secret stays closed unless a variable itself names development. The client is closed when the
+ * context closes. An app's own {@link Cronwatch} bean replaces this one, and {@code
+ * cronwatch.enabled=false} turns the starter off.
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "cronwatch", name = "enabled", matchIfMissing = true)

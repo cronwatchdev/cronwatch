@@ -17,9 +17,11 @@ import java.util.Objects;
  * Response}, and every adapter that serves {@link Routes} serves it too. Made by {@link
  * Job#handler}. Safe to share between threads.
  *
- * <p>A request must send {@code Authorization: Bearer <secret>} (compared in constant time): the
- * options' secret, else the client's cron secret. With no secret at all it answers 503 and reports
- * it once to the error handler as {@code handler}, unless the environment is development or {@link
+ * <p>A request must send {@code Authorization: Bearer <secret>} (the scheme in any case, as the
+ * dashboard reads it, and the secret compared in constant time): the options' secret, else the
+ * client's cron secret. With no secret at all it answers 503 and reports it once to the error
+ * handler as {@code handler}, unless {@code CRONWATCH_ENV} or {@code APP_ENV} names development
+ * (the builder's {@code environment}, such as the Spring starter's profile, does not) or {@link
  * HandlerOptions.Builder#noSecret} (or the client's {@code noCronSecret()}) lets anyone in; a wrong
  * or missing bearer is 401. Each request it lets in runs the function in the request's thread as a
  * run with the trigger {@code handler}, answered with {@code {"ok","job","run","status",
@@ -82,7 +84,9 @@ public final class Handler implements Endpoint {
   public Response handle(Request request) {
     Cronwatch cw = job.cronwatch();
     Access.Client access = Access.client();
-    if (secret.isEmpty() && !optedOut && !access.environment(cw).equals("development")) {
+    // Only a variable opens it: the builder's fallback (the Spring starter's profile) makes the
+    // dashboard's development token, but a profile left on in production must not open a job.
+    if (secret.isEmpty() && !optedOut && !access.variablesEnvironment().equals("development")) {
       if (access.firstNoSecretRefusal(cw)) {
         cw.reportError(
             new IllegalStateException(
@@ -101,8 +105,9 @@ public final class Handler implements Endpoint {
           503);
     }
     if (!secret.isEmpty()) {
-      String sent = Objects.requireNonNullElse(request.header("authorization"), "");
-      if (!Text.constantTimeEquals(sent, "Bearer " + secret)) {
+      // Read as the dashboard's routes read it: the scheme in any case.
+      String sent = Routes.bearer(request);
+      if (sent == null || !Text.constantTimeEquals(sent, secret)) {
         return json(new JsObject().set("ok", false).set("error", "Unauthorized"), 401);
       }
     }

@@ -1639,7 +1639,9 @@ jobs:
       matrix:
         include:
           - { name: oldest, boot: "3.5.0", shedlock: "6.10.0", quartz: "2.5.0", jobrunr: "8.0.0" }
-          - { name: newest, boot: "4.1.1", shedlock: "7.10.1", quartz: "2.5.2", jobrunr: "8.8.2" }
+          # The newest Boot is the starter POM's own spring-boot.version, left
+          # unset here so its boot4-tomcat profile (the patched Tomcat) applies.
+          - { name: newest, boot: "", shedlock: "7.10.1", quartz: "2.5.2", jobrunr: "8.8.2" }
     services:
       postgres:
         image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
@@ -1671,7 +1673,7 @@ jobs:
         run: >-
           ./mvnw -B verify
           -pl cronwatch-quartz,cronwatch-jobrunr,cronwatch-spring-boot-starter -am
-          -Dspring-boot.version=${{ matrix.boot }}
+          ${{ matrix.boot && format('-Dspring-boot.version={0}', matrix.boot) || '' }}
           -Dshedlock.version=${{ matrix.shedlock }}
           -Dquartz.version=${{ matrix.quartz }}
           -Djobrunr.version=${{ matrix.jobrunr }}

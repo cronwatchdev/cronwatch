@@ -3,7 +3,6 @@ package dev.cronwatch.alerts;
 import dev.cronwatch.Alert;
 import dev.cronwatch.Channel;
 import dev.cronwatch.ChannelContext;
-import dev.cronwatch.internal.js.Js;
 import dev.cronwatch.internal.post.Post;
 import dev.cronwatch.json.JsObject;
 import dev.cronwatch.json.Json;
@@ -58,13 +57,13 @@ public final class Slack implements Channel {
             + escape(alert.title())
             + "*"
             + (url.isEmpty() ? "" : " (<" + linkTarget(url) + "|open>)");
-    String body = Js.head(codeBlockSafe(escape(alert.message())), 2900);
+    String body = cutEscaped(codeBlockSafe(escape(alert.message())), 2900);
     List<Object> blocks = new ArrayList<>();
     blocks.add(section(title));
     blocks.add(section("```" + body + "```"));
     // Its own block, so a long diagnosis cannot push a block past Slack's 3000 character limit.
     if (!Shared.triage(alert).isEmpty()) {
-      blocks.add(section(Js.head("_Triage:_ " + escape(Shared.triage(alert)), 3000)));
+      blocks.add(section(cutEscaped("_Triage:_ " + escape(Shared.triage(alert)), 3000)));
     }
     JsObject payload =
         new JsObject()
@@ -98,6 +97,16 @@ public final class Slack implements Channel {
   /** Slack's three control characters. Escaping < and > also stops <!channel> and links. */
   static String escape(String text) {
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+  }
+
+  /**
+   * Escaped text cut to at most {@code max} UTF-16 units, splitting neither an entity {@link
+   * #escape} wrote nor a surrogate pair.
+   */
+  static String cutEscaped(String text, int max) {
+    String kept = Post.cut(text, max);
+    int amp = kept.lastIndexOf('&');
+    return amp != -1 && kept.indexOf(';', amp) == -1 ? kept.substring(0, amp) : kept;
   }
 
   /**

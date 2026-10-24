@@ -2,6 +2,7 @@ package dev.cronwatch.jobrunr;
 
 import dev.cronwatch.Cronwatch;
 import dev.cronwatch.CronwatchException;
+import dev.cronwatch.JobContext;
 import dev.cronwatch.JobOptions;
 import dev.cronwatch.ObservedRun;
 import dev.cronwatch.Run;
@@ -493,6 +494,7 @@ public final class CronwatchJobRunr implements JobServerFilter, ApplyStateFilter
   public void onProcessing(Job job) {
     // A throw here would stop JobRunr running the job, so nothing leaves.
     try {
+      settleThread();
       if (isClosed()) {
         return;
       }
@@ -523,9 +525,34 @@ public final class CronwatchJobRunr implements JobServerFilter, ApplyStateFilter
   }
 
   /**
+   * Clears what an attempt JobRunr never reported the end of left in this worker's thread, as the
+   * worker starts its next job (watched or not). A run of ours still current here is that
+   * attempt's: the worker runs one job at a time, so it has ended, and it is closed here, in the
+   * thread that opened it, which puts back the current run and the MDC keys. One closed already
+   * from another thread (the next attempt opening on another worker, or a state JobRunr applied)
+   * could not put them back there, so they are cleared.
+   */
+  private void settleThread() {
+    JobContext current = Cronwatch.current();
+    if (current != null) {
+      Map.Entry<UUID, Opened> mine = null;
+      for (Map.Entry<UUID, Opened> e : open.entrySet()) {
+        if (e.getValue().run().context() == current) {
+          mine = e;
+          break;
+        }
+      }
+      if (mine != null && open.remove(mine.getKey(), mine.getValue())) {
+        unfinished(mine.getValue().run());
+      }
+    }
+    ObservedRun.clearEnded();
+  }
+
+  /**
    * Closes, failed, a run JobRunr never reported the end of: an attempt that threw an {@code Error}
-   * (JobRunr calls no filter then, and leaves the job to its orphan check), found when the job's
-   * next attempt opens.
+   * (JobRunr calls no filter then, and leaves the job to its orphan check), found when its worker
+   * starts its next job or the job's next attempt opens.
    */
   private void unfinished(ObservedRun stale) {
     if (stale.isOpen()) {

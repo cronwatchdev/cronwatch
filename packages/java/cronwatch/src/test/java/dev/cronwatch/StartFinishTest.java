@@ -166,6 +166,24 @@ class StartFinishTest {
         assertThrows(CronwatchException.class, () -> m.cw().recordRun(nul))
             .getMessage()
             .contains("recordRun: run ids cannot contain a NUL character"));
+    // A status another writer named is refused before anything is written.
+    Run odd =
+        new Run(
+            "odd",
+            "inngest-fn",
+            RunStatus.of("done"),
+            1,
+            2L,
+            1L,
+            null,
+            null,
+            Metrics.empty(),
+            "run");
+    assertEquals(
+        "recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" (job"
+            + " \"inngest-fn\", run \"odd\")",
+        assertThrows(CronwatchException.class, () -> m.cw().recordRun(odd)).getMessage());
+    assertNull(m.cw().getRun("odd"));
     assertEquals(1, m.cw().runs("inngest-fn", 50).size());
   }
 
