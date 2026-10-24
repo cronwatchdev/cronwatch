@@ -910,6 +910,15 @@ pub(crate) fn is_stuck(def: &Definition, run: &Run, now: i64) -> Result<bool, St
     Ok(now.saturating_sub(run.started_at) as f64 > timeout_ms(def)?)
 }
 
+/// Whether a finished import was left as its placeholder: `record_run`
+/// writes one as running, with `finished_at` set to when it was written, and
+/// the finish that follows never landed (the importer stopped, or a store
+/// write failed and it was not retried). A check closes one `SEND_LEASE_MS`
+/// after it was written, as it closes a stuck run.
+pub(crate) fn is_stranded(run: &Run, now: i64) -> bool {
+    run.status == RunStatus::Running && run.finished_at.is_some_and(|at| now.saturating_sub(at) > SEND_LEASE_MS)
+}
+
 /// `next` with nothing opened that was not open in `previous`. While a job
 /// is silenced nothing new is recorded as an incident: conditions may close
 /// (so a job that recovered during the silence shows as healthy) but none

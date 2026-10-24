@@ -27,8 +27,15 @@ struct Inner {
     head: Vec<String>,
     head_size: usize,
     whole: String,
+    /// `whole`'s length in code units, so a line is not counted twice.
+    whole_size: usize,
     whole_lost: bool,
-    tail: String,
+    /// The lines behind expect's tail, each cut to `OUTPUT_CAP`: the front
+    /// is dropped while what is left still holds `OUTPUT_CAP`, and they are
+    /// joined only when the tail is read, so a line logged copies no more
+    /// than itself.
+    raw: VecDeque<(String, usize)>,
+    raw_size: usize,
     logged: bool,
     metrics: js::Object,
 }
@@ -51,15 +58,23 @@ impl Recorder {
         let separator = if r.logged { "\n" } else { "" };
         r.logged = true;
         if !r.whole_lost {
-            if js::len16(&r.whole) + separator.len() + n <= 2 * OUTPUT_CAP {
+            if r.whole_size + separator.len() + n <= 2 * OUTPUT_CAP {
                 r.whole.push_str(separator);
                 r.whole.push_str(&line);
+                r.whole_size += separator.len() + n;
             } else {
-                r.whole.clear();
+                r.whole = String::new();
                 r.whole_lost = true;
             }
         }
-        r.tail = tail(&format!("{}{}{}", r.tail, separator, tail(&line, OUTPUT_CAP)), OUTPUT_CAP);
+        let cut = tail(&line, OUTPUT_CAP);
+        let cut_size = js::len16(&cut);
+        r.raw.push_back((cut, cut_size));
+        r.raw_size += cut_size + 1;
+        while r.raw.len() > 1 && r.raw_size - (r.raw[0].1 + 1) > OUTPUT_CAP {
+            let (_, len) = r.raw.pop_front().expect("more than one line");
+            r.raw_size -= len + 1;
+        }
         if r.head_size < OUTPUT_CAP {
             let room = OUTPUT_CAP - r.head_size;
             r.head.push(js::head16(&line, room));
@@ -104,7 +119,7 @@ impl Recorder {
         if !r.whole_lost {
             return Some(r.whole.clone());
         }
-        Some(format!("{}\n{}", js::head16(&r.head.join("\n"), OUTPUT_CAP), r.tail))
+        Some(format!("{}\n{}", js::head16(&r.head.join("\n"), OUTPUT_CAP), tail(&join(&r.raw), OUTPUT_CAP)))
     }
 
     /// Reports a number for the run; a later value for the same name

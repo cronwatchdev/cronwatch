@@ -10,8 +10,8 @@ use tokio::sync::watch;
 use crate::client::{Client, clamp_limit, lock};
 use crate::error::Error;
 use crate::evaluate::{
-    BASELINE_WINDOW, Evaluation, SEND_LEASE_MS, apply_silence, empty_state, is_stuck, normalize_state, on_check,
-    release_run, release_sending, silence_end, summarize, unevaluable_summary,
+    BASELINE_WINDOW, Evaluation, SEND_LEASE_MS, apply_silence, empty_state, is_stranded, is_stuck, normalize_state,
+    on_check, release_run, release_sending, silence_end, summarize, unevaluable_summary,
 };
 use crate::options::DurationSpec;
 use crate::panics::panic_text;
@@ -26,6 +26,9 @@ const FIRST_CHECK_DELAY: Duration = Duration::from_secs(1);
 /// The longest interval `start_checking` checks on, the SDK's: setInterval's longest
 /// delay, 2^31 - 1 ms (some 24.8 days).
 const TIMER_MAX_MS: u64 = (1 << 31) - 1;
+
+/// The error a check gives an import whose finish never landed (`is_stranded`).
+const STRANDED_ERROR: &str = "Imported, but its finish was never written; marked as timed out";
 
 /// A check's outcome, shared by every caller waiting on it.
 pub(crate) type CheckResultShared = Result<CheckResult, Error>;
@@ -135,8 +138,9 @@ impl Client {
     }
 
     /// A running run marked timed out once it has gone on past its job's
-    /// timeout, and judged. The listed run only says whether it is past its
-    /// timeout; the row marked is read again just before the write, so lines
+    /// timeout, or an import's placeholder whose finish never landed
+    /// (`is_stranded`), and judged. The listed run only says whether it is
+    /// past its timeout; the row marked is read again just before the write, so lines
     /// and metrics flushed since the list was read (while earlier stuck runs
     /// were sent, say) are kept.
     async fn check_running(&self, listed: &Run, now: i64, alerts: &mut Vec<Alert>) -> Result<(), Error> {
@@ -150,7 +154,8 @@ impl Client {
                 None => return Ok(()),
             },
         };
-        if !is_stuck(&def, listed, now).map_err(Error::Other)? {
+        let stranded = is_stranded(listed, now);
+        if !(stranded || is_stuck(&def, listed, now).map_err(Error::Other)?) {
             return Ok(());
         }
         let Some(mut run) = self.inner.store.get_run(&listed.id).await.map_err(Error::store)? else {
@@ -160,9 +165,22 @@ impl Client {
             return Ok(());
         }
         run.status = RunStatus::Timeout;
-        run.finished_at = Some(now);
-        run.duration_ms = Some(run_duration(run.started_at, now));
-        run.error = Some(format!("Still running after {}; marked as timed out", timeout_text(&def)));
+        match run.finished_at {
+            Some(finished_at) if stranded => {
+                // Its own status was never written; a late finish of it is
+                // judged as one after a timeout, so a success still recovers.
+                run.duration_ms = Some(run.duration_ms.unwrap_or_else(|| run_duration(run.started_at, finished_at)));
+                run.error = Some(match run.error.take() {
+                    Some(error) => format!("{STRANDED_ERROR}\n{error}"),
+                    None => STRANDED_ERROR.to_string(),
+                });
+            }
+            _ => {
+                run.finished_at = Some(now);
+                run.duration_ms = Some(run_duration(run.started_at, now));
+                run.error = Some(format!("Still running after {}; marked as timed out", timeout_text(&def)));
+            }
+        }
         // Only over a row still running: a finish that landed meanwhile wins.
         if self.write_run_if(&run, &[RunStatus::Running]).await? {
             alerts.extend(self.finish_run(&def, &run, now).await);

@@ -56,7 +56,7 @@ async fn the_handler_checks_the_bearer_and_reports_the_run() {
     assert_eq!(get(None, false).await.status, 401, "no auth");
     let wrong = get(Some("Bearer wrong".into()), false).await;
     assert_eq!(wrong.text(), r#"{"ok":false,"error":"Unauthorized"}"#);
-    assert_eq!(get(Some(format!("bearer {secret}")), false).await.status, 401, "a lowercase bearer");
+    assert_eq!(get(Some(secret.clone()), false).await.status, 401, "no scheme");
     let res = get(Some(format!("Bearer {secret}")), false).await;
     assert_eq!(res.status, 200);
     assert_eq!(res.header_str("content-type"), Some("application/json; charset=utf-8"));
@@ -75,6 +75,21 @@ async fn the_handler_checks_the_bearer_and_reports_the_run() {
     assert_eq!(runs[1].output.as_deref(), Some("/api/cron/hourly"));
     assert_eq!(runs[0].trigger, "handler");
     assert_eq!(runs[0].error.as_deref(), Some("Error: nope\nsecond line"));
+}
+
+#[tokio::test]
+async fn a_jobs_handler_reads_the_bearer_scheme_in_any_case_as_the_routes_do() {
+    let secret = secret();
+    let k = Kit::with(|b| b.cron_secret(secret.clone()));
+    let job = k.cw.job("hook", JobOptions::new()).unwrap();
+    let h = job.handler(|_, _| async { Ok::<_, std::io::Error>(()) }, HandlerOptions::new());
+    let post = |auth: String| h.handle(Request::new("POST", "/").with_header("authorization", auth));
+    assert_eq!(post(format!("bearer  {secret}")).await.status, 200);
+    assert_eq!(post(format!("BEARER\t{secret}")).await.status, 200);
+    assert_eq!(post("Bearer wrong".into()).await.status, 401);
+    assert_eq!(post(secret.clone()).await.status, 401);
+    assert_eq!(post(format!("Bearer{secret}")).await.status, 401);
+    assert_eq!(k.runs("hook").await.len(), 2);
 }
 
 #[tokio::test]

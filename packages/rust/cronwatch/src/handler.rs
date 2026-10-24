@@ -19,7 +19,7 @@ use crate::js::Object;
 use crate::run::{Job, JobContext, Outcome, http_failure};
 use crate::store::BoxFuture;
 use crate::types::{Run, RunStatus};
-use crate::web::{Request, Response, constant_time_eq, latin1};
+use crate::web::{Request, Response, bearer, constant_time_eq};
 
 /// How [`Job::handler`] checks its requests: the SDK's `HandlerOptions`,
 /// with Rust's three ways for the secret.
@@ -231,8 +231,8 @@ impl Handler {
             );
         }
         if !h.secret.is_empty() {
-            let sent = req.header("authorization").map(|v| latin1(&v)).unwrap_or_default();
-            if !constant_time_eq(&sent, &format!("Bearer {}", h.secret)) {
+            // Read as the dashboard's routes read it: the scheme in any case.
+            if !bearer(&req).is_some_and(|sent| constant_time_eq(&sent, &h.secret)) {
                 return json(Object::new().with("ok", false).with("error", "Unauthorized"), 401);
             }
         }
