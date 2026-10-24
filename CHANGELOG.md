@@ -2,6 +2,29 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Fixed
+
+- Every language: a finished run imported with `recordRun` whose finish was never written (the importer stopped, or a store write failed and was not retried) no longer stays `running` forever with its alert unsent. A check closes it as timed out five minutes on and alerts as a stuck run; a later retry that succeeded still recovers it. An import still running is left to the job's timeout. This was a regression in 0.14.2.
+- Every language: the dashboard answers `HEAD` on its pages and reads as `GET` would, without a body, so an uptime monitor probing with `HEAD` no longer sees a 404. `HEAD` never runs the check.
+- Every language: a job's handler reads the `Authorization` bearer as the dashboard does, the scheme in any case, so `bearer <secret>` is no longer refused.
+- Every language: a long Slack alert is cut without splitting an HTML entity or an emoji.
+- Every language: `job.log()` no longer copies the kept output on every call; a job that logs hundreds of thousands of lines spends milliseconds there instead of seconds or minutes.
+- TypeScript, Ruby, Python, PHP, and Elixir: `recordRun` refuses a run whose status, times, error, output, or trigger have the wrong type before writing anything.
+- Ruby: alerts no longer go through `http_proxy` or `https_proxy` from the environment, as the other languages' never have.
+- Go: a panic from the app's store in the robfig/cron or gocron sync, a scheduler bridge's save, or the interval check is reported instead of crashing the process, and `Wait()` still returns.
+- Java: a JobRunr worker thread no longer keeps a closed run's context and MDC keys after an attempt JobRunr never reported. A Spring `dev` or `local` profile no longer opens a job's handler without `CRON_SECRET`; only `CRONWATCH_ENV` or `APP_ENV` does.
+- .NET: `MapCronwatch` and `MapCronwatchHandler` keep an authorization policy the app puts on them or on a group around them, instead of allowing anonymous requests past it.
+- Elixir: a missing system trust store fails with an error naming `cacerts:`, a transport response read from another process returns an error instead of an empty body, and the instance's child spec no longer shows option values (webhook URLs, keys) in supervisor reports.
+- WordPress: the JSON API token is stored as its SHA-256 digest (an existing token is converted on first read), the wp-admin dashboard ignores an `Authorization` header, and errors are no longer shown escaped twice.
+- Rust: updated rustls-webpki, webpki-roots, webpki-root-certs, and tokio to address security advisories.
+
+### Changed
+
+- The site no longer allows the retired Umami origin in its CSP, the contact pages load no analytics, and the link check fails when the CSP and the pages' origins disagree.
+- The docs say to use a long random dashboard token, since the sign-in cookie is a hash of it and sign-in is not rate limited.
+
 ## 0.14.2 - 2026-10-15
 
 ### Fixed
