@@ -368,4 +368,86 @@ final class OutboxTest extends TestCase
         $cw->check();
         $this->assertSame([], $sent->types());
     }
+
+    /** Makes the store's next call of `$method` throw "$message", and the calls after it work. */
+    private static function failOnce(FlakyStore $store, string $method, string $message): void
+    {
+        $fail = true;
+        $store->hooks[$method] = function (\Closure $next, array $args) use (&$fail, $message): mixed {
+            if ($fail) {
+                $fail = false;
+                throw new \RuntimeException($message);
+            }
+            return $next(...$args);
+        };
+    }
+
+    public function testAnEvaluatedImportWhoseStateWriteFailsAndIsNotRetriedIsClosedByACheck(): void
+    {
+        $clock = new Clock();
+        $store = new FlakyStore(new MemoryStore());
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $store, now: $clock, alerts: [$sent], onError: fn () => null, cronSecret: null);
+        $cw->job('imported', ['schedule' => 'every 5m', 'timeout' => '1m']);
+        $cw->check();
+        self::failOnce($store, 'compareAndSetState', 'state unavailable');
+        $run = new \Cronwatch\Run('lost-import', 'imported', 'failed', $clock() - 2 * self::MIN, $clock() - self::MIN, self::MIN, 'boom', trigger: 'source');
+        try {
+            $cw->recordRun($run);
+            $this->fail('expected the state write to fail');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('state unavailable', $error->getMessage());
+        }
+        $cw->check();
+        $this->assertSame('running', $store->getRun($run->id)->status);
+        $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
+        $cw->check();
+        $closed = $store->getRun($run->id);
+        $this->assertSame('timeout', $closed->status);
+        $this->assertSame(self::MIN, $closed->durationMs);
+        $this->assertSame("Imported, but its finish was never written; marked as timed out\nboom", $closed->error);
+        $this->assertSame(['stuck'], $sent->types());
+        $this->assertNotSame('healthy', $cw->jobSummary('imported')->health);
+    }
+
+    public function testAnEvaluatedImportWhoseFinishWriteFailsAfterItsMarkerIsClosedByACheckAndALateSuccessRecoversIt(): void
+    {
+        $clock = new Clock();
+        $store = new FlakyStore(new MemoryStore());
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $store, now: $clock, alerts: [$sent], onError: fn () => null, cronSecret: null);
+        $cw->job('imported', ['schedule' => '0 * * * *', 'timeout' => '1m']);
+        $cw->check();
+        self::failOnce($store, 'updateRunIf', 'store unavailable');
+        $run = new \Cronwatch\Run('lost-finish', 'imported', 'ok', $clock(), $clock(), 0, trigger: 'source');
+        try {
+            $cw->recordRun($run);
+            $this->fail('expected the finish write to fail');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('store unavailable', $error->getMessage());
+        }
+        $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
+        $cw->check();
+        $this->assertSame('timeout', $store->getRun($run->id)->status);
+        $this->assertNull($store->getState($run->job)->pendingRuns);
+        $this->assertSame(['stuck'], $sent->types());
+        $cw->recordRun($run);
+        $this->assertSame('ok', $store->getRun($run->id)->status);
+        $this->assertSame(['stuck', 'recovered'], $sent->types());
+    }
+
+    public function testARunningImportIsNotStrandedAndTimesOutByTheJobsTimeout(): void
+    {
+        $clock = new Clock();
+        $store = new MemoryStore();
+        $sent = new Capture();
+        $cw = new Cronwatch(store: $store, now: $clock, alerts: [$sent], cronSecret: null);
+        $cw->job('imported', ['timeout' => '1h']);
+        $cw->recordRun(new \Cronwatch\Run('still-going', 'imported', 'running', $clock(), trigger: 'source'));
+        $this->assertNull($store->getRun('still-going')->finishedAt);
+        $clock->advance(6 * self::MIN);
+        $cw->check();
+        $this->assertSame('running', $store->getRun('still-going')->status);
+        $this->assertSame([], $sent->types());
+    }
 }

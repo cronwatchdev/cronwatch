@@ -117,18 +117,20 @@ final class Admin
             }
         }
         // The API's token: one typed in (never shown again), a new one made on request, or one made when the API is first turned on.
+        // Only its digest is saved (Api::digest()), so the options table never holds the token itself.
         $token = preg_replace('/\s+/', '', $text('api_token')) ?? '';
         if ($token !== '') {
-            // Checked as typed, and saved as typed: letters, digits, and . _ ~ + / = -, which
-            // no sanitizing changes, so the token saved is the one the owner gives the client.
+            // Checked as typed, and its digest taken of it as typed: letters, digits, and . _ ~ + / = -,
+            // which no sanitizing changes, so the token checked is the one the owner gives the client.
             if (preg_match(self::TOKEN_PATTERN, $token) === 1) {
-                $new['api_token'] = $token;
+                $new['api_token'] = Api::digest($token);
             } else {
                 $refused[] = 'token';
             }
         } elseif (!empty($posted['api_token_new']) || ($new['api_enabled'] === '1' && $new['api_token'] === '')) {
-            $new['api_token'] = wp_generate_password(40, false);
-            set_transient('cronwatch_new_token_' . get_current_user_id(), $new['api_token'], 600);
+            $made = wp_generate_password(40, false);
+            $new['api_token'] = Api::digest($made);
+            set_transient('cronwatch_new_token_' . get_current_user_id(), $made, 600);
         }
         $grace = sanitize_text_field($text('grace'));
         if ($grace !== '') {
@@ -321,6 +323,7 @@ final class Admin
 
         echo '<h2>' . esc_html__('Alerts', 'cronwatch') . '</h2>';
         echo '<p>' . esc_html__('Alerts are sent only where you set one up below. With none set they go to the PHP error log.', 'cronwatch') . '</p>';
+        echo '<p>' . esc_html__('The site sends requests to the addresses set here, internal ones included (on a multisite network, not to a private address), and "Send a test alert" shows what each answered: these settings are for people trusted with the server\'s network.', 'cronwatch') . '</p>';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         echo '<input type="hidden" name="action" value="cronwatch_save">';
         wp_nonce_field('cronwatch_save');

@@ -1221,6 +1221,21 @@ final class WebTest extends TestCase
         $this->assertSame(401, self::send($web, 'GET', '/cronwatch/api/jobs', ['authorization' => 'Bearer wrong', 'cookie' => $cookie])->status);
     }
 
+    public function testHeadAnswersThePagesAndReadsAGetAnswersWithoutABodyAndNeverRunsTheCheck(): void
+    {
+        [$cw, $web] = $this->app('tok');
+        $cw->job('nightly')->run(fn () => null);
+        $head = fn (string $path) => self::send($web, 'HEAD', "/cronwatch{$path}", ['authorization' => 'Bearer tok']);
+        foreach (['/', '/jobs/nightly', '/api/jobs', '/api/jobs/nightly'] as $path) {
+            $response = $head($path);
+            $this->assertSame(200, $response->status, $path);
+            $this->assertSame('', $response->body, $path);
+            $this->assertSame(self::send($web, 'GET', "/cronwatch{$path}", ['authorization' => 'Bearer tok'])->header('content-type'), $response->header('content-type'), $path);
+        }
+        $this->assertSame(404, $head('/jobs/missing')->status);
+        $this->assertNotSame(200, $head('/api/check')->status);
+    }
+
     // ------------------------------------------------------------ routes-timeline.test.ts
 
     /** A board with a daily cron that failed today, an interval job that stopped, and a busy one. */

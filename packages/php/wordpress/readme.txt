@@ -128,6 +128,10 @@ Yes, with the `cronwatch_watch_event` filter.
 
 No. It is in wp-admin, for users who may manage options, and every change it makes carries a WordPress nonce. The JSON API is the only part that can be reached from outside wp-admin, and only when you turn it on with a token.
 
+= Can an alert URL reach the server's own network? =
+
+On a single site, yes. The site sends alerts to the addresses set under CronWatch, Settings, internal ones included (a webhook on the same network, say), and "Send a test alert" shows what each answered. Those settings are for users who may manage options, so give that capability only to people trusted with the server's network. On a multisite network an alert URL may not reach a private address or an unusual port, since a site's administrators may not be the network's; the `cronwatch_reject_unsafe_urls` filter changes either default.
+
 == Screenshots ==
 
 1. The dashboard in wp-admin (CronWatch in the admin menu): every WP-Cron event's health at a glance, and the last 24 hours as a timeline of when each event was due, when it ran and for how long.
@@ -136,6 +140,13 @@ No. It is in wp-admin, for users who may manage options, and every change it mak
 4. The foot of the settings page: the "Send a test alert" button and the watched events with their health, last run, and next due time.
 
 == Changelog ==
+
+= Unreleased =
+* The JSON API's token is saved as its SHA-256 digest, never as itself. A token saved before is changed to its digest the first time the plugin reads it, and keeps working.
+* The dashboard in wp-admin ignores an Authorization header, as WordPress's sign-in stands for its token.
+* Errors from the database, the HTTP API, and wp_mail are kept as plain text, so a notice and the error log no longer show them escaped twice.
+* The plugin's tables are named with `%i` placeholders when the plugin is deleted.
+* From the library: a job's handler reads the bearer scheme in any case, and the dashboard answers HEAD.
 
 = 0.14.2 =
 * Updated library fixes preserve imported run evaluation across transient storage failures and retry failed pg_cron imports within the source process.

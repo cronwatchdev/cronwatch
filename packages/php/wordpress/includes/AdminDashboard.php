@@ -95,7 +95,12 @@ final class AdminDashboard
             }
         }
         $globals = Request::fromGlobals($server, Request::readInput());
-        $request = new Request($method, Request::normalizePath(self::MARKER . $path), implode('&', $query), $globals->headers, $globals->body(), $globals->origin);
+        // WordPress's sign-in stands for the token here, so a bearer means nothing:
+        // left in, it would let a GET of /api/check run the check without the
+        // nonce a change needs (as Drupal's and Craft's DashboardController strip it).
+        $headers = $globals->headers;
+        unset($headers['authorization']);
+        $request = new Request($method, Request::normalizePath(self::MARKER . $path), implode('&', $query), $headers, $globals->body(), $globals->origin);
         if ($method === 'POST' && self::isCheck(substr($request->path, strlen(self::MARKER)))) {
             // The plugin's check: WP-Cron's events declared as jobs first.
             Plugin::prepare();

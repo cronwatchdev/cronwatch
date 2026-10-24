@@ -97,8 +97,21 @@ final class HandlerTest extends TestCase
         $this->assertSame('/api/cron/hourly', $runs[1]->output);
         $this->assertSame(401, $handler->respond(self::get(['authorization' => 'Bearer s3cret2']))->status, 'compared exactly');
         $this->assertSame(401, $handler->respond(self::get(['authorization' => 'Bearer s3cre']))->status);
-        $this->assertSame(401, $handler->respond(self::get(['authorization' => 'bearer s3cret']))->status);
         $this->assertCount(2, $cw->runs('hourly'), 'a refused request runs nothing');
+    }
+
+    public function testAJobsHandlerReadsTheBearerSchemeInAnyCaseAsTheRoutesDo(): void
+    {
+        $cw = $this->make(['cronSecret' => 's3cret']);
+        $ran = 0;
+        $handler = $cw->job('hook')->handler(function () use (&$ran): void {
+            $ran++;
+        });
+        $this->assertSame(200, $handler->respond(self::get(['authorization' => 'bearer  s3cret']))->status);
+        $this->assertSame(401, $handler->respond(self::get(['authorization' => 'Bearer wrong']))->status);
+        $this->assertSame(401, $handler->respond(self::get(['authorization' => 's3cret']))->status);
+        $this->assertSame(401, $handler->respond(self::get(['authorization' => 'Basic s3cret']))->status);
+        $this->assertSame(1, $ran);
     }
 
     public function testAHandlerReturningAResponsePassesItThroughAnd4xxOr5xxCountAsFailure(): void

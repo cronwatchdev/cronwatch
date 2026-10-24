@@ -203,7 +203,15 @@ final class Plugin
     {
         $saved = get_option(self::SETTINGS, []);
         $defaults = self::defaults();
-        return array_replace($defaults, is_array($saved) ? array_intersect_key($saved, $defaults) : []);
+        $settings = array_replace($defaults, is_array($saved) ? array_intersect_key($saved, $defaults) : []);
+        // An earlier release saved the API token as it was; it is kept as its
+        // digest now (Api::digest()), so one saved before is changed on first read.
+        $token = (string) $settings['api_token'];
+        if ($token !== '' && !Api::isDigest($token)) {
+            $settings['api_token'] = Api::digest($token);
+            update_option(self::SETTINGS, array_replace(is_array($saved) ? $saved : [], ['api_token' => $settings['api_token']]), false);
+        }
+        return $settings;
     }
 
     /**

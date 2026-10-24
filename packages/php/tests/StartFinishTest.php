@@ -435,6 +435,37 @@ final class StartFinishTest extends TestCase
         $this->assertSame([], $cw->runs('imported'));
     }
 
+    public function testRecordRunRefusesFieldsEvaluationCannotReadAndStoresNothing(): void
+    {
+        $cw = $this->make();
+        $cw->job('imported');
+        $run = ['id' => 'r', 'job' => 'imported', 'status' => 'ok', 'startedAt' => 1, 'finishedAt' => 2, 'durationMs' => 1, 'error' => null, 'output' => null, 'metrics' => [], 'trigger' => 'source'];
+        $where = '(job "imported", run "r")';
+        foreach ([
+            "recordRun: status must be \"running\", \"ok\", \"failed\", or \"timeout\" {$where}" => [['status' => 'succeeded'], new Run('r', 'imported', 'succeeded', 1, 2, 1)],
+            "recordRun: startedAt must be a finite number {$where}" => [['startedAt' => NAN], new Run('r', 'imported', 'ok', INF, 2, 1)],
+            "recordRun: finishedAt must be a finite number or null {$where}" => [['finishedAt' => '2'], new Run('r', 'imported', 'ok', 1, NAN, 1)],
+            "recordRun: durationMs must be a finite number or null {$where}" => [['durationMs' => INF], new Run('r', 'imported', 'ok', 1, 2, -INF)],
+            "recordRun: error must be a string or null {$where}" => [['error' => 5]],
+            "recordRun: output must be a string or null {$where}" => [['output' => ['x']]],
+            "recordRun: trigger must be a string {$where}" => [['trigger' => null]],
+        ] as $expected => $cases) {
+            foreach ([array_merge($run, $cases[0]), ...array_slice($cases, 1)] as $given) {
+                try {
+                    $cw->recordRun($given);
+                    $this->fail("expected {$expected}");
+                } catch (\InvalidArgumentException $error) {
+                    $this->assertSame($expected, $error->getMessage());
+                }
+            }
+        }
+        $this->assertNull($cw->getRun('r'));
+        // A trigger left out is "run", as Run::fromJson() reads it.
+        unset($run['trigger']);
+        $cw->recordRun($run);
+        $this->assertSame('run', $cw->getRun('r')->trigger);
+    }
+
     public function testStartAndResumeRefuseIdsInThePgCronSourcesNamespace(): void
     {
         $cw = $this->make();

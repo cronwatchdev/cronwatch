@@ -898,6 +898,9 @@ final class WordPressTest extends TestCase
         $this->assertSame(403, $status, 'no nonce, no change');
         [$status] = self::http('POST', (string) preg_replace('#^https?://[^/]+#', '', $action), $admin + ['Origin' => 'https://evil.example']);
         $this->assertSame(403, $status, 'the dashboard\'s own cross-site check stands too');
+        // WordPress's sign-in stands for the token, so a bearer means nothing: a GET of /api/check runs no check.
+        [$status] = self::http('GET', '/wp-admin/admin.php?page=cronwatch&cw=%2Fapi%2Fcheck', $admin + ['Authorization' => 'Bearer anything']);
+        $this->assertSame(405, $status);
 
         // Not for a subscriber, nor for anyone signed out; and nothing of it outside wp-admin.
         [$status] = self::http('GET', '/wp-admin/admin.php?page=cronwatch&cw=%2Fapi%2Fjobs', ['Cookie' => self::signedIn('reader')]);
@@ -916,12 +919,12 @@ final class WordPressTest extends TestCase
         $token = self::inWp(<<<'PHP'
             wp_set_current_user(get_user_by('login', 'admin')->ID);
             $notice = Cronwatch\WordPress\Admin::saveSettings(['api_enabled' => '1']);
-            echo json_encode([$notice, get_option('cronwatch_settings')['api_token'], (bool) get_transient('cronwatch_new_token_' . get_current_user_id())]);
+            echo json_encode([$notice, get_transient('cronwatch_new_token_' . get_current_user_id()), get_option('cronwatch_settings')['api_token']]);
             PHP);
-        [$notice, $secret, $shownOnce] = $token;
+        [$notice, $secret, $saved] = $token;
         $this->assertSame('saved', $notice);
-        $this->assertSame(40, strlen($secret), 'turned on with no token given, the plugin makes one');
-        $this->assertTrue($shownOnce, 'and the settings page shows it once');
+        $this->assertSame(40, strlen($secret), 'turned on with no token given, the plugin makes one, which the settings page shows once');
+        $this->assertSame('sha256:' . hash('sha256', $secret), $saved, 'only its digest is saved');
 
         [$status, $headers, $body] = self::http('GET', $api, ['Authorization' => "Bearer {$secret}"]);
         $this->assertSame(200, $status);
@@ -962,7 +965,19 @@ final class WordPressTest extends TestCase
         $this->assertSame('token', $short);
         // Sanitizing would change this one (it drops every %xx), so it is refused as typed rather than saved shorter.
         $mangled = self::inWp('wp_set_current_user(1); echo json_encode([Cronwatch\WordPress\Admin::saveSettings(["api_enabled" => "1", "api_token" => "ab%aa%bb%cc%dd%ee%ff%00%11"]), get_option("cronwatch_settings")["api_token"]]);');
-        $this->assertSame(['token', $secret], $mangled);
+        $this->assertSame(['token', $saved], $mangled);
+        // A token typed in is saved as its digest too.
+        $typed = str_repeat('t', 30);
+        $this->assertSame(['saved', 'sha256:' . hash('sha256', $typed)], self::inWp('wp_set_current_user(1); echo json_encode([Cronwatch\WordPress\Admin::saveSettings(["api_enabled" => "1", "api_token" => "' . $typed . '"]), get_option("cronwatch_settings")["api_token"]]);'));
+        [$status] = self::http('GET', $api, ['Authorization' => "Bearer {$typed}"]);
+        $this->assertSame(200, $status);
+        [$status] = self::http('GET', $api, ['Authorization' => 'Bearer sha256:' . hash('sha256', $typed)]);
+        $this->assertSame(401, $status, 'the digest itself is no token');
+        // A token an earlier release saved as it was keeps working, and is changed to its digest on first read.
+        self::inWp('update_option("cronwatch_settings", ["api_enabled" => "1", "api_token" => "' . $secret . '"] + Cronwatch\WordPress\Plugin::DEFAULTS); echo json_encode(true);');
+        [$status] = self::http('GET', $api, ['Authorization' => "Bearer {$secret}"]);
+        $this->assertSame(200, $status);
+        $this->assertSame($saved, self::inWp('echo json_encode(get_option("cronwatch_settings")["api_token"]);'));
         self::inWp('update_option("cronwatch_settings", Cronwatch\WordPress\Plugin::DEFAULTS); echo json_encode(true);');
         [$status] = self::http('GET', $api, ['Authorization' => "Bearer {$secret}"]);
         $this->assertSame(404, $status, 'off again');
