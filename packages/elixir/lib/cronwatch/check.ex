@@ -429,10 +429,14 @@ defmodule Cronwatch.Check do
     case Core.store!(c, :get_run, [run.id]) do
       nil ->
         # Keep an evaluated import retryable until its pending marker is
-        # durable. The placeholder's finished_at is when it was written, so a
-        # check can tell one whose finish never landed (Evaluate.stranded?);
-        # the finish writes the run's own.
-        staged = if evaluate?, do: %{run | status: "running", finished_at: Core.now(c)}, else: run
+        # durable. A finished import's placeholder has a finished_at of when
+        # it was written, so a check can tell one whose finish never landed
+        # (Evaluate.stranded?); the finish writes the run's own. One still
+        # running keeps nil, and times out by the job's timeout.
+        staged =
+          if evaluate?,
+            do: %{run | status: "running", finished_at: if(run.status == "running", do: nil, else: Core.now(c))},
+            else: run
 
         inserted =
           try do

@@ -425,5 +425,30 @@ defmodule Cronwatch.OutboxTest do
     assert Capture.types(alerts) == ["stuck", "recovered"]
   end
 
+  test "an import still running is left to the job's timeout, not closed as stranded" do
+    clock = Clock.new()
+    %{cw: cw, alerts: alerts} = make(clock_ref: clock)
+    Cronwatch.job!("long", timeout: "1h", instance: cw)
+
+    run = %Cronwatch.Run{
+      id: "long-run",
+      job: "long",
+      status: "running",
+      started_at: Clock.now(clock),
+      trigger: "source"
+    }
+
+    Cronwatch.record_run!(run, instance: cw)
+    Clock.advance(clock, Evaluate.send_lease_ms() + @min)
+    Cronwatch.check!(instance: cw)
+    stored = Cronwatch.get_run!("long-run", instance: cw)
+    assert stored.status == "running"
+    assert stored.finished_at == nil
+    Clock.advance(clock, 60 * @min)
+    Cronwatch.check!(instance: cw)
+    assert Cronwatch.get_run!("long-run", instance: cw).status == "timeout"
+    assert Capture.types(alerts) == ["stuck"]
+  end
+
   defp store_of(cw), do: Cronwatch.Config.get(cw).store
 end
