@@ -30,5 +30,5 @@ replace cronwatch.dev/go => ../
 replace (
 	github.com/yuin/goldmark => github.com/yuin/goldmark v1.7.17
 	golang.org/x/crypto => golang.org/x/crypto v0.58.0
-	golang.org/x/net => golang.org/x/net v0.60.0
+	golang.org/x/net => golang.org/x/net v0.62.0
 )

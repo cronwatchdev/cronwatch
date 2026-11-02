@@ -69,7 +69,7 @@
     <sqlite-jdbc.version>3.53.4.0</sqlite-jdbc.version>
     <postgresql.version>42.7.13</postgresql.version>
     <mysql-connector-j.version>26.7.0</mysql-connector-j.version>
-    <mariadb-java-client.version>3.5.10</mariadb-java-client.version>
+    <mariadb-java-client.version>3.5.11</mariadb-java-client.version>
     <jspecify.version>1.0.1</jspecify.version>
     <slf4j.version>2.0.20</slf4j.version>
     <context-propagation.version>1.2.1</context-propagation.version>

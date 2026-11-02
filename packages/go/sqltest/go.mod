@@ -38,5 +38,5 @@ replace cronwatch.dev/go => ../
 // Pin unused transitive tooling in this unpublished module to patched releases.
 replace (
 	github.com/yuin/goldmark => github.com/yuin/goldmark v1.7.17
-	golang.org/x/net => golang.org/x/net v0.60.0
+	golang.org/x/net => golang.org/x/net v0.62.0
 )
