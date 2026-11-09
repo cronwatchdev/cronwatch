@@ -41,6 +41,19 @@
     "reason": "The fix (0.7.6) requires ctutils 0.4.5, which needs Rust 1.87, and Cargo keeps one ctutils 0.4 release for the whole lockfile, held at 0.4.2 for the Rust 1.85 floor. crypto-bigint is reached only through SQLx's mysql-rsa, which only the MySQL tests enable, and it encrypts with a public key there. The lockfile is not published. Remove when the floor reaches 1.87."
   },
   {
+    "ecosystem": "crates.io",
+    "name": "libsqlite3-sys",
+    "version": "0.37.0",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0459"
+    ],
+    "expires": "2026-12-10",
+    "reason": "The fix (0.39.0, SQLite 3.54.0) is out of reach: sqlx-sqlite 0.9.0, the newest release, requires libsqlite3-sys below 0.38. Only cronwatch-sqlx's sqlite feature bundles SQLite, and the bug needs a database and -wal pair written by a less trusted party; the store opens the app's own database. The lockfile is not published. Bump when sqlx releases a libsqlite3-sys 0.39 bound."
+  },
+  {
     "ecosystem": "Go",
     "name": "golang.org/x/crypto",
     "version": "v0.58.0",
