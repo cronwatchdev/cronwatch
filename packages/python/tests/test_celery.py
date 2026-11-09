@@ -74,8 +74,15 @@ def test_crontabs_become_the_cron_expression_croner_reads_in_the_apps_zone() -> 
     assert _convert(entry(3600.5), app) == {"schedule": "every 1h500ms"}
     with pytest.raises(ScheduleError, match='^cronwatch: beat_schedule entry "k" is a Fortnightly schedule, which CronWatch cannot read$'):
         _convert(entry(Fortnightly()), app)
-    with pytest.raises(ScheduleError, match="never fires"):
-        _convert(entry(crontab(minute=0, hour=0, day_of_month=31, month_of_year=2)), app)
+    # Celery 5.7 refuses a crontab that never fires when it is built; older
+    # releases build it, and CronWatch refuses it.
+    try:
+        never = crontab(minute=0, hour=0, day_of_month=31, month_of_year=2)
+    except ValueError as err:
+        assert "never occurs" in str(err)
+    else:
+        with pytest.raises(ScheduleError, match="never fires"):
+            _convert(entry(never), app)
     with pytest.raises(ScheduleError, match="one second or more"):
         _convert(entry(0.5), app)
     utc = new_app()
