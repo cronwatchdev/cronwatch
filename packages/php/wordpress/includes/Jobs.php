@@ -120,6 +120,49 @@ final class Jobs
         ];
     }
 
+    /**
+     * Whether a stored job is one the check may forget: a WP-Cron job whose
+     * event is gone and that nothing has touched for the whole retention.
+     * Every hook WP-Cron ever ran becomes a job, and a plugin that schedules
+     * single events under a hook name of their own each (one per post, per
+     * order) would otherwise add a job, and a few queries to every check,
+     * for ever.
+     *
+     * Only when all of this holds: the job carries the wp-cron tag (so it is
+     * the plugin's, never one declared in code) and no schedule (a recurring
+     * event still in the cron array, or one that only just left it, has
+     * one); it was last declared more than the retention ago; its newest run
+     * (which pruning keeps whatever its age) started more than the retention
+     * ago, or it has none, and is not running; and its state holds nothing
+     * open, nothing still to send, no run still to judge, and no silence
+     * still to come. The caller leaves out the jobs of events in the cron
+     * array and the ones declared in this request.
+     */
+    public static function stale(\Cronwatch\StoredJob $stored, ?\Cronwatch\JobState $state, ?\Cronwatch\Run $last, int|float $now, int|float $retentionMs): bool
+    {
+        $definition = $stored->definition;
+        $tags = $stored->isReadable() ? $definition->get('tags') : null;
+        if (!is_array($tags) || !in_array(self::TAG, $tags, true) || $definition->has('schedule')) {
+            return false;
+        }
+        $before = $now - $retentionMs;
+        if (!($retentionMs > 0) || !($stored->updatedAt < $before) || !($stored->createdAt < $before)) {
+            return false;
+        }
+        if ($last !== null && ($last->status === \Cronwatch\RunStatus::RUNNING || !($last->startedAt < $before))) {
+            return false;
+        }
+        if ($state === null) {
+            return true;
+        }
+        return $state->open === []
+            && ($state->undelivered ?? []) === []
+            && ($state->sending ?? []) === []
+            && ($state->pendingRuns ?? []) === []
+            && ($state->pendingRecovery ?? []) === []
+            && !($state->silencedUntil !== null && $state->silencedUntil > $now);
+    }
+
     /** Arguments as JSON for a description, cut to 200 characters; what JSON cannot write is named by its type. */
     private static function args(array $args): string
     {

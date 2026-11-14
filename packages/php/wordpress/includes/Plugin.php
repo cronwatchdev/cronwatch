@@ -365,7 +365,8 @@ final class Plugin
                 self::report($error, "job {$name}");
             }
         }
-        foreach ($cw->store->listJobs() as $stored) {
+        $all = $cw->store->listJobs();
+        foreach ($all as $stored) {
             $definition = $stored->definition;
             $tags = $definition->get('tags');
             if (isset($jobs[$stored->name]) || !is_array($tags) || !in_array(Jobs::TAG, $tags, true) || !$definition->has('schedule')) {
@@ -384,7 +385,49 @@ final class Plugin
                 self::report($error, "job {$stored->name}");
             }
         }
+        self::forgetStale($cw, $jobs, $all);
         return $cw;
+    }
+
+    /** The most stale jobs one check forgets, so a site with thousands of them is cleared over a few checks, not in one request. */
+    public const FORGET_PER_CHECK = 50;
+
+    /**
+     * Forgets WP-Cron jobs whose event is gone and that nothing has touched
+     * for the whole retention (Jobs::stale()): never one whose event is in
+     * the cron array, one declared in this request (in code, or just now
+     * without its schedule), one without the wp-cron tag, or one with
+     * anything open, unsent, or silenced. One that cannot be read or
+     * forgotten is reported and left.
+     *
+     * @param array<string, mixed> $jobs the events now in the cron array, by job name
+     * @param list<\Cronwatch\StoredJob> $all the stored jobs
+     */
+    private static function forgetStale(Cronwatch $cw, array $jobs, array $all): void
+    {
+        $declared = [];
+        foreach ($cw->definedJobs() as $definition) {
+            $declared[(string) $definition->get('name')] = true;
+        }
+        $now = $cw->now();
+        $forgotten = 0;
+        foreach ($all as $stored) {
+            if ($forgotten >= self::FORGET_PER_CHECK) {
+                break;
+            }
+            // The store is read only for a job the stored row alone already allows.
+            if (isset($jobs[$stored->name]) || isset($declared[$stored->name]) || !Jobs::stale($stored, null, null, $now, $cw->retentionMs)) {
+                continue;
+            }
+            try {
+                if (Jobs::stale($stored, $cw->store->getState($stored->name), $cw->store->lastRun($stored->name), $now, $cw->retentionMs)) {
+                    $cw->forget($stored->name);
+                    $forgotten++;
+                }
+            } catch (\Throwable $error) {
+                self::report($error, "job {$stored->name}");
+            }
+        }
     }
 
     /** The check event's callback. */

@@ -18,7 +18,9 @@ use Illuminate\Database\ConnectionResolverInterface;
  * sslmode and search_path, the write side of a read/write split) and opens
  * a connection of its own with them, so CronWatch's writes never join a
  * transaction the app has open: a run recorded inside one survives its
- * rollback, as in every port. An in-memory SQLite database (":memory:", as
+ * rollback, as in every port. A SQLite database file is the app's own, so
+ * its mode and journal mode are left as they are (SqliteStore's `shared`).
+ * An in-memory SQLite database (":memory:", as
  * tests use) cannot be opened twice, so that one is shared.
  *
  * The tables are CronWatch's own names (the prefix, "cronwatch_" by
@@ -70,7 +72,8 @@ final class DatabaseStore
         if ($path === ':memory:' || $path === '' || str_contains($path, 'mode=memory')) {
             return new SqliteStore(pdo: $laravel->getPdo(), prefix: $prefix);
         }
-        return new SqliteStore($path, prefix: $prefix);
+        // The app's own database file: its mode and journal mode stay the app's.
+        return new SqliteStore($path, prefix: $prefix, shared: true);
     }
 
     /** @param array<string, mixed> $config */

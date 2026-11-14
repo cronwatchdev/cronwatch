@@ -54,6 +54,8 @@ final class ProviderTest extends TestCase
     {
         parent::defineEnvironment($app);
         touch("{$this->dir}/app.db");
+        // Shared by group, as an app whose web server and crontab line are two users has it.
+        chmod("{$this->dir}/app.db", 0664);
         $app['config']->set('database.connections.app', ['driver' => 'sqlite', 'database' => "{$this->dir}/app.db", 'prefix' => 'app_', 'foreign_key_constraints' => true]);
         $app['config']->set('database.default', 'app');
         $app['config']->set('cronwatch.store.driver', 'database');
@@ -83,6 +85,12 @@ final class ProviderTest extends TestCase
     {
         $this->artisan('migrate')->assertExitCode(0);
         $pdo = new \PDO("sqlite:{$this->dir}/app.db");
+        // The app's own database file is left as the app has it: its mode, and its journal mode.
+        if (PHP_OS_FAMILY !== 'Windows') {
+            clearstatcache();
+            $this->assertSame(0664, fileperms("{$this->dir}/app.db") & 0777);
+        }
+        $this->assertSame('delete', $pdo->query('PRAGMA journal_mode')->fetchColumn());
         $made = $pdo->query("SELECT sql FROM sqlite_master WHERE name LIKE 'cronwatch_%' ORDER BY name")->fetchAll(\PDO::FETCH_COLUMN);
         $expected = new \PDO('sqlite::memory:');
         $expected->exec(Sql::sqliteSchema('cronwatch_'));

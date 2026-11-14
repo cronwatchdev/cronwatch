@@ -29,7 +29,8 @@ use Cronwatch\TriageContext;
 final class Anthropic
 {
     public const DEFAULT_MODEL = 'claude-opus-5';
-    public const DEFAULT_MAX_TOKENS = 800;
+    /** Room for the model's thinking as well as the paragraph it writes after it. */
+    public const DEFAULT_MAX_TOKENS = 4096;
     public const DEFAULT_EFFORT = 'medium';
     public const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
     public const API_VERSION = '2023-06-01';
@@ -52,7 +53,9 @@ final class Anthropic
      * @param string|null $apiKey default ANTHROPIC_API_KEY
      * @param string|null $model default "claude-opus-5"
      * @param string|null $effort how hard the model thinks: "low", "medium" (the default) or "high"
-     * @param int|null $maxTokens default 800; a diagnosis is a paragraph
+     * @param int|null $maxTokens default 4096; a diagnosis is a paragraph, but the model thinks first (thinking is on by default
+     *        on current models) and that thinking counts toward this limit, so one sized for the paragraph alone can be used up
+     *        before any of it is written. An answer that reaches the limit with nothing written throws, which the client reports
      * @param bool $fallbacks route a policy refusal to Anthropic's default fallback model inside the same request, so a
      *        diagnosis still comes back; on by default, turn off if your account or gateway rejects the beta
      * @param string|null $context anything the model should know about this app
@@ -193,7 +196,15 @@ final class Anthropic
             throw new \RuntimeException('Anthropic ' . Shared::origin($this->url) . " answered {$response->status}"
                 . ($text !== '' ? ': ' . Shared::errorBody($text, [$this->apiKey]) : ''));
         }
-        return self::diagnosis(Js::parse($response->body));
+        $message = Js::parse($response->body);
+        $diagnosis = self::diagnosis($message);
+        // The limit ran out before any of the diagnosis was written (on its
+        // thinking, say): thrown, so the client reports it to onError rather
+        // than the alert going out with no diagnosis and no word of why.
+        if ($diagnosis === null && (Js::fields($message)['stop_reason'] ?? null) === 'max_tokens') {
+            throw new \RuntimeException('triage: the model reached max_tokens (' . Js::number($this->maxTokens ?? self::DEFAULT_MAX_TOKENS) . ') before writing a diagnosis; raise maxTokens or lower effort');
+        }
+        return $diagnosis;
     }
 
     /** The diagnosis in a Messages API answer: its text blocks, joined and trimmed, or null for a refusal or nothing. */

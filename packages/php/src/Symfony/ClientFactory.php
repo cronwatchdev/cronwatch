@@ -74,9 +74,11 @@ final class ClientFactory
     {
         $prefix = (string) ($config['table_prefix'] ?? 'cronwatch_');
         $env = Env::read('DATABASE_URL');
-        $url = self::text($config['store'] ?? null) ?? ($env === null ? null : self::parameters($env, $projectDir, $parameters));
+        $app = $env === null ? null : self::parameters($env, $projectDir, $parameters);
+        $url = self::text($config['store'] ?? null) ?? $app;
+        // DATABASE_URL names the app's own database: a SQLite file there is left as the app has it.
         $store = $url !== null
-            ? Stores::fromUrl($url, $prefix)
+            ? Stores::fromUrl($url, $prefix, $app !== null && trim($url) === trim($app))
             : Stores::fromUrl('sqlite://' . rtrim($projectDir, '/') . '/var/cronwatch.db', $prefix);
         if (($config['create_tables'] ?? true) === false && !$store instanceof MemoryStore && $store instanceof UpdatesRunIf && $store instanceof ComparesAndSetsState) {
             return new Migrated($store);

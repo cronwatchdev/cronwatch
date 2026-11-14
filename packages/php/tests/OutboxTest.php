@@ -402,12 +402,26 @@ final class OutboxTest extends TestCase
         $this->assertSame('running', $store->getRun($run->id)->status);
         $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
         $cw->check();
+        // The placeholder holds the run's own error, so it is closed as the failure it was, with its own times.
         $closed = $store->getRun($run->id);
-        $this->assertSame('timeout', $closed->status);
+        $this->assertSame('failed', $closed->status);
         $this->assertSame(self::MIN, $closed->durationMs);
-        $this->assertSame("Imported, but its finish was never written; marked as timed out\nboom", $closed->error);
-        $this->assertSame(['stuck'], $sent->types());
-        $this->assertNotSame('healthy', $cw->jobSummary('imported')->health);
+        $this->assertSame($run->finishedAt, $closed->finishedAt);
+        $this->assertSame('boom', $closed->error);
+        $this->assertSame(['failed'], $sent->types());
+        $this->assertSame('failing', $cw->jobSummary('imported')->health);
+        // The importer comes back and records the same run again: nothing changes, and nothing is counted twice.
+        $this->assertSame([], $cw->recordRun($run));
+        $cw->check();
+        $this->assertSame(['failed'], $sent->types());
+        $state = $store->getState('imported');
+        $this->assertSame(1, $state->consecutiveFailures);
+        $this->assertSame(['failed'], array_keys($state->open));
+        $this->assertNull($state->pendingRuns);
+        // The next imported success recovers it.
+        $clock->advance(self::MIN);
+        $cw->recordRun(new \Cronwatch\Run('next-import', 'imported', 'ok', $clock() - 1000, $clock(), 1000, trigger: 'source'));
+        $this->assertSame(['failed', 'recovered'], $sent->types());
     }
 
     public function testAnEvaluatedImportWhoseFinishWriteFailsAfterItsMarkerIsClosedByACheckAndALateSuccessRecoversIt(): void
@@ -428,7 +442,9 @@ final class OutboxTest extends TestCase
         }
         $clock->advance(Evaluate::SEND_LEASE_MS + self::MIN);
         $cw->check();
-        $this->assertSame('timeout', $store->getRun($run->id)->status);
+        $closed = $store->getRun($run->id);
+        $this->assertSame('timeout', $closed->status);
+        $this->assertSame('Imported, but its finish was never written; marked as timed out', $closed->error);
         $this->assertNull($store->getState($run->job)->pendingRuns);
         $this->assertSame(['stuck'], $sent->types());
         $cw->recordRun($run);

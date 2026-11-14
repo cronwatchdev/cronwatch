@@ -868,10 +868,14 @@ final class Evaluate
 
     /**
      * Called when a run starts, or when a run a source reports is recorded.
-     * Missed and stuck are about the absence of a run, so a run starting
-     * closes them without an alert; the recovered message waits for a
-     * successful finish. Missed closes only when the run catches the
-     * schedule up (catchesUp), which a run starting now always does.
+     * Missed is about the absence of a run, so a run starting closes it
+     * without an alert; the recovered message waits for a successful finish.
+     * It closes only when the run catches the schedule up (catchesUp), which
+     * a run starting now always does. Nothing else closes here. Stuck in
+     * particular stays open: a run that has only started may hang as the
+     * last one did, and closing stuck for it would open it, and alert, again
+     * at every timeout of a job that hangs every time. Only a run that
+     * finishes ok closes stuck.
      */
     public static function onRunStart(JobDefinition $def, Run $run, JobState $state, int|float $now): JobState
     {
@@ -879,7 +883,6 @@ final class Evaluate
         if (self::catchesUp($def, $run, $now)) {
             self::closeCondition($next, Condition::MISSED);
         }
-        self::closeCondition($next, Condition::STUCK);
         return $next;
     }
 
@@ -1026,7 +1029,8 @@ final class Evaluate
      * one as running, with `finishedAt` set to when it was written, and the
      * finish that follows never landed (the importer stopped, or a store write
      * failed and it was not retried). A check closes one SEND_LEASE_MS after
-     * it was written, as it closes a stuck run.
+     * it was written: as the failed run it was when the placeholder holds an
+     * error (only a run that failed has one), else as it closes a stuck run.
      */
     public static function isStranded(Run $run, int|float $now): bool
     {

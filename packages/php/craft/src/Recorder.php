@@ -257,7 +257,8 @@ final class Recorder
         if ($listed !== null) {
             return [JobName::ofClass($class), $listed + ['description' => "Queue job {$class}"], [self::TAG_QUEUE, self::TAG_CONFIG]];
         }
-        $watch = Watch::of($class);
+        // An attribute PHP cannot make (an option misspelled) is reported once, and the job runs unwatched.
+        $watch = Watch::tryOf($class, fn (\Throwable $error, string $name) => $this->report($error, "#[Cronwatch\\Watch] on {$name}"));
         if ($watch === null || !$watch->enabled) {
             return null;
         }
@@ -332,7 +333,11 @@ final class Recorder
         if (!is_object($job) || $event->id === null) {
             return;
         }
-        $found = $this->queueJob($job::class);
+        $found = null;
+        // Whatever goes wrong finding the job (a setting, a class's attribute), the queue job runs, unwatched.
+        $this->safely(function () use (&$found, $job): void {
+            $found = $this->queueJob($job::class);
+        }, 'watching ' . $job::class);
         if ($found === null) {
             return;
         }
@@ -403,7 +408,11 @@ final class Recorder
         }
         $action = $event->action;
         $route = $action->getUniqueId();
-        $found = $this->commandJob($action->controller, $route, $action->id);
+        $found = null;
+        // Whatever goes wrong finding the job (a setting, a behavior's options), the command runs, unwatched.
+        $this->safely(function () use (&$found, $action, $route): void {
+            $found = $this->commandJob($action->controller, $route, $action->id);
+        }, "watching {$route}");
         if ($found === null) {
             return;
         }

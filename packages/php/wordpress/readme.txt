@@ -141,6 +141,12 @@ On a single site, yes. The site sends alerts to the addresses set under CronWatc
 
 == Changelog ==
 
+= Unreleased =
+* Tables missing on a site copied or restored without them are made again at the first statement that needs them.
+* The check forgets WP-Cron jobs whose event is gone and that nothing has touched for the whole retention. A job with a schedule, an open condition, or one declared in code is never forgotten.
+* Database errors are read by MySQL's error number, not its English text, and a conditional write WordPress resent after a dropped connection is no longer applied twice.
+* A generated API token is no longer stored in plain text between the save and the page that shows it once.
+
 = 0.14.3 =
 * The JSON API's token is saved as its SHA-256 digest, never as itself. A token saved before is changed to its digest the first time the plugin reads it, and keeps working.
 * The dashboard in wp-admin ignores an Authorization header, as WordPress's sign-in stands for its token.

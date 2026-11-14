@@ -28,6 +28,9 @@ use Cronwatch\JobState;
  */
 final class MysqlStore extends PdoStore
 {
+    /** Seconds a connection of the store's own may take to open, unless `options` gives a PDO::ATTR_TIMEOUT. */
+    public const CONNECT_TIMEOUT_S = 5;
+
     private readonly ?string $dsn;
     private readonly ?string $username;
     private readonly ?string $password;
@@ -205,7 +208,12 @@ final class MysqlStore extends PdoStore
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_EMULATE_PREPARES => false,
             \PDO::ATTR_STRINGIFY_FETCHES => false,
-        ] + $this->options + $this->tls);
+        ] + $this->options + $this->tls + [
+            // An unreachable server is given up on after the start deadline
+            // (Cronwatch::START_DEADLINE_MS), so the job it would have held
+            // back runs unrecorded; a PDO::ATTR_TIMEOUT in `options` is used instead.
+            \PDO::ATTR_TIMEOUT => self::CONNECT_TIMEOUT_S,
+        ]);
     }
 
     /** A statement, sent again once on a connection of its own opened afresh when the server had gone away (errors 2006 and 2013). */

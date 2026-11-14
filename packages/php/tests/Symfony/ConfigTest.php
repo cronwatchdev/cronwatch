@@ -104,8 +104,14 @@ final class ConfigTest extends TestCase
             $store = ClientFactory::store([], '/srv/app');
             $this->assertInstanceOf(SqliteStore::class, $store);
             $this->assertSame('/srv/app/var/cronwatch.db', $store->path);
+            // A file of the store's own: private, and in WAL mode.
+            $this->assertFalse($store->shared);
             putenv('DATABASE_URL=sqlite:///srv/app/var/app.db');
             $this->assertSame('/srv/app/var/app.db', ClientFactory::store([], '/srv/app')->path);
+            // The app's own database: its mode and journal mode are left as the app has them.
+            $this->assertTrue(ClientFactory::store([], '/srv/app')->shared);
+            $this->assertTrue(ClientFactory::store(['store' => 'sqlite:///srv/app/var/app.db'], '/srv/app')->shared);
+            $this->assertFalse(ClientFactory::store(['store' => 'sqlite:///srv/app/var/cw.db'], '/srv/app')->shared);
             // Symfony's own default, whose parameter Doctrine puts in from the container.
             putenv('DATABASE_URL=sqlite:///%kernel.project_dir%/var/data.db');
             $this->assertSame('/srv/app/var/data.db', ClientFactory::store([], '/srv/app')->path);

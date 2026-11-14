@@ -1,5 +1,10 @@
 # Release Notes for CronWatch
 
+## Unreleased
+
+### Fixed
+- A `#[Cronwatch\Watch]` attribute PHP cannot make is reported once and the job runs unwatched, instead of failing every attempt.
+
 ## 0.14.3 - 2026-10-24
 
 ### Changed

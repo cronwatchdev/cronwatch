@@ -38,6 +38,18 @@ final class RunHandle
      * logged early, which run() would have seen.
      */
     private ?string $head = null;
+    /**
+     * The lines this handle last flushed, as logged (`raw`) and as they stand
+     * at the end of the stored output (`redacted`), or null before the first
+     * flush. The next lines are redacted together with them, so a secret
+     * that began in one flush and ends in the next (a private key logged a
+     * line at a time, a label and then its value) is blanked whole, where
+     * redacting each flush alone would store its second half.
+     *
+     * @internal Kept by the client (Cronwatch::flushHandle()).
+     * @var array{raw: string, redacted: string}|null
+     */
+    public ?array $flushed = null;
 
     /** @internal Made by the client. */
     public function __construct(

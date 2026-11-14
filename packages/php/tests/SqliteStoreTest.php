@@ -89,6 +89,82 @@ final class SqliteStoreTest extends TestCase
     }
 
     /**
+     * Only a file the store makes is made private: one that was already
+     * there, with a mode somebody chose (0664, shared with a group), keeps
+     * it. It is still the store's own, so it is put in WAL mode.
+     */
+    public function testAFileThatWasAlreadyThereKeepsItsMode(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->markTestSkipped('no POSIX modes');
+        }
+        mkdir($this->dir, 0777, true);
+        $file = "{$this->dir}/given.db";
+        touch($file);
+        chmod($file, 0664);
+        $store = new SqliteStore($file);
+        $store->init();
+        $store->insertRun(StoreConformanceTest::makeRun('r1', 'a', 'running', 1));
+        clearstatcache();
+        $this->assertSame(0664, fileperms($file) & 0777);
+        $this->assertSame('wal', (new \PDO("sqlite:{$file}"))->query('PRAGMA journal_mode')->fetchColumn());
+        $store->close();
+        // Opened again, it is still as it was.
+        $again = new SqliteStore($file);
+        $this->assertNotNull($again->getRun('r1'));
+        clearstatcache();
+        $this->assertSame(0664, fileperms($file) & 0777);
+        $again->close();
+    }
+
+    /**
+     * shared: the app's own database, where a framework integration keeps
+     * the tables. Its mode and its journal mode are the app's: an app whose
+     * web server and crontab line are two users sharing the file by group
+     * would lose its database to a chmod, and WAL is the app's to choose.
+     */
+    public function testASharedFileKeepsItsModeAndItsJournalMode(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->markTestSkipped('no POSIX modes');
+        }
+        mkdir($this->dir, 0777, true);
+        $file = "{$this->dir}/app.sqlite";
+        $app = new \PDO("sqlite:{$file}");
+        $app->exec('CREATE TABLE users (id INTEGER)');
+        $app = null;
+        chmod($file, 0664);
+        $store = new SqliteStore($file, shared: true);
+        $this->assertTrue($store->shared);
+        $store->init();
+        $store->upsertJob(new JobDefinition(['name' => 'a']), 1);
+        $store->insertRun(StoreConformanceTest::makeRun('r1', 'a', 'running', 1));
+        $this->assertSame('running', $store->getRun('r1')?->status);
+        clearstatcache();
+        $this->assertSame(0664, fileperms($file) & 0777);
+        $this->assertFileDoesNotExist("{$file}-wal");
+        $store->close();
+        $this->assertSame('delete', (new \PDO("sqlite:{$file}"))->query('PRAGMA journal_mode')->fetchColumn());
+        clearstatcache();
+        $this->assertSame(0664, fileperms($file) & 0777);
+    }
+
+    /** A shared file the app already put in WAL mode stays in it, and its -wal and -shm files take the file's mode. */
+    public function testASharedFileInWalModeStaysInIt(): void
+    {
+        mkdir($this->dir, 0777, true);
+        $file = "{$this->dir}/wal.sqlite";
+        $app = new \PDO("sqlite:{$file}");
+        $app->query('PRAGMA journal_mode = WAL')->fetchAll();
+        $app->exec('CREATE TABLE users (id INTEGER)');
+        $store = new SqliteStore($file, shared: true);
+        $store->init();
+        $store->insertRun(StoreConformanceTest::makeRun('r1', 'a', 'running', 1));
+        $this->assertSame('wal', $app->query('PRAGMA journal_mode')->fetchColumn());
+        $store->close();
+    }
+
+    /**
      * A file this process cannot write (made by another user, private to
      * them, or in a directory it may not write) is refused with a message
      * that says every process must run as one user, rather than SQLite's

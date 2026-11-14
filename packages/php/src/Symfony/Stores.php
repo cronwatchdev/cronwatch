@@ -22,7 +22,8 @@ use Cronwatch\Store\Store;
  */
 final class Stores
 {
-    public static function fromUrl(string $url, string $prefix = 'cronwatch_'): Store
+    /** @param bool $shared whether a SQLite file the URL names is the app's own database, to be left as the app has it (SqliteStore's `shared`) */
+    public static function fromUrl(string $url, string $prefix = 'cronwatch_', bool $shared = false): Store
     {
         $url = trim($url);
         if ($url === 'memory' || $url === 'memory://') {
@@ -39,7 +40,7 @@ final class Stores
             if ($path === '') {
                 throw new \InvalidArgumentException('a sqlite:// store URL needs a path: sqlite:///var/lib/app/cronwatch.db');
             }
-            return new SqliteStore($path, prefix: $prefix);
+            return new SqliteStore($path, prefix: $prefix, shared: $shared && $path !== ':memory:');
         }
         if (preg_match('#^(?:pdo-)?(mysql|mariadb|mysql2)://#i', $url) === 1) {
             return new MysqlStore(self::withoutParams((string) preg_replace('#^[^:]+://#', 'mysql://', $url), ['serverVersion']), prefix: $prefix);
@@ -48,7 +49,7 @@ final class Stores
             return new PostgresStore(self::withoutParams((string) preg_replace('#^[^:]+://#', 'postgres://', $url), ['serverVersion', 'charset']), prefix: $prefix);
         }
         if (str_starts_with($url, '/')) {
-            return new SqliteStore($url, prefix: $prefix);
+            return new SqliteStore($url, prefix: $prefix, shared: $shared);
         }
         $scheme = preg_match('#^([A-Za-z][A-Za-z0-9+.\-]*):#', $url, $m) === 1 ? $m[1] : 'this';
         throw new \InvalidArgumentException("CronWatch stores in MySQL, MariaDB, Postgres, or SQLite; a {$scheme} URL is not one of them");

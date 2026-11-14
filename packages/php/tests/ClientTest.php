@@ -241,6 +241,76 @@ final class ClientTest extends TestCase
         $this->assertNotContains('recovered', $this->capture->types(), "no 'no longer scheduled' recovery");
     }
 
+    public function testAHandleKeptAcrossAForgetDeclaresTheJobAgainOnItsNextRunAndWritesItOnce(): void
+    {
+        $upserts = 0;
+        $base = new \Cronwatch\Store\MemoryStore();
+        $store = new \Cronwatch\Tests\Support\DelegatingStore($base);
+        $store->hooks['upsertJob'] = function (\Closure $next, array $args) use (&$upserts) {
+            $upserts++;
+            return $next(...$args);
+        };
+        $cw = $this->make(['store' => $store]);
+        $job = $cw->job('nightly', ['schedule' => '0 2 * * *', 'description' => 'Nightly export']);
+        $job->run(fn () => null);
+        $this->assertSame(1, $upserts);
+        $cw->forget('nightly');
+        $this->assertSame([], $cw->definedJobs());
+
+        $job->run(fn () => null);
+        $this->assertSame(2, $upserts);
+        $this->assertSame(['nightly'], array_map(fn ($d) => $d->get('name'), $cw->definedJobs()), 'declared again, so checks and sources see it');
+        $job->run(fn () => null);
+        $job->run(fn () => null);
+        $this->assertSame(2, $upserts, 'written once, not on every run');
+        $this->assertSame('Nightly export', $cw->jobSummary('nightly')->definition->get('description'));
+
+        // Forgotten by another process since: this one's check writes it again.
+        $base->deleteJob('nightly');
+        $cw->check();
+        $this->assertNotNull($base->getJob('nightly'));
+    }
+
+    /**
+     * PHP runs one thing at a time, so a forget lands in the middle of a
+     * check's or a read's writes only when something they call makes it: here
+     * the store, as the first declaration is written (or, for jobSummary(),
+     * as the store is made ready).
+     */
+    public function testAForgetThatLandsWhileACheckIsWritingDeclarationsIsNotUndoneByThatCheck(): void
+    {
+        foreach (['check', 'jobs', 'jobSummary'] as $read) {
+            $base = new \Cronwatch\Store\MemoryStore();
+            $store = new \Cronwatch\Tests\Support\DelegatingStore($base);
+            $cw = $this->make(['store' => $store]);
+            $forgot = false;
+            $forget = function (\Closure $next, array $args) use (&$forgot, &$cw) {
+                $result = $next(...$args);
+                if (!$forgot) {
+                    $forgot = true;
+                    $cw->forget('nightly');
+                }
+                return $result;
+            };
+            // Neither is written yet, so the read's own loop is what would write them.
+            $store->hooks[$read === 'jobSummary' ? 'init' : 'upsertJob'] = $forget;
+            $cw->job('keep', ['schedule' => '0 2 * * *']);
+            $cw->job('nightly', ['schedule' => '0 2 * * *']);
+            match ($read) {
+                'check' => $cw->check(),
+                'jobs' => $cw->jobs(),
+                default => $cw->jobSummary('nightly'),
+            };
+            $this->assertTrue($forgot, $read);
+            $this->assertSame(['keep'], array_map(fn ($d) => $d->get('name'), $cw->definedJobs()), "{$read}: still forgotten here");
+            $this->assertNull($base->getJob('nightly'), "{$read}: not written again");
+            $this->assertNull($base->getState('nightly'), "{$read}: no state left behind");
+            // Its next run still brings it back.
+            $cw->run('nightly', fn () => null);
+            $this->assertNotNull($base->getJob('nightly'), $read);
+        }
+    }
+
     public function testASilenceEndsOnAWholeMillisecondHeldAtTheLargestSafeInteger(): void
     {
         $cw = $this->make();
@@ -267,6 +337,100 @@ final class ClientTest extends TestCase
         $this->assertSame('stuck', $r->jobs[0]->health);
         $this->assertStringContainsString('never reported finishing', $this->capture->alerts[0]->message);
         unset($job);
+    }
+
+    public function testAJobThatHangsOnEveryRunAlertsStuckOnceAndRecoversOnItsFirstSuccess(): void
+    {
+        $cw = $this->make();
+        $job = $cw->job('hangs', ['schedule' => '*/5 * * * *', 'timezone' => 'UTC', 'timeout' => '10m']);
+        // Twelve runs, five minutes apart, none of which ever finishes.
+        $handles = [];
+        for ($i = 0; $i < 12; $i++) {
+            $handles[] = $job->start();
+            $this->clock->advance(5 * self::MIN);
+            $cw->check();
+        }
+        $this->assertSame(['stuck'], $this->capture->types());
+        $this->assertSame('stuck', $cw->jobSummary('hangs')->health);
+        // A run that fails alerts as failed by its own rule; stuck stays open beside it.
+        $this->failing(fn () => $job->run(self::thrower('boom')));
+        $this->assertSame(['stuck', 'failed'], $this->capture->types());
+        $open = $cw->jobSummary('hangs')->open;
+        sort($open);
+        $this->assertSame(['failed', 'stuck'], $open);
+        // A hung run that reports failing late is not counted again and alerts nothing.
+        $handles[0]->fail(new \RuntimeException('late'));
+        $this->assertSame(['stuck', 'failed'], $this->capture->types());
+        // The first success closes both with one recovery.
+        $job->run(fn () => null);
+        $this->assertSame(['stuck', 'failed', 'recovered'], $this->capture->types());
+        $after = $this->capture->alerts[2]->details['after'];
+        sort($after);
+        $this->assertSame(['failed', 'stuck'], $after);
+        $this->assertSame([], $cw->jobSummary('hangs')->open);
+    }
+
+    public function testAStuckRunThatFinishesOkLateClosesStuckWithARecoveryThoughOtherRunsStartedMeanwhile(): void
+    {
+        $cw = $this->make();
+        $job = $cw->job('slow-queue', ['timeout' => '10m']);
+        $first = $job->start();
+        $this->clock->advance(11 * self::MIN);
+        $cw->check();
+        $this->assertSame(['stuck'], $this->capture->types());
+        $second = $job->start();
+        $this->assertSame(['stuck'], $cw->jobSummary('slow-queue')->open, 'a start leaves stuck open');
+        $first->finish();
+        $this->assertSame(['stuck', 'recovered'], $this->capture->types());
+        $second->finish();
+        $this->assertSame(['stuck', 'recovered'], $this->capture->types());
+    }
+
+    /**
+     * The SDK gives the two writes before a job five seconds and then runs
+     * the job unrecorded. PHP cannot abandon a store call under way, so a
+     * store that hangs and then answers holds the job back for as long; the
+     * run is recorded as usual, and the wait is reported, not hidden. (An
+     * unreachable server fails within the deadline instead: the stores'
+     * connect timeout.)
+     */
+    public function testAStoreThatHangsRecordingARunsStartIsReportedOnceItAnswers(): void
+    {
+        $wall = 0;
+        $store = new \Cronwatch\Tests\Support\FlakyStore(new \Cronwatch\Store\MemoryStore());
+        $slow = 0;
+        $store->hooks['insertRun'] = function (\Closure $next, array $args) use (&$wall, &$slow) {
+            $wall += $slow;
+            return $next(...$args);
+        };
+        $cw = $this->make(['store' => $store]);
+        (new \ReflectionProperty(Cronwatch::class, 'wall'))->setValue($cw, function () use (&$wall): int {
+            return $wall;
+        });
+        $job = $cw->job('nightly');
+        $slow = Cronwatch::START_DEADLINE_MS;
+        $this->assertSame('done', $job->run(fn () => 'done'));
+        $this->assertSame([], $this->messages(), 'five seconds exactly is inside the deadline');
+        $slow = 7_400;
+        $this->assertSame('done', $job->run(function (JobContext $j) {
+            $j->log('did the work');
+            return 'done';
+        }));
+        $this->assertSame(['recording nightly'], $this->wheres());
+        $this->assertSame(['the store took 7s to record the start of nightly, longer than 5s; PHP cannot abandon a store call under way, so the job waited for it'], $this->messages());
+        // The run was recorded all the same, and nothing is left running.
+        $runs = $cw->runs('nightly');
+        $this->assertSame(['ok', 'did the work'], [$runs[0]->status, $runs[0]->output]);
+        $this->assertSame([], $store->runningRuns());
+        $this->assertSame([], $this->capture->types());
+        // A store that fails, as opposed to hangs, is reported as before, once.
+        $this->errors = [];
+        $store->hooks['insertRun'] = function () use (&$wall): never {
+            $wall += 9_000;
+            throw new \RuntimeException('store down');
+        };
+        $job->run(fn () => 'done');
+        $this->assertSame(['store down', 'store down'], $this->messages(), 'the start, and the finish that inserts in its place');
     }
 
     public function testSlowAndOverBudgetAlertsComeFromTheJobsOwnBaseline(): void

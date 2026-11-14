@@ -525,6 +525,57 @@ final class StartFinishTest extends TestCase
         $this->assertSame(['billing', 'running', null], [$stored->job, $stored->status, $stored->output]);
     }
 
+    public function testASecretThatStartsInOneFlushAndEndsInTheNextIsRedactedWhole(): void
+    {
+        $cw = $this->make();
+        $run = $cw->job('deploy')->start();
+        $run->log('starting');
+        $run->log('-----BEGIN PRIVATE KEY-----');
+        $run->log('MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj');
+        $run->flush();
+        $this->assertSame("starting\n[redacted]", $cw->getRun($run->id)->output);
+        $run->log('MFNRV0X0e1nSecondHalfOfTheKeySecondHalfOfTheKeySecondHalfOfTheKe');
+        $run->log('-----END PRIVATE KEY-----');
+        $run->log('api_token:');
+        $run->flush();
+        $this->assertSame("starting\n[redacted]\napi_token:", $cw->getRun($run->id)->output);
+        // A label flushed, then its value: at the next flush, and again at finish.
+        $run->log('hunter2hunter2');
+        $run->flush();
+        $this->assertSame("starting\n[redacted]\napi_token:\n[redacted]", $cw->getRun($run->id)->output);
+        $run->log('password:');
+        $run->flush();
+        $run->log('correct-horse');
+        $finished = $run->finish();
+        $this->assertSame("starting\n[redacted]\napi_token:\n[redacted]\npassword:\n[redacted]", $finished->output);
+        $this->assertDoesNotMatchRegularExpression('/SecondHalf|hunter2|correct-horse/', \Cronwatch\Js::stringify($cw->getRun($run->id)));
+    }
+
+    public function testFlushesAfterAnotherProcessWroteToTheRunStillAppendEachRedacted(): void
+    {
+        $cw = $this->make();
+        $run = $cw->job('deploy')->start();
+        $run->log('one');
+        $run->flush();
+        // Another handle on the same run (another process) appends in between.
+        $other = $cw->job('deploy')->resume($run->id);
+        $other->log('from elsewhere');
+        $other->flush();
+        $run->log('token=abc123abc123');
+        $run->flush();
+        $this->assertSame("one\nfrom elsewhere\ntoken=[redacted]", $cw->getRun($run->id)->output);
+        // A long run: the remembered tail stays bounded and the output capped.
+        for ($i = 0; $i < 6; $i++) {
+            $run->log("line {$i} " . str_repeat('x', 6000));
+            $run->flush();
+        }
+        $run->log('secret=tail-secret-value');
+        $finished = $run->finish();
+        $this->assertLessThanOrEqual(16 * 1024 + 40, \Cronwatch\Js::length16($finished->output));
+        $this->assertMatchesRegularExpression('/secret=\[redacted\]$/D', $finished->output);
+        $this->assertStringNotContainsString('tail-secret-value', $finished->output);
+    }
+
     public function testExpectAtFinishSeesAnEarlyLineEvenAfterFlushesAsRunWould(): void
     {
         $cw = $this->make();

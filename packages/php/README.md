@@ -66,7 +66,7 @@ $run->log('sent 40 emails');
 $run->finish();                         // or $run->fail($error), or $run->finish('text')
 ```
 
-A run that is never finished is marked stuck by the first check after the job's timeout.
+A run that is never finished is marked stuck by the first check after the job's timeout. Stuck stays open until a run finishes ok, so a job that hangs on every run alerts once.
 
 ### Options
 
@@ -87,7 +87,7 @@ Deprecated, working through 1.x and gone in 2.0: `false` for those three (use `n
 ### Stores
 
 - `Cronwatch\Store\MemoryStore`, the default: forgets when the process ends.
-- `Cronwatch\Store\SqliteStore($path, prefix: 'cronwatch_')`: one file, WAL mode, made private (0600), so every process that uses it (the web server, the crontab line, workers) must run as the same user. The tables, statements, and JSON are the SDK's SQLite store's, byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
+- `Cronwatch\Store\SqliteStore($path, prefix: 'cronwatch_')`: one file, WAL mode, made private (0600) when the store makes it, so every process that uses it (the web server, the crontab line, workers) must run as the same user; a file that was already there keeps its mode. Where a framework integration keeps the tables in the app's own SQLite database (Laravel's `database` driver, Symfony's `DATABASE_URL`, Drupal), that file's mode and journal mode are left as the app has them (`shared: true`). The tables, statements, and JSON are the SDK's SQLite store's, byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
 - `Cronwatch\Store\MysqlStore($url, prefix: 'cronwatch_')`: MySQL 8.0.13 or newer, or MariaDB 10.6 or newer, from a `mysql://` URL, a PDO DSN, the app's `PDO`, or `DATABASE_URL`. The same tables in MySQL's dialect (see DESIGN.md), with the SDK's JSON kept byte for byte. Given a URL or DSN, it writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback.
 - `Cronwatch\Store\PostgresStore($url, prefix: 'cronwatch_')`: Postgres from a `postgres://` URL, a PDO DSN, the app's `PDO`, or `DATABASE_URL`. The SDK's tables and statements, so a process in any other language can share the database. Given a URL or DSN, it writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback.
 

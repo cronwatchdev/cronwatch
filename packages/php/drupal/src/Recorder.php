@@ -501,7 +501,7 @@ final class Recorder {
    *   The options, or null when the class has no attribute.
    */
   public static function queueOptions(string $class): ?array {
-    $watch = class_exists($class) ? Watch::of($class) : NULL;
+    $watch = class_exists($class) ? Watch::tryOf($class, self::badWatch(...)) : NULL;
     if ($watch === NULL) {
       return NULL;
     }
@@ -522,11 +522,29 @@ final class Recorder {
    *   The settings' list of worker IDs.
    */
   public static function watchesQueue(string $id, string $class, array $listed): bool {
-    $watch = class_exists($class) ? Watch::of($class) : NULL;
+    $watch = class_exists($class) ? Watch::tryOf($class, self::badWatch(...)) : NULL;
     if ($watch !== NULL && !$watch->enabled) {
       return FALSE;
     }
     return $watch !== NULL || in_array($id, $listed, TRUE);
+  }
+
+  /**
+   * A worker class's #[Cronwatch\Watch] that PHP could not make.
+   *
+   * An option misspelled or of the wrong type: logged, once per class, and
+   * the class read as having no attribute, so the queue definitions (every
+   * worker's, which hook_queue_info_alter() is building) are still made.
+   */
+  public static function badWatch(\Throwable $error, string $class): void {
+    try {
+      \Drupal::logger('cronwatch')->error('#[Cronwatch\Watch] on @class: @message. The worker is read as having no attribute.', [
+        '@class' => $class,
+        '@message' => $error->getMessage(),
+      ]);
+    }
+    catch (\Throwable) {
+    }
   }
 
   /**

@@ -102,7 +102,19 @@ final class TriageTest extends TestCase
     {
         foreach (self::fixture()->responses as $c) {
             $http = new FakeHttp(200, Js::stringify($c->response));
-            $this->assertSame(Js::stringify($c->result), Js::stringify(self::triageFor(new \stdClass(), $http)(self::contextFor('a missed run with no runs'))));
+            $triage = self::triageFor(new \stdClass(), $http);
+            if (property_exists($c, 'error')) {
+                // No text and the limit reached: thrown, for the client to report, with the SDK's words.
+                $this->assertFalse(property_exists($c, 'result'));
+                try {
+                    $triage(self::contextFor('a missed run with no runs'));
+                    $this->fail("expected: {$c->error}");
+                } catch (\RuntimeException $error) {
+                    $this->assertSame($c->error, $error->getMessage());
+                }
+                continue;
+            }
+            $this->assertSame(Js::stringify($c->result), Js::stringify($triage(self::contextFor('a missed run with no runs'))));
         }
     }
 
@@ -184,6 +196,37 @@ final class TriageTest extends TestCase
         $this->assertNull($this->capture->alerts[1]->triage);
         $this->assertCount(1, $http->requests);
         $this->assertStringContainsString('RuntimeException: db down', Js::parse($http->requests[0]['body'])->messages[0]->content);
+    }
+
+    public function testTriageLeavesRoomForTheModelsThinkingAndSaysWhenTheLimitRanOutBeforeAnyDiagnosis(): void
+    {
+        $context = self::contextFor('a missed run with no runs');
+        $http = self::answer();
+        self::triageFor(new \stdClass(), $http)($context);
+        $this->assertSame(4096, Js::parse($http->requests[0]['body'])->max_tokens);
+        $http = self::answer();
+        self::triageFor((object) ['maxTokens' => 1200], $http)($context);
+        $this->assertSame(1200, Js::parse($http->requests[0]['body'])->max_tokens);
+
+        // Thinking used the whole limit: no text block at all.
+        try {
+            self::triageFor((object) ['maxTokens' => 1200], self::answer('max_tokens', [['type' => 'thinking', 'thinking' => '']]))($context);
+            $this->fail('expected an error');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('triage: the model reached max_tokens (1200) before writing a diagnosis; raise maxTokens or lower effort', $error->getMessage());
+        }
+        // A diagnosis cut short is still a diagnosis, and a refusal or an empty answer is still none.
+        $this->assertSame('The database was', self::triageFor(new \stdClass(), self::answer('max_tokens', [['type' => 'text', 'text' => 'The database was']]))($context));
+        $this->assertNull(self::triageFor(new \stdClass(), self::answer('end_turn', []))($context));
+        $this->assertNull(self::triageFor(new \stdClass(), self::answer('refusal', []))($context));
+
+        // Through the client: the alert still goes out, and onError hears why it has no diagnosis.
+        $cw = $this->make(['triage' => self::triageFor(new \stdClass(), self::answer('max_tokens', []))]);
+        $this->failing(fn () => $cw->run('nightly', self::thrower('boom')));
+        $this->assertCount(1, $this->capture->alerts);
+        $this->assertNull($this->capture->alerts[0]->triage);
+        $this->assertSame(['triage for nightly'], $this->wheres());
+        $this->assertStringStartsWith('triage: the model reached max_tokens (4096)', $this->messages()[0]);
     }
 
     public function testATriageThatFailsIsReportedAndTheAlertStillGoesOut(): void

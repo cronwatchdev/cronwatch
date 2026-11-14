@@ -96,6 +96,45 @@ final class PluginTest extends TestCase
         $this->assertSame(['description' => 'WP-Cron hook publish_future_post, single events', 'tags' => ['wp-cron']], Jobs::options($jobs['wp:publish_future_post']));
     }
 
+    /**
+     * The check forgets a WP-Cron job only when its event is gone and nothing
+     * has touched it for the whole retention: never one with a schedule,
+     * one declared in code (no wp-cron tag), one that ran or was declared
+     * inside the retention, one still running, or one with anything open,
+     * unsent, unjudged, or silenced.
+     */
+    public function testWhichStoredJobsTheCheckMayForget(): void
+    {
+        $day = 86_400_000;
+        $now = 100 * $day;
+        $retention = 30 * $day;
+        $job = fn (array $definition, int $updatedAt = 0, int $createdAt = 0): \Cronwatch\StoredJob
+            => new \Cronwatch\StoredJob((string) $definition['name'], new \Cronwatch\JobDefinition($definition), $createdAt, $updatedAt);
+        $run = fn (string $status, int $startedAt): \Cronwatch\Run => new \Cronwatch\Run('r', 'wp:gone', $status, $startedAt);
+        $gone = $job(['description' => 'WP-Cron hook gone_1, single events', 'tags' => ['wp-cron'], 'name' => 'wp:gone']);
+        $quiet = new \Cronwatch\JobState('wp:gone');
+
+        $this->assertTrue(Jobs::stale($gone, null, null, $now, $retention), 'never ran, long gone');
+        $this->assertTrue(Jobs::stale($gone, $quiet, $run('ok', 60 * $day), $now, $retention));
+        $this->assertTrue(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', consecutiveFailures: 1, silencedUntil: 50 * $day, lastAlertAt: 40 * $day), $run('failed', 60 * $day), $now, $retention), 'a silence long over holds nothing');
+
+        $this->assertFalse(Jobs::stale($job(['tags' => ['wp-cron'], 'schedule' => 'every 1h', 'name' => 'wp:gone']), $quiet, null, $now, $retention), 'a schedule: still expected, or only just unscheduled');
+        $this->assertFalse(Jobs::stale($job(['tags' => ['nightly'], 'name' => 'nightly-report']), null, null, $now, $retention), 'declared in code');
+        $this->assertFalse(Jobs::stale($job(['name' => 'no-tags']), null, null, $now, $retention));
+        $this->assertFalse(Jobs::stale($job(['tags' => ['wp-cron'], 'name' => 'wp:gone'], 80 * $day), $quiet, null, $now, $retention), 'declared inside the retention');
+        $this->assertFalse(Jobs::stale($job(['tags' => ['wp-cron'], 'name' => 'wp:gone'], 0, 80 * $day), $quiet, null, $now, $retention));
+        $this->assertFalse(Jobs::stale($gone, $quiet, $run('ok', 80 * $day), $now, $retention), 'ran inside the retention');
+        $this->assertFalse(Jobs::stale($gone, $quiet, $run('ok', 70 * $day), $now, $retention), 'exactly the retention ago is not yet past it');
+        $this->assertFalse(Jobs::stale($gone, $quiet, $run('running', 10 * $day), $now, $retention), 'still running');
+        $this->assertFalse(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', open: ['failed' => 10 * $day]), $run('failed', 10 * $day), $now, $retention), 'an open condition');
+        $this->assertFalse(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', silencedUntil: $now + 1), null, $now, $retention), 'silenced');
+        $this->assertFalse(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', pendingRuns: ['r']), null, $now, $retention), 'a run still to judge');
+        $this->assertFalse(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', undelivered: [['type' => 'failed']]), null, $now, $retention), 'an alert still to send');
+        $this->assertFalse(Jobs::stale($gone, new \Cronwatch\JobState('wp:gone', sending: [['alert' => ['type' => 'failed'], 'until' => 1]]), null, $now, $retention));
+        $this->assertFalse(Jobs::stale($gone, $quiet, null, $now, 0), 'no retention, nothing forgotten');
+        $this->assertFalse(Jobs::stale(\Cronwatch\StoredJob::unreadable('wp:gone', 0, 0), null, null, $now, $retention), 'a definition that cannot be read');
+    }
+
     public function testTheDashboardsCheckIsReadAsTheDashboardReadsItsPath(): void
     {
         require_once dirname(__DIR__, 2) . '/wordpress/includes/AdminDashboard.php';

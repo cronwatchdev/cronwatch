@@ -28,6 +28,9 @@ use Cronwatch\JobState;
  */
 final class PostgresStore extends PdoStore
 {
+    /** Seconds a connection of the store's own may take to open, unless the URL or DSN gives a connect_timeout. */
+    public const CONNECT_TIMEOUT_S = 5;
+
     private readonly ?string $dsn;
     private readonly ?string $username;
     private readonly ?string $password;
@@ -140,11 +143,26 @@ final class PostgresStore extends PdoStore
             return $this->db;
         }
         $this->forgetStatements();
-        return $this->db = new \PDO((string) $this->dsn, $this->username, $this->password, [
+        return $this->db = new \PDO(self::withConnectTimeout((string) $this->dsn), $this->username, $this->password, [
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_EMULATE_PREPARES => false,
             \PDO::ATTR_STRINGIFY_FETCHES => false,
         ] + $this->options);
+    }
+
+    /**
+     * The DSN with libpq's connect_timeout added when it names none: an
+     * unreachable server is given up on after the start deadline
+     * (Cronwatch::START_DEADLINE_MS), so the job it would have held back
+     * runs unrecorded. One the URL or DSN gives is used as it is.
+     */
+    public static function withConnectTimeout(string $dsn): string
+    {
+        if (preg_match('/(^pgsql:|[;\s])connect_timeout\s*=/i', $dsn) === 1) {
+            return $dsn;
+        }
+        $base = rtrim($dsn, "; \t");
+        return $base . (str_ends_with($base, ':') ? '' : ';') . 'connect_timeout=' . self::CONNECT_TIMEOUT_S;
     }
 
     /** Whether an error says the connection is gone: SQLSTATE class 08, or the server shutting it (57P01 to 57P03). */

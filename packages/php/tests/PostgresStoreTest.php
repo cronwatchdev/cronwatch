@@ -27,6 +27,25 @@ use PHPUnit\Framework\TestCase;
  */
 final class PostgresStoreTest extends TestCase
 {
+    /**
+     * A connection of the store's own gives up after the start deadline, so
+     * an unreachable server fails (and the job runs unrecorded) rather than
+     * holding the job back; a connect_timeout the URL or DSN gives stands.
+     */
+    public function testAConnectionOfTheStoresOwnGivesUpConnectingAfterTheStartDeadline(): void
+    {
+        $this->assertSame(\Cronwatch\Cronwatch::START_DEADLINE_MS, PostgresStore::CONNECT_TIMEOUT_S * 1000);
+        $this->assertSame(\Cronwatch\Cronwatch::START_DEADLINE_MS, \Cronwatch\Store\MysqlStore::CONNECT_TIMEOUT_S * 1000);
+        $this->assertSame("pgsql:host='db';dbname='app';connect_timeout=5", PostgresStore::withConnectTimeout("pgsql:host='db';dbname='app'"));
+        $this->assertSame('pgsql:host=db;connect_timeout=5', PostgresStore::withConnectTimeout('pgsql:host=db;'));
+        $this->assertSame('pgsql:connect_timeout=5', PostgresStore::withConnectTimeout('pgsql:'));
+        foreach (["pgsql:host='db';connect_timeout='30'", 'pgsql:connect_timeout=2;host=db', 'pgsql:host=db connect_timeout = 9'] as $given) {
+            $this->assertSame($given, PostgresStore::withConnectTimeout($given), 'one given is used as it is');
+        }
+        [$dsn] = PostgresStore::connection('postgres://u:p@db/app?connect_timeout=30');
+        $this->assertSame($dsn, PostgresStore::withConnectTimeout($dsn));
+    }
+
     public function testAUrlBecomesADsn(): void
     {
         $password = 'p' . '%40ss';

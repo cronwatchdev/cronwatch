@@ -61,6 +61,34 @@ final class Watch
         return $options;
     }
 
+    /**
+     * of(), for a caller that must not fail: an attribute PHP cannot make (an
+     * option misspelled, a value of the wrong type) is handed to `report`,
+     * once per class in a process, and the class counts as having none, so
+     * it goes unwatched rather than taking down the queue or the command
+     * that read it.
+     *
+     * @internal For the framework integrations.
+     * @param (callable(\Throwable, string): void)|null $report given the error and the class's name
+     */
+    public static function tryOf(string|object $class, ?callable $report = null): ?self
+    {
+        try {
+            return self::of($class);
+        } catch (\Throwable $error) {
+            $name = is_object($class) ? $class::class : ltrim($class, '\\');
+            self::$found[$name] = false;
+            if ($report !== null) {
+                try {
+                    $report($error, $name);
+                } catch (\Throwable) {
+                    // Reporting must not undo what this method is for.
+                }
+            }
+            return null;
+        }
+    }
+
     /** The attribute on a class (or an object's class), or its nearest parent's; null when there is none. */
     public static function of(string|object $class): ?self
     {

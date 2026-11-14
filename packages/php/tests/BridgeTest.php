@@ -22,6 +22,11 @@ final class WatchedChild extends WatchedParent
 {
 }
 
+#[Watch(graec: '15m')]
+final class MisspelledWatch
+{
+}
+
 #[Watch(enabled: false)]
 final class NotWatched
 {
@@ -118,6 +123,36 @@ final class BridgeTest extends TestCase
         $this->assertFalse(Watch::of(new NotWatched())->enabled);
         $this->assertNull(Watch::of(self::class));
         $this->assertNull(Watch::of('No\Such\ClassName'));
+    }
+
+    /**
+     * An attribute PHP cannot make (an option misspelled) throws from of().
+     * The integrations that read it where a throw would stop the host (a
+     * queue's definitions being built, a job about to run) use tryOf(): the
+     * error is reported once and the class is read as having no attribute.
+     */
+    public function testAnAttributePhpCannotMakeIsReportedOnceAndReadAsNone(): void
+    {
+        try {
+            Watch::of(MisspelledWatch::class);
+            $this->fail('of() throws what PHP throws');
+        } catch (\Error $error) {
+            $this->assertStringContainsString('graec', $error->getMessage());
+        }
+        $reported = [];
+        $report = function (\Throwable $error, string $class) use (&$reported): void {
+            $reported[] = [$class, $error->getMessage()];
+        };
+        $this->assertNull(Watch::tryOf(MisspelledWatch::class, $report));
+        $this->assertNull(Watch::tryOf(new MisspelledWatch(), $report), 'not read, nor reported, again');
+        $this->assertCount(1, $reported);
+        $this->assertSame(MisspelledWatch::class, $reported[0][0]);
+        $this->assertStringContainsString('graec', $reported[0][1]);
+        $this->assertNull(Watch::of(MisspelledWatch::class), 'and of() then reads it as none too');
+        // A report that throws does not undo it, and a sound attribute is read as of() reads it.
+        $this->assertNull(Watch::tryOf('No\Such\ClassName', fn () => throw new \RuntimeException('no')));
+        $this->assertSame('annotated', Watch::tryOf(WatchedChild::class, $report)?->name);
+        $this->assertCount(1, $reported);
     }
 
     public function testAMigratedStoreLeavesTheTablesAlone(): void

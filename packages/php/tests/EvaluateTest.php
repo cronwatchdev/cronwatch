@@ -31,6 +31,39 @@ final class EvaluateTest extends TestCase
         return array_map(fn ($a) => $a->type, $e->alerts);
     }
 
+    public function testStuckStaysOpenThroughLaterStartsFailuresAndTimeoutsAndClosesWithARecoveryOnTheNextSuccess(): void
+    {
+        $min = Clock::MIN;
+        $d = new JobDefinition(['name' => 'j']);
+        $run = fn (string $status, int $startedAt): Run => $status === 'timeout'
+            ? new Run("s{$startedAt}", 'j', 'timeout', $startedAt)
+            : new Run("s{$startedAt}", 'j', $status, $startedAt, $startedAt + 1000, 1000, $status === 'failed' ? 'boom' : null);
+        $startNow = fn (JobState $state, int $now): JobState => Evaluate::onRunStart($d, new Run('started', 'j', 'running', $now), $state, $now);
+        $stuck = Evaluate::onRunFinish($d, $run('timeout', self::T0 - self::HOUR), Evaluate::emptyState('j'), [], self::T0);
+        $this->assertSame(['stuck'], self::types($stuck));
+        // The next run starting closes nothing: it may hang as the last one did.
+        $started = $startNow($stuck->state, self::T0 + $min);
+        $this->assertSame(self::T0, $started->open['stuck']);
+        $this->assertSame([], $started->pendingRecovery ?? []);
+        // It times out too: stuck is already open, so there is no second alert.
+        $again = Evaluate::onRunFinish($d, $run('timeout', self::T0 + $min), $started, [], self::T0 + self::HOUR);
+        $this->assertSame([], $again->alerts);
+        $this->assertSame(self::T0, $again->state->open['stuck'], 'open since the first time');
+        $this->assertSame(2, $again->state->consecutiveFailures);
+        // A run that fails opens failed by its own rule and leaves stuck open.
+        $failed = Evaluate::onRunFinish($d, $run('failed', self::T0 + self::HOUR), $startNow($again->state, self::T0 + self::HOUR), [], self::T0 + self::HOUR + 1000);
+        $this->assertSame(['failed'], self::types($failed));
+        $this->assertSame(self::T0, $failed->state->open['stuck']);
+        // The first success closes both, with one recovery naming both.
+        $ok = Evaluate::onRunFinish($d, $run('ok', self::T0 + 2 * self::HOUR), $startNow($failed->state, self::T0 + 2 * self::HOUR), [], self::T0 + 2 * self::HOUR + 1000);
+        $this->assertSame(['recovered'], self::types($ok));
+        $after = $ok->alerts[0]->details['after'];
+        sort($after);
+        $this->assertSame(['failed', 'stuck'], $after);
+        $this->assertSame([], $ok->state->open);
+        $this->assertSame([], $ok->state->pendingRecovery ?? []);
+    }
+
     public function testFloorsAFloorOrZeroAfterFiveRunsThatAllReportedMore(): void
     {
         $floored = new JobDefinition(['name' => 'j', 'floor' => ['rows' => 10]]);

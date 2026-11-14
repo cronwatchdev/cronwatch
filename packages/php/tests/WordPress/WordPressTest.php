@@ -919,9 +919,10 @@ final class WordPressTest extends TestCase
         $token = self::inWp(<<<'PHP'
             wp_set_current_user(get_user_by('login', 'admin')->ID);
             $notice = Cronwatch\WordPress\Admin::saveSettings(['api_enabled' => '1']);
-            echo json_encode([$notice, get_transient('cronwatch_new_token_' . get_current_user_id()), get_option('cronwatch_settings')['api_token']]);
+            echo json_encode([$notice, Cronwatch\WordPress\Admin::madeToken(), get_option('cronwatch_settings')['api_token'], get_transient('cronwatch_new_token_' . get_current_user_id())]);
             PHP);
-        [$notice, $secret, $saved] = $token;
+        [$notice, $secret, $saved, $kept] = $token;
+        $this->assertFalse($kept, 'the token itself is never stored, not even for the page that shows it once');
         $this->assertSame('saved', $notice);
         $this->assertSame(40, strlen($secret), 'turned on with no token given, the plugin makes one, which the settings page shows once');
         $this->assertSame('sha256:' . hash('sha256', $secret), $saved, 'only its digest is saved');

@@ -33,9 +33,20 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
     public const DB_VERSION = '1';
     public const OPTION = 'cronwatch_db_version';
 
+    /** MySQL's error for a table that is not there. */
+    private const NO_SUCH_TABLE = 1146;
+    /** MySQL's error for a key that is already there. */
+    private const DUPLICATE = 1062;
+
     public readonly string $prefix;
     /** @var array<string, string> */
     private readonly array $sql;
+    /** Whether the tables were made again in this request, after a statement found one missing: once, so a server that cannot make them is not asked at every statement. */
+    private bool $healed = false;
+    /** Whether a statement is making the tables now, so its own failure is not answered by making them. */
+    private bool $installing = false;
+    /** Whether WordPress sent the last statement a second time, on a new connection, after the first one broke: its first send may have landed. */
+    private bool $resent = false;
 
     public function __construct(private readonly \wpdb $wpdb)
     {
@@ -50,7 +61,14 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         $this->sql = Sql::statements('mysql', $prefix);
     }
 
-    /** Creates the tables when this version has not yet: CREATE TABLE IF NOT EXISTS, as MysqlStore::init() does. */
+    /**
+     * Creates the tables when this version has not yet: CREATE TABLE IF NOT
+     * EXISTS, as MysqlStore::init() does. The option only says the tables
+     * were made once; a site copied or restored without them (a migration
+     * tool that takes WordPress's own tables and the options, say) still
+     * has the option, so a statement that finds a table missing makes them
+     * again (query()).
+     */
     public function init(): void
     {
         if (get_option(self::OPTION) === self::DB_VERSION) {
@@ -66,8 +84,13 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         if ($why !== null) {
             throw new \RuntimeException($why); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
         }
-        foreach (self::schema($this->prefix, $this->wpdb->db_server_info()) as $statement) {
-            $this->query($statement);
+        $this->installing = true;
+        try {
+            foreach (self::schema($this->prefix, $this->wpdb->db_server_info()) as $statement) {
+                $this->query($statement);
+            }
+        } finally {
+            $this->installing = false;
         }
         update_option(self::OPTION, self::DB_VERSION, true);
     }
@@ -189,9 +212,56 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
      */
     private function query(string $text, array $params = [], bool $select = false, array $identifiers = []): array|int
     {
+        try {
+            return $this->send($text, $params, $select, $identifiers);
+        } catch (\RuntimeException $error) {
+            // One of the plugin's tables is gone while the option says they were
+            // made (see init()): they are made again, once a request, and the
+            // statement sent again. Never for the plugin's own DROP (identifiers).
+            if ($this->healed || $this->installing || $identifiers !== [] || !self::missingTable($error)) {
+                throw $error;
+            }
+            $this->healed = true;
+            try {
+                $this->install();
+            } catch (\Throwable) {
+                // The tables cannot be made here: the statement's own error says what is wrong.
+                throw $error;
+            }
+            return $this->send($text, $params, $select, $identifiers);
+        }
+    }
+
+    /** Whether a statement failed because a table is not there (MySQL's 1146). */
+    private static function missingTable(\Throwable $error): bool
+    {
+        return $error->getCode() === self::NO_SUCH_TABLE
+            || ($error->getCode() === 0 && preg_match('/Table \'.*\' doesn\'t exist/', $error->getMessage()) === 1);
+    }
+
+    /**
+     * The server's number for the error the last statement left, or 0 when
+     * the connection cannot say. Read from the connection's own property, as
+     * WordPress reads it.
+     */
+    private function errno(): int
+    {
+        $dbh = $this->wpdb->dbh ?? null;
+        return is_object($dbh) && ($dbh instanceof \mysqli || property_exists($dbh, 'errno')) ? (int) $dbh->errno : 0;
+    }
+
+    /**
+     * Sends one statement. $wpdb sends a statement a second time itself, on a
+     * new connection, when the server had gone away (error 2006); the
+     * connection it holds afterwards is then another one, which `resent`
+     * notes, since the first send may have landed before the break.
+     */
+    private function send(string $text, array $params, bool $select, array $identifiers): array|int
+    {
         [$template, $args] = self::placeholders($text, $params);
         $args = [...$identifiers, ...$args];
         $wpdb = $this->wpdb;
+        $before = $wpdb->dbh ?? null;
         $suppressed = $wpdb->suppress_errors(true);
         try {
             // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery, PluginCheck.Security.DirectDB.UnescapedDBParameter -- the library's statements on the plugin's own tables (see above); every value is a placeholder of $wpdb->prepare().
@@ -206,8 +276,11 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
                     : $wpdb->query($wpdb->prepare($template, ...$args));
             }
             // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            if (is_object($before) && ($wpdb->dbh ?? null) !== $before) {
+                $this->resent = true;
+            }
             if ($wpdb->last_error !== '') {
-                throw new \RuntimeException('WordPress database error: ' . $wpdb->last_error); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
+                throw new \RuntimeException('WordPress database error: ' . $wpdb->last_error, $this->errno()); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain text for logs and notices; escaped where it is shown.
             }
             return $select ? $result : (int) $result;
         } finally {
@@ -221,9 +294,33 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         return array_values((array) $this->query($text, $params, true));
     }
 
+    /**
+     * Whether a statement failed on a key already there: MySQL's 1062, by its
+     * number, since the server writes the message in its own language
+     * (lc_messages). The English text is read only when the connection gave
+     * no number.
+     */
     private static function duplicate(\Throwable $error): bool
     {
-        return str_contains($error->getMessage(), 'Duplicate entry');
+        return $error->getCode() === self::DUPLICATE
+            || ($error->getCode() === 0 && str_contains($error->getMessage(), 'Duplicate entry'));
+    }
+
+    /**
+     * After a conditional state write that answered "not written": whether
+     * WordPress sent it again after the connection broke and its first send
+     * had in fact landed (the stored state is the one written), as
+     * MysqlStore tells. Without this a lost answer would read as another
+     * process having written first, and the job's update would be worked out
+     * and applied twice.
+     */
+    private function stateLanded(JobState $state): bool
+    {
+        if (!$this->resent) {
+            return false;
+        }
+        $stored = $this->getState($state->job);
+        return $stored !== null && Js::stringify($stored) === Js::stringify($state);
     }
 
     // ------------------------------------------------------------ the store
@@ -263,7 +360,20 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
 
     public function insertRun(Run $run): void
     {
-        $this->query($this->sql['insertRun'], Sql::insertRunParams($run));
+        $this->resent = false;
+        try {
+            $this->query($this->sql['insertRun'], Sql::insertRunParams($run));
+        } catch (\RuntimeException $error) {
+            // Sent again after the connection broke, it finds the row its first
+            // send wrote before the break: that row is this one, so the insert went through.
+            if ($this->resent && self::duplicate($error)) {
+                $stored = $this->getRun($run->id);
+                if ($stored !== null && Js::stringify(Sql::insertRunParams($stored)) === Js::stringify(Sql::insertRunParams($run))) {
+                    return;
+                }
+            }
+            throw $error;
+        }
     }
 
     public function updateRun(Run $run): void
@@ -276,6 +386,7 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         if ($fromStatuses === []) {
             return false;
         }
+        $this->resent = false;
         if ($this->query(Sql::updateRunIfSql($this->prefix, count($fromStatuses)), Sql::updateRunIfParams($run, $fromStatuses)) > 0) {
             return true;
         }
@@ -285,8 +396,11 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
         // still matches, which is only when its status is one of $fromStatuses
         // (a flush of a running run): every store, counting matched rows, says
         // the same. A finish moves the status out of them, so the second finish fails.
+        // A statement WordPress sent again after the connection broke finds its
+        // own first send's write, which landed before the break.
+        $resent = $this->resent;
         $stored = $this->getRun($run->id);
-        return $stored !== null && in_array($stored->status, $fromStatuses, true)
+        return $stored !== null && (in_array($stored->status, $fromStatuses, true) || $resent)
             && Js::stringify(Sql::updateRunParams($stored)) === Js::stringify(Sql::updateRunParams($run));
     }
 
@@ -325,8 +439,10 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
 
     public function compareAndSetState(JobState $state, int|float $expectedVersion): bool
     {
+        $this->resent = false;
         if ($expectedVersion != 0) {
-            return $this->query($this->sql['casUpdate'], Sql::casUpdateParams($state, $expectedVersion)) > 0;
+            return $this->query($this->sql['casUpdate'], Sql::casUpdateParams($state, $expectedVersion)) > 0
+                || $this->stateLanded($state);
         }
         // Version 0 is a row at version 0 (or with none), or no row at all.
         [$job, $json] = Sql::stateParams($state);
@@ -337,9 +453,10 @@ final class WpdbStore implements Store, UpdatesRunIf, ComparesAndSetsState
             $this->query($this->sql['casInsert'], [$job, $json]);
             return true;
         } catch (\RuntimeException $error) {
-            // A row is there, at another version: another process wrote first.
+            // A row is there, at another version: another process wrote first
+            // (or this one did, and the answer was lost with the connection).
             if (self::duplicate($error)) {
-                return false;
+                return $this->stateLanded($state);
             }
             throw $error;
         }

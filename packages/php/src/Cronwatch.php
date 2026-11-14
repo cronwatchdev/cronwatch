@@ -69,6 +69,22 @@ final class Cronwatch
      */
     public const RETRY_BUDGET_MS = 20_000;
     /**
+     * How long recording a run's start (the job's declaration and the run's
+     * row) should take at most before the job runs. The SDK stops waiting
+     * for a store that hangs after this long and runs the job unrecorded.
+     * PHP runs one thing at a time and cannot abandon a store call that is
+     * under way, so here it is kept two ways, neither of which is that: the
+     * stores that open their own connection give up connecting after this
+     * long (MysqlStore, PostgresStore), so an unreachable database fails,
+     * and the job runs unrecorded, in that time; and a start that took
+     * longer all the same (a statement waiting on a lock, a stalled
+     * network) is reported once it returns, the job having waited for it.
+     *
+     * @internal
+     */
+    public const START_DEADLINE_MS = 5_000;
+
+    /**
      * Reads and writes of one job's state before an update gives up on a store that keeps changing under it.
      *
      * @internal
@@ -496,7 +512,7 @@ final class Cronwatch
     {
         $this->ensureReady();
         if (isset($this->definitions[$name])) {
-            $this->sync($this->definitions[$name], true);
+            $this->sync($this->definitions[$name], true, false);
         }
         $stored = $this->store->getJob($name);
         return $stored === null ? null : $this->snapshot($stored, $this->now(), 0)->job;
@@ -722,8 +738,8 @@ final class Cronwatch
     /**
      * Writes the declaration of `definition`'s name as it stands, unless the
      * store has it. A handle kept from an earlier declaration writes the one
-     * that replaced it, never its own over it, and one forgotten since writes
-     * its own. One process writes one thing at a time, so only a store that
+     * that replaced it, never its own over it, and one forgotten since
+     * declares the job again as it was last declared here. One process writes one thing at a time, so only a store that
      * calls back into the client (a hook inside it, say) can declare the name
      * again while its write is under way: the name is then still to be
      * written, whatever was written meanwhile, since this write may have
@@ -734,10 +750,16 @@ final class Cronwatch
      *
      * With `confirm`, as a run starts, a name already written is read back:
      * another process may have forgotten the job since, and a job still
-     * declared here comes back on its next run.
+     * declared here comes back on its next run. `running` says the write is
+     * for a run (by default, whenever `confirm` is): a name forgotten here is
+     * then declared again, where a check or a dashboard read, whose loop may
+     * have picked the name up just before the forget (PHP runs one thing at a
+     * time, so only a forget made from inside the store, a source, or a
+     * channel the loop called lands there), leaves it forgotten.
      */
-    private function sync(JobDefinition $definition, bool $confirm = false): void
+    private function sync(JobDefinition $definition, bool $confirm = false, ?bool $running = null): void
     {
+        $running ??= $confirm;
         $this->ensureReady();
         $name = (string) $definition->get('name');
         if (isset($this->synced[$name])) {
@@ -745,6 +767,18 @@ final class Cronwatch
                 return;
             }
             unset($this->synced[$name]);
+        }
+        if (!isset($this->definitions[$name])) {
+            // Forgotten here since this write was asked for. A check or a
+            // dashboard read that was on its way to write it leaves it
+            // forgotten: only a run brings a forgotten job back.
+            if (!$running) {
+                return;
+            }
+            // A handle kept from before the forget: its run declares the job
+            // again, as run() by name does (declared()), so the name is marked
+            // as written once more and the checks keep it declared.
+            $this->declared($name);
         }
         $standing = $this->definitions[$name] ?? $definition;
         $this->store->upsertJob(Serialize::toStored($standing), $this->now());
@@ -900,7 +934,7 @@ final class Cronwatch
      *
      * `mayDiscard` is for a run that may turn out not to have happened (a
      * queued job released back onto the queue, a scheduled task skipped for
-     * overlapping): the start's effect on the job's state (missed and stuck
+     * overlapping): the start's effect on the job's state (missed
      * closed) waits for the finish, which applies it just before judging the
      * run, so discardExecution() leaves the state as it was. A check while
      * the run is going sees its running row either way.
@@ -913,6 +947,7 @@ final class Cronwatch
         $startedAt = $this->now();
         $run = new Run($id ?? self::uuid(), $name, RunStatus::RUNNING, $startedAt, trigger: $trigger);
         $recorded = false;
+        $began = ($this->wall)();
         try {
             $this->sync($definition, true);
             $this->store->insertRun(clone $run);
@@ -920,8 +955,15 @@ final class Cronwatch
         } catch (\Throwable $error) {
             $this->report($error, "recording {$name}");
         }
-        // The SDK closes missed and stuck beside the running job; here it is
-        // done just before the job runs. The result is the same.
+        // A store that hung and then answered: PHP could not run the job
+        // meanwhile (START_DEADLINE_MS), so the wait is said, not hidden.
+        $took = ($this->wall)() - $began;
+        if ($recorded && $took > self::START_DEADLINE_MS) {
+            $this->report(new \RuntimeException('the store took ' . Duration::format((int) floor($took / 1000) * 1000) . ' to record the start of ' . $name
+                . ', longer than ' . Duration::format(self::START_DEADLINE_MS) . '; PHP cannot abandon a store call under way, so the job waited for it'), "recording {$name}");
+        }
+        // The SDK closes missed beside the running job; here it is done just
+        // before the job runs. The result is the same.
         if ($recorded && !$mayDiscard) {
             $begun = clone $run;
             try {
@@ -967,7 +1009,7 @@ final class Cronwatch
      * still running and of this job (a store that implements DeletesRunIf;
      * every store here does), and nothing is alerted. The job's state is
      * left as it was when the run was started with `mayDiscard` (without it,
-     * the start already closed missed and stuck). A store that cannot delete
+     * the start already closed missed). A store that cannot delete
      * a run, or a row a check already marked stuck, is reported to onError
      * and left as it is. Returns whether the run was taken back.
      *
@@ -1114,7 +1156,7 @@ final class Cronwatch
     {
         if (!$recorded) {
             // The start was never written; the store may be back by now.
-            $this->sync($definition);
+            $this->sync($definition, false, true);
             try {
                 $this->store->insertRun($run);
                 $this->finishRun(Serialize::toStored($definition), $run, $finishedAt, $startPending);
@@ -1225,7 +1267,7 @@ final class Cronwatch
 
     /**
      * The start of a run without the function: the run is inserted and missed
-     * and stuck close (onRunStart). A store that fails is reported and the
+     * closes (onRunStart). A store that fails is reported and the
      * handle inserts the finished run instead.
      */
     private function recordStart(JobDefinition $definition, string $trigger, ?string $id): RunHandle
@@ -1351,7 +1393,7 @@ final class Cronwatch
         $run->durationMs = Evaluate::runDuration($source->startedAt, $finishedAt);
         $run->error = null;
         // Capped by conclude(), after it is redacted.
-        $run->output = self::joinLines($source->output, $added);
+        $run->output = $added === null ? $source->output : $this->appendRedacted($source->output, $added, $handle->flushed)['output'];
         $run->metrics = array_replace($source->metrics, $recorder->metrics());
         $seen = $recorder->expectText() ?? (is_string($result) ? Js::wellFormed($result) : null);
         $expectText = self::joinLines($head, self::joinLines($source->output, $seen));
@@ -1392,11 +1434,20 @@ final class Cronwatch
                 return false;
             }
             $updated = clone $stored;
-            if ($lines !== null) {
-                $updated->output = self::joinOutput($stored->output, Output::redactAndCap(Js::wellFormed($lines), $this->redact));
+            $next = $lines === null ? null : $this->appendRedacted($stored->output, Js::wellFormed($lines), $handle->flushed);
+            if ($next !== null) {
+                $updated->output = $next['output'] === null ? null : Output::capOutput($next['output']);
             }
             $updated->metrics = array_replace($stored->metrics, $metrics);
-            return $this->writeRunIf($updated, [RunStatus::RUNNING]);
+            if (!$this->writeRunIf($updated, [RunStatus::RUNNING])) {
+                return false;
+            }
+            // Remembered only while the stored output still ends with it (the cap did not cut into it).
+            if ($next !== null) {
+                $tail = $next['tail'];
+                $handle->flushed = $tail !== null && $updated->output !== null && str_ends_with($updated->output, $tail['redacted']) ? $tail : null;
+            }
+            return true;
         } catch (\Throwable $error) {
             $this->report($error, "flushing {$name}");
             return false;
@@ -1576,11 +1627,23 @@ final class Cronwatch
                     continue;
                 }
                 $run->status = RunStatus::TIMEOUT;
-                if ($stranded) {
-                    // Its own status was never written; a late finish of it is judged
-                    // as one after a timeout, so a success still recovers.
+                if ($stranded && $run->error !== null) {
+                    // The placeholder of a finished import keeps the run's own error,
+                    // and only a run that failed has one: it is closed as the failure
+                    // it was, with its own times, and alerts as failed. A later
+                    // import of the same run finds it finished and changes nothing.
+                    $run->status = RunStatus::FAILED;
+                    if ($run->durationMs !== null) {
+                        $run->finishedAt = $run->startedAt + $run->durationMs;
+                    } else {
+                        $run->durationMs = Evaluate::runDuration($run->startedAt, $run->finishedAt);
+                    }
+                } elseif ($stranded) {
+                    // Its own status was never written and nothing says it failed; a
+                    // late finish of it is judged as one after a timeout, so a success
+                    // still recovers.
                     $run->durationMs ??= Evaluate::runDuration($run->startedAt, $run->finishedAt);
-                    $run->error = self::STRANDED_ERROR . ($run->error === null ? '' : "\n{$run->error}");
+                    $run->error = self::STRANDED_ERROR;
                 } else {
                     $run->finishedAt = $at;
                     $run->durationMs = Evaluate::runDuration($run->startedAt, $at);
@@ -1982,11 +2045,37 @@ final class Cronwatch
         return "{$before}\n{$after}";
     }
 
-    /** Output appended to stored output, capped like any run's. */
-    private static function joinOutput(?string $before, ?string $after): ?string
+    /**
+     * `lines` added to the stored output, redacted. While the output still
+     * ends with what the handle flushed last (`flushed`), that tail is
+     * redacted again with the new lines after it and replaced; otherwise
+     * (the first flush, or another process has written since) the lines are
+     * redacted alone and appended. `tail` is what to remember once the write
+     * lands: at most OUTPUT_CAP of the raw text, from the start of a line,
+     * and only while its redaction is still the end of what was written.
+     *
+     * @param array{raw: string, redacted: string}|null $flushed
+     * @return array{output: ?string, tail: array{raw: string, redacted: string}|null}
+     */
+    private function appendRedacted(?string $stored, string $lines, ?array $flushed): array
     {
-        $joined = self::joinLines($before, $after);
-        return $joined === null ? null : Output::capOutput($joined);
+        $added = Output::stripNul($lines);
+        $joins = $flushed !== null && $stored !== null && str_ends_with($stored, $flushed['redacted']);
+        $raw = $joins ? "{$flushed['raw']}\n{$added}" : $added;
+        $redacted = Output::redactAndCap($raw, $this->redact);
+        $output = $joins ? substr($stored, 0, strlen($stored) - strlen($flushed['redacted'])) . $redacted : self::joinLines($stored, $redacted);
+        if (Js::length16($raw) <= Output::OUTPUT_CAP) {
+            return ['output' => $output, 'tail' => ['raw' => $raw, 'redacted' => $redacted]];
+        }
+        // The last OUTPUT_CAP of it, from the start of its first whole line.
+        $end = Js::tail16($raw, Output::OUTPUT_CAP);
+        $cut = strpos($end, "\n");
+        if ($cut === false) {
+            return ['output' => $output, 'tail' => null];
+        }
+        $raw = substr($end, $cut + 1);
+        $kept = Output::redactAndCap($raw, $this->redact);
+        return ['output' => $output, 'tail' => str_ends_with($redacted, $kept) ? ['raw' => $raw, 'redacted' => $kept] : null];
     }
 
     /** A whole number in range, or the fallback for anything that is not a number. */

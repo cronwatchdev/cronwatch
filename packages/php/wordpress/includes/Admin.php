@@ -72,8 +72,73 @@ final class Admin
         // Each field is sanitized by saveSettings(), by its kind: an email list, a URL, a duration, a token.
         $posted = isset($_POST['cronwatch']) && is_array($_POST['cronwatch']) ? wp_unslash($_POST['cronwatch']) : []; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized field by field in saveSettings().
         $notice = self::saveSettings($posted);
+        if (self::$made !== null) {
+            self::keepMadeToken(self::$made);
+        }
         wp_safe_redirect(self::pageUrl(['cronwatch_notice' => $notice]));
         exit;
+    }
+
+    /** The cookie that holds one half of a token just made, until the settings page shows it. */
+    public const TOKEN_COOKIE = 'cronwatch_new_token';
+
+    /** The API token the last saveSettings() of this request made, or null: only ever in memory. */
+    private static ?string $made = null;
+
+    /** The API token the last saveSettings() of this request made, to show once, or null. */
+    public static function madeToken(): ?string
+    {
+        return self::$made;
+    }
+
+    /**
+     * Keeps a token just made for the settings page the browser is sent to
+     * next, without the site holding it: the options table keeps only its
+     * digest, so the token is split in two with a random pad as long as
+     * itself. The pad goes to the browser in a cookie (ten minutes, wp-admin
+     * only, not readable by scripts) and the token XOR the pad into a
+     * transient; either half alone is random bytes, so a read of the
+     * database (a backup, another plugin) in that time finds no token.
+     */
+    private static function keepMadeToken(string $token): void
+    {
+        $pad = random_bytes(strlen($token));
+        set_transient('cronwatch_new_token_' . get_current_user_id(), base64_encode($token ^ $pad), 600);
+        if (!headers_sent()) {
+            setcookie(self::TOKEN_COOKIE, base64_encode($pad), [
+                'expires' => time() + 600,
+                'path' => defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/',
+                'secure' => is_ssl(),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+    }
+
+    /**
+     * The token keepMadeToken() kept, put back together from its two halves
+     * and both thrown away: shown once. Null when there is none, or when a
+     * half is missing (another browser, the ten minutes over).
+     */
+    private static function takeMadeToken(): ?string
+    {
+        $key = 'cronwatch_new_token_' . get_current_user_id();
+        $kept = get_transient($key);
+        if (!is_string($kept) || $kept === '') {
+            return null;
+        }
+        delete_transient($key);
+        $cookie = isset($_COOKIE[self::TOKEN_COOKIE]) && is_string($_COOKIE[self::TOKEN_COOKIE]) ? sanitize_text_field(wp_unslash($_COOKIE[self::TOKEN_COOKIE])) : '';
+        if (!headers_sent()) {
+            setcookie(self::TOKEN_COOKIE, '', ['expires' => time() - 3600, 'path' => defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/', 'secure' => is_ssl(), 'httponly' => true, 'samesite' => 'Lax']);
+        }
+        $half = base64_decode($kept, true);
+        $pad = base64_decode($cookie, true);
+        if (!is_string($half) || !is_string($pad) || $half === '' || strlen($half) !== strlen($pad)) {
+            return null;
+        }
+        $token = $half ^ $pad;
+        return preg_match(self::TOKEN_PATTERN, $token) === 1 ? $token : null;
     }
 
     /**
@@ -83,13 +148,14 @@ final class Admin
      * held a control character, "token" when a token typed in was refused, and
      * "channels" when another channel is only partly filled in or refused
      * (its problems kept for the page to show; it sends nothing until they
-     * are fixed) ("grace-token" when two were; the rest is saved either way). A token the plugin makes is kept for the page to
-     * show once.
+     * are fixed) ("grace-token" when two were; the rest is saved either way). A token the plugin makes is held in
+     * memory (madeToken()) for save() to hand to the page that shows it once; nothing but its digest is stored.
      *
      * @param array<string, mixed> $posted
      */
     public static function saveSettings(array $posted): string
     {
+        self::$made = null;
         $old = Plugin::settings();
         $refused = [];
         $text = fn (string $key): string => isset($posted[$key]) && is_string($posted[$key]) ? trim($posted[$key]) : '';
@@ -130,7 +196,7 @@ final class Admin
         } elseif (!empty($posted['api_token_new']) || ($new['api_enabled'] === '1' && $new['api_token'] === '')) {
             $made = wp_generate_password(40, false);
             $new['api_token'] = Api::digest($made);
-            set_transient('cronwatch_new_token_' . get_current_user_id(), $made, 600);
+            self::$made = $made;
         }
         $grace = sanitize_text_field($text('grace'));
         if ($grace !== '') {
@@ -307,9 +373,8 @@ final class Admin
             }
         }
 
-        $made = get_transient('cronwatch_new_token_' . get_current_user_id());
-        if (is_string($made) && $made !== '') {
-            delete_transient('cronwatch_new_token_' . get_current_user_id());
+        $made = self::takeMadeToken();
+        if ($made !== null) {
             echo '<div class="notice notice-info"><p>' . esc_html__('The new API token is below. Copy it now: it is not shown again.', 'cronwatch') . '</p><p><code>' . esc_html($made) . '</code></p></div>';
         }
 

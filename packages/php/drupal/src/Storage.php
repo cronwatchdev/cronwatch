@@ -77,7 +77,8 @@ final class Storage {
     return match ($kind) {
       'mysql' => new MysqlStore($dsn, $username, $password, prefix: $prefix, options: $options),
       'pgsql' => new PostgresStore($dsn, $username, $password, prefix: $prefix, options: $options),
-      default => new SqliteStore(substr($dsn, strlen('sqlite:')), prefix: $prefix),
+      // The site's own database file: its mode and journal mode stay Drupal's.
+      default => new SqliteStore(substr($dsn, strlen('sqlite:')), prefix: $prefix, shared: TRUE),
     };
   }
 

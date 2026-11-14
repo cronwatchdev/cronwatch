@@ -2,6 +2,12 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## Unreleased
+
+### Fixed
+- A `#[Cronwatch\Watch]` attribute PHP cannot make is reported once and the queue worker runs unwatched, instead of failing every queue.
+- On a site whose database is SQLite, the store no longer changes the mode or journal mode of the site's own database file.
+
 ## 0.14.3 - 2026-10-24
 
 ### Changed

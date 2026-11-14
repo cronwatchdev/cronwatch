@@ -15,14 +15,21 @@ use Cronwatch\JobState;
  *     new SqliteStore('/var/lib/app/cronwatch.db')
  *     new SqliteStore(pdo: $pdo)          // an open connection of your own
  *
- * The directory is created when missing and the file made private (0600),
- * so every process that uses the store (the web server, the crontab line,
- * a queue worker) must run as the same user: a cron job run as one user and
- * a dashboard served as www-data cannot share the file. ":memory:" works
+ * The directory is created when missing and a file the store makes is
+ * private (0600), so every process that uses the store (the web server, the
+ * crontab line, a queue worker) must run as the same user: a cron job run
+ * as one user and a dashboard served as www-data cannot share the file. A
+ * file that was already there keeps the mode it has. ":memory:" works
  * too. Without a path the file is data/cronwatch.db in the
  * app's root, beside its vendor directory (see defaultPath()). `prefix`
  * names the tables: lowercase letters, digits, and underscores, default
  * "cronwatch_".
+ *
+ * `shared: true` is for a file that is not the store's own: the app's own
+ * SQLite database, where the framework integrations keep the tables. That
+ * file is the app's to make and to configure, so the store neither makes it
+ * nor changes its mode or its journal mode, and keeps SQLite's own
+ * `synchronous`; it only waits out other writers (`busy_timeout`).
  */
 final class SqliteStore extends PdoStore
 {
@@ -35,6 +42,7 @@ final class SqliteStore extends PdoStore
         ?string $path = null,
         ?\PDO $pdo = null,
         string $prefix = Sql::DEFAULT_PREFIX,
+        public readonly bool $shared = false,
     ) {
         if (!extension_loaded('pdo_sqlite')) {
             throw new \LogicException('SqliteStore needs the pdo_sqlite extension');
@@ -71,26 +79,35 @@ final class SqliteStore extends PdoStore
             return $this->db;
         }
         $file = $this->path;
+        if ($this->shared) {
+            // The app's own database: its file, its mode, and its journal mode are the app's.
+            $opened = new \PDO('sqlite:' . $file, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+            $opened->exec('PRAGMA busy_timeout = 5000');
+            $this->forgetStatements();
+            return $this->db = $opened;
+        }
         if ($file !== ':memory:' && $file !== '') {
             $dir = dirname($file);
             if (!is_dir($dir)) {
                 @mkdir($dir, 0777, true);
             }
-            // Create the file private before SQLite opens it. SQLite gives the
-            // -wal and -shm files the main file's mode, so the whole set stays
-            // 0600; the chmods cover files left by an earlier open.
-            $mask = umask(0077);
-            try {
-                $handle = @fopen($file, 'a');
-            } finally {
-                umask($mask);
-            }
-            if ($handle !== false) {
-                fclose($handle);
-                foreach ([$file, "{$file}-wal", "{$file}-shm"] as $f) {
-                    if (file_exists($f)) {
-                        @chmod($f, 0600);
-                    }
+            // A file the store makes is made private before SQLite opens it.
+            // SQLite gives the -wal and -shm files the main file's mode, so
+            // the whole set is 0600. A file that was already there (one an
+            // earlier open made private, or one somebody else made and gave
+            // a mode of their choosing) keeps the mode it has.
+            clearstatcache(true, $file);
+            if (!file_exists($file)) {
+                $mask = umask(0077);
+                try {
+                    // "x": only when this call makes the file, so one another process made meanwhile is left alone.
+                    $handle = @fopen($file, 'x');
+                } finally {
+                    umask($mask);
+                }
+                if ($handle !== false) {
+                    fclose($handle);
+                    @chmod($file, 0600);
                 }
             }
             self::checkAccess($file);
@@ -123,7 +140,7 @@ final class SqliteStore extends PdoStore
                 $user = function_exists('posix_geteuid') && function_exists('posix_getpwuid') ? (posix_getpwuid(posix_geteuid())['name'] ?? null) : null;
                 throw new \RuntimeException(
                     'SqliteStore cannot read and write ' . (file_exists($f) ? $f : "a file in {$dir}") . ($user !== null ? " as {$user}" : '')
-                    . ': the store\'s file is private (0600) to the user that made it, so every process that uses it (the web server, the crontab line, workers) must run as that same user',
+                    . ': a file the store makes is private (0600) to the user that made it, so every process that uses it (the web server, the crontab line, workers) must run as that same user',
                 );
             }
         }
