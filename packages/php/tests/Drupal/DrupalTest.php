@@ -164,6 +164,9 @@ final class DrupalTest extends TestCase
                 'drupal/cronwatch' => $version,
                 'drupal/ultimate_cron' => self::ULTIMATE_CRON,
                 'drush/drush' => '^13.3',
+                // Robo 5.2.1 to 5.2.3 call Application::addCommand(), which Symfony Console has only from 7.4,
+                // while still allowing Console 6, so Drush stops on Drupal 10.
+                'consolidation/robo' => '~5.1.1',
             ],
             'minimum-stability' => 'stable',
             'prefer-stable' => true,
