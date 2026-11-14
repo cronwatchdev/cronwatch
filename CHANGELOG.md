@@ -2,6 +2,56 @@
 
 Every notable change to CronWatch, newest first. All the packages, in every language, share one version, so each release is one section here, with a line per language where it matters. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and from 1.0 the versions follow [Semantic Versioning](https://semver.org) as the [Stability](https://cronwatch.dev/docs/stability/) page describes. The WordPress plugin, the Drupal module and the Craft CMS plugin keep their own changelogs too, for their stores.
 
+## Unreleased
+
+### Security
+
+- Python: the dashboard reads a multipart form in one pass. A crafted 1 MiB sign-in body, which anyone could send, no longer holds the process for over a minute before any token is asked for. A multipart body with no closing delimiter is now refused as malformed.
+- Rust: the dashboard reads a request body's JSON in linear time. A sign-in body of a hundred thousand keys, which anyone could send, no longer holds a worker of the app's runtime for seconds.
+- Go: a JSON object with descending index keys is parsed in linear time, and the dashboard reads only the fields it uses from a JSON body, bounding the cost of an unauthenticated sign-in body.
+- Python: `cronwatch.OPEN` is the named way to serve the dashboard or run a handler without a token or secret. `None` still works but warns once outside development, since it is what `os.environ.get()` returns for an unset variable.
+- Every language: a secret logged across two flushes of a run handle (a private key a line at a time, a label and then its value) is redacted whole, at the flush and at finish.
+- MCP server: a redirect from the dashboard is reported as an error and never followed, and `CRONWATCH_URL` with a user name or password, a query, a fragment, or a scheme other than http or https is refused at startup, with no message repeating a password.
+- WordPress: a generated API token is no longer stored in plain text between the save and the page that shows it once.
+
+### Fixed
+
+- TypeScript: an idle connection lost by the Postgres store's own pool no longer ends the process as an uncaught `error` event; pass `onError` to `postgres()` to hear of it. A pool you pass in needs its own `error` listener.
+- Every language but PHP: a run and a job's handler wait at most five seconds for the store to record the run's start, so a store that hangs no longer holds the job back. The job runs unrecorded, the error handler hears of it, and a start that is written late is finished over, never left running. In Java, .NET, and Elixir this covers the runs the scheduler integrations open too.
+- Ruby: the start deadline applies to the memory store and the ActiveRecord store on Postgres (stores may define `abandonable?` to opt in); on SQLite the store's own busy and checkout timeouts bound the wait. Python writes the start in a thread of its own to keep the deadline, except on a SQLite connection only its own thread may use.
+- PHP: `MysqlStore` and `PostgresStore` give up opening their own connection after 5 seconds (override with `PDO::ATTR_TIMEOUT` in `options:` or `connect_timeout` in the URL), so an unreachable database no longer holds a job back. PHP cannot abandon a store call under way, so a start that still takes longer than 5 seconds is reported to `onError` once it returns.
+- TypeScript: the pool the Postgres store makes gives up on a connection after five seconds and uses TCP keepalive, so an unreachable database fails a write, which is reported, where it could hold it for good. `poolOptions` on `postgres()` passes any `pg.Pool` option through and overrides both. A pool you pass in is unchanged.
+- TypeScript: an `onError` that throws no longer rejects `check()`, skips the jobs after the one it was reporting, or turns a dashboard read into a 500.
+- Every language: a job handle kept across `forget` declares the job again on its next run and writes it once, instead of rewriting the job row on every run. A job deleted from the dashboard while a check or a dashboard read is writing declarations stays deleted; only its next run brings it back.
+- Ruby: a job block left by `return`, `break`, or `throw` finishes its run instead of leaving it running to be reported stuck.
+- Ruby: the dashboard no longer answers 500 when a `Cookie` or `Authorization` header holds a byte outside ASCII, the ActiveRecord store on Postgres works inside `ActiveRecord::Base.connected_to(shard:)`, the development dashboard token survives a Rails code reload, alert channels can post to an IPv6 literal host, and `job.log` no longer raises for a Hash or Array holding a Range, Set, or Enumerator without ActiveSupport.
+- Python: `metric()` and `record_run()` accept `Decimal`, `Fraction`, and other real numbers instead of failing the job. A run block left in a different context than it was entered in, or failed by an error that cannot be printed, is still recorded. A generator function is refused as a run instead of being recorded as an instant success. The Postgres store's own connection gets a connect timeout and TCP keepalive when the connection string sets none, and takes `statement_timeout=`.
+- PHP: the SQLite store no longer changes the mode or journal mode of an app's own database (Laravel's `database` driver, Symfony's `DATABASE_URL`, Drupal), and makes private only a file it creates; an existing file keeps its mode.
+- Drupal and Craft CMS: a `#[Cronwatch\Watch]` attribute PHP cannot make is reported once and the class runs unwatched, instead of failing every queue (Drupal) or the job (Craft).
+- WordPress: tables missing on a site copied or restored without them are made again at the first statement that needs them, the check forgets WP-Cron jobs whose event is gone and that nothing has touched for the whole retention, database errors are read by MySQL's error number, and a conditional write WordPress resent after a dropped connection is no longer applied twice.
+- Go: the Asynq and River middlewares no longer read the store with the task's own context, so a store that hangs costs a task a moment instead of its whole deadline, and they leave a task's own later deadline in place instead of ending it at the job's timeout (new `cronwatch.KeepDeadline` run option).
+- Go: gocron one-time jobs and robfig/cron function literals are reported once per job, a scheduler event that changes nothing no longer reads every job in the store, a worker-only process follows a job's stored definition as it changes, and checking a seconds-field cron against its scheduler's fire times is about six times faster.
+- Rust: a client used after the tokio runtime it was built on has shut down reports it once, and a check cancelled that way no longer blocks every later check. `MemoryStore` copies only the runs a read answers. The dashboard draws a run whose stored start is the lowest 64-bit time instead of answering 500 in builds with overflow checks.
+- Elixir: an isolated run in flight when the instance stops is recorded as failed at once, and `Cronwatch.Runs` no longer crashes when a run's process dies while the task supervisor is down. A job run by a name the instance does not declare keeps the options the store holds. A run an Oban or Quantum job opened is recorded when it finishes after `Cronwatch.Runs` restarted.
+- Elixir: a run made in the instant `Cronwatch.Runs` is restarting runs unrecorded, where it could raise without running the job.
+- Elixir: the key=value redaction runs in one pass, so output made to make it backtrack takes milliseconds, not seconds. A store call inside the app's Ecto transaction no longer leaves an `{:EXIT, pid, :normal}` message in a caller that traps exits, the dashboard accepts an empty JSON object a Phoenix endpoint's parsers already read, and `Cronwatch.Handler` still checks the secret and runs the job, unrecorded, while its instance is not running.
+- Java (Quartz): a run whose job executed is no longer deleted when another job listener throws afterwards, a job whose trigger is paused or has not started yet is not reported missed, and `scheduleCheck` updates an existing check job's interval (the new `unscheduleCheck` removes it).
+- Java (Spring): `@Scheduled` runs are still recorded when the app turns off the `tasks.scheduled.execution` observation, a ShedLock lock refused inside an unlocked method no longer deletes the run or hides its failure, and the README says an open dashboard behind Spring Security needs `csrf.ignoringRequestMatchers("/cronwatch/**")`.
+- .NET: an alert channel that blocks before it first awaits is held to the 15 second deadline, abandoned tasks no longer reach `TaskScheduler.UnobservedTaskException`, a job name or run id containing a NUL reads as not found on Postgres, and the ASP.NET Core dashboard works behind middleware that rewrites the request path.
+- .NET (Hangfire and Quartz): a slow alert at a run's close is no longer reported as a store that did not answer, the Quartz listener waits on the store at most five seconds to open and to close a run, a recovered firing finishes only the stopped node's run, and a firing that arrives while the scheduler is being attached waits for the instance part of its run id.
+
+### Changed
+
+- Every language: stuck stays open until a run finishes successfully. A run that only starts no longer closes it, so a job that hangs on every run alerts once, not once per run, and its health stays stuck until that run.
+- Every language: an imported run whose finish was never written is closed as failed, with its own error, when it carried one, where before it alerted as stuck.
+- Every language: Claude triage's `max_tokens` defaults to 4096, leaving room for the model's thinking, and a response that reaches the limit before any diagnosis is reported to the error handler.
+- Java: the JobRunr integration is tested on JobRunr 9 as well as 8, and the stores on MariaDB Connector/J 4, which turns TLS on by default: a MariaDB server without TLS needs `sslMode=disable` in the app's own DataSource.
+- Updated test, build, and example dependencies to their current patch and minor releases across npm, Maven, NuGet, Cargo, and Go's unpublished modules. No published package's dependency floor moved.
+- The dependency audit refuses a resolved inventory older than its manifest, reads every Maven module's tree, fails on a paginated OSV answer, and weighs an expired exception only in its own ecosystem.
+- The release script names what to do when the commit or the tag fails, and stops on a Go module under `packages/go` it does not know.
+- The site's link check fails on images, frames, media, and form targets the CSP would block, on inline event handlers, and on a build with no pages; the dash check also catches dashes written as HTML entities or string escapes.
+- CI: a site-only push also runs the release and webhook schema tests that read site files, a file moved out of `packages/` no longer counts as site-only, and each deploy is queued by its own commit. The contact form turns away posts a browser marks as coming from another site.
+
 ## 0.14.3 - 2026-10-24
 
 ### Fixed
