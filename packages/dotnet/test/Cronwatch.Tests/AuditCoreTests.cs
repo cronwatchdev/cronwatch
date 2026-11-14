@@ -153,7 +153,11 @@ public class AuditCoreTests
         m.Cw.Job("a", new JobOptions { Schedule = "every 5m" });
         Task<bool> sync = m.Cw.SyncJobAsync("a");
         // The later write waits its turn; were it not to, it would land here, under the earlier one.
-        await Task.WhenAny(sync, Task.Delay(200));
+        using (var delay = new CancellationTokenSource())
+        {
+            await Task.WhenAny(sync, Task.Delay(200, delay.Token));
+            await delay.CancelAsync();
+        }
         gate.SetResult();
         await run;
         Assert.True(await sync);

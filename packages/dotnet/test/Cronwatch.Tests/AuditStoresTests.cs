@@ -13,7 +13,7 @@ public class AuditStoresTests
         var b = new StringBuilder("-----BEGIN " + "PRIVATE KEY-----\n");
         for (int i = 0; i < lines; i++)
         {
-            b.Append(new string('Q', 64)).Append('\n');
+            b.Append('Q', 64).Append('\n');
         }
         return b.Append("-----END " + "PRIVATE KEY-----").ToString();
     }

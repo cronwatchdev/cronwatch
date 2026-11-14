@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using static Cronwatch.Tests.Support;
@@ -401,7 +402,11 @@ public class StartFinishTests
         await sending.Task.WaitAsync(TimeSpan.FromMinutes(1));
         Task closing = m.Cw.DisposeAsync().AsTask();
         // The wait is on the client's clock, which does not move here: only the check ends it.
-        await Task.WhenAny(closing, Task.Delay(200));
+        using (var delay = new CancellationTokenSource())
+        {
+            await Task.WhenAny(closing, Task.Delay(200, delay.Token));
+            await delay.CancelAsync();
+        }
         Assert.False(closing.IsCompleted, "still waiting on the check");
         Assert.Empty(events);
         gate.SetResult();
