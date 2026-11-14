@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { Cronwatch } from "../src/client.js";
 import { discord } from "../src/alerts/discord.js";
 import { slack } from "../src/alerts/slack.js";
 import { webhook } from "../src/alerts/webhook.js";
@@ -99,6 +100,37 @@ test("anthropic triage makes one attempt, bounded in time, that the client can a
   assert.equal(seen!.signal, controller.signal);
   assert.equal(seen!.maxRetries, 0);
   assert.ok(seen!.timeout! < 25_000);
+});
+
+test("anthropic triage leaves room for the model's thinking, and says when the limit ran out before any diagnosis", async () => {
+  let params: { max_tokens?: number } | undefined;
+  let answer: { stop_reason: string; content: { type: string; text?: string; thinking?: string }[] } = { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }] };
+  const client = { beta: { messages: { create: async (p: typeof params) => { params = p; return answer; } } } } as unknown as Anthropic;
+  const signal = new AbortController().signal;
+  await anthropic({ client })({ alert: alert(), recentRuns: [], signal });
+  assert.equal(params!.max_tokens, 4096);
+  await anthropic({ client, maxTokens: 1200 })({ alert: alert(), recentRuns: [], signal });
+  assert.equal(params!.max_tokens, 1200);
+
+  // Thinking used the whole limit: no text block at all.
+  answer = { stop_reason: "max_tokens", content: [{ type: "thinking", thinking: "" }] };
+  await assert.rejects(anthropic({ client, maxTokens: 1200 })({ alert: alert(), recentRuns: [], signal }), /reached max_tokens \(1200\) before writing a diagnosis/);
+  // A diagnosis cut short is still a diagnosis, and a refusal or an empty answer is still none.
+  answer = { stop_reason: "max_tokens", content: [{ type: "text", text: "The database was" }] };
+  assert.equal(await anthropic({ client })({ alert: alert(), recentRuns: [], signal }), "The database was");
+  answer = { stop_reason: "end_turn", content: [] };
+  assert.equal(await anthropic({ client })({ alert: alert(), recentRuns: [], signal }), null);
+
+  // Through the client: the alert still goes out, and onError hears why it has no diagnosis.
+  answer = { stop_reason: "max_tokens", content: [] };
+  const errors: string[] = [];
+  const sent: Alert[] = [];
+  const cw = new Cronwatch({ alerts: [{ name: "t", send: async (a) => { sent.push(a); } }], triage: anthropic({ client }), cronSecret: null, onError: (e, where) => errors.push(`${where}: ${(e as Error).message}`) });
+  await cw.job("nightly").run(async () => { throw new Error("boom"); }).catch(() => {});
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.triage, null);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0]!, /^triage for nightly: triage: the model reached max_tokens \(4096\)/);
 });
 
 test("slack puts triage in its own block, so no block passes 3000 characters", async (t) => {

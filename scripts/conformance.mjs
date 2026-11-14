@@ -618,9 +618,28 @@ function evaluateCases() {
       steps: [start(T0), check(T0 + 4 * MIN), check(T0 + 6 * MIN), check(T0 + 7 * MIN), run(T0 + 10 * MIN), check(T0 + 12 * MIN)],
     },
     {
-      name: "a stuck run's next start closes stuck, and a failure then keeps the recovery waiting",
+      name: "a timeout below the threshold opens nothing, and the failure that reaches it opens failed",
       definition: { name: "j", timeout: "90s", failuresBeforeAlert: 2 },
       steps: [start(T0), check(T0 + 2 * MIN), fail(T0 + 3 * MIN), run(T0 + 4 * MIN)],
+    },
+    {
+      // Stuck closes only on a run that finishes ok: a later start leaves it
+      // open, a second timeout alerts nothing, a failed run opens failed
+      // beside it, and one ok run closes both with a single recovery.
+      name: "stuck stays open through a later start, a second timeout, and a failure, and one ok run recovers both",
+      definition: { name: "hangs", timeout: "5m" },
+      steps: [
+        start(T0, "first"), check(T0 + 6 * MIN),
+        start(T0 + 10 * MIN, "second"), check(T0 + 12 * MIN), check(T0 + 16 * MIN),
+        fail(T0 + 20 * MIN), check(T0 + 22 * MIN),
+        finish("first", T0 + 24 * MIN, { status: "failed" }),
+        run(T0 + 30 * MIN), check(T0 + 32 * MIN),
+      ],
+    },
+    {
+      name: "a stuck run that finishes ok late closes stuck with a recovery, though another run started meanwhile",
+      definition: { name: "queue", timeout: "5m" },
+      steps: [start(T0, "first"), check(T0 + 6 * MIN), start(T0 + 7 * MIN, "second"), finish("first", T0 + 8 * MIN), finish("second", T0 + 9 * MIN)],
     },
     {
       name: "timeouts below the threshold do not alert",
@@ -2763,7 +2782,13 @@ async function triageCases() {
   const answers = [];
   for (const response of responses) {
     const client = { beta: { messages: { create: async () => response } } };
-    answers.push({ response, result: await anthropic({ client })({ alert: missedAlert, recentRuns: [], signal: new AbortController().signal }) });
+    // A response the function throws for (max_tokens reached with no text) is
+    // recorded as `error`, its message, in place of `result`.
+    try {
+      answers.push({ response, result: await anthropic({ client })({ alert: missedAlert, recentRuns: [], signal: new AbortController().signal }) });
+    } catch (error) {
+      answers.push({ response, error: error.message });
+    }
   }
   return { contexts, requests, responses: answers, wire: await triageWire(contexts, optionSets) };
 }

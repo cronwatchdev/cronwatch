@@ -5,11 +5,42 @@ import { params, rowToJob, rowToRun, rowToState, schema, statements, tablePrefix
 export interface PostgresOptions {
   /** postgres://... Defaults to process.env.DATABASE_URL. */
   connectionString?: string;
-  /** Bring your own pool instead. It is not closed by close(). */
+  /**
+   * Bring your own pool instead, with its own timeouts (see `poolOptions`
+   * for the two this store sets on a pool it makes). It is not closed by close(), and it needs an
+   * 'error' listener of its own (`pool.on("error", ...)`): pg emits one when an
+   * idle connection is lost (the database restarted, a proxy closed it), and
+   * Node ends the process for an 'error' event nothing listens to.
+   */
   pool?: pg.Pool;
   /** Table name prefix: lowercase letters, digits, and underscores. Default "cronwatch_". */
   prefix?: string;
+  /**
+   * Options for the pool this store makes, passed to `new pg.Pool()` as they
+   * are (`max`, `ssl`, `idleTimeoutMillis`, `statement_timeout`, and the
+   * rest). Two have defaults here that pg does not have, so the store
+   * cannot wait on the database for ever: `connectionTimeoutMillis` is 5000
+   * (pg waits without limit for a connection, so an unreachable database or
+   * a pool with every connection busy would hold a write until something
+   * else gave way), and `keepAlive` is true (TCP keepalive, so a connection
+   * whose other end went away without a word is noticed and dropped rather
+   * than waited on). Give either here to change it; 0 for
+   * `connectionTimeoutMillis` is pg's own wait without limit. Not used with
+   * `pool`: a pool you pass in is left exactly as you made it.
+   */
+  poolOptions?: pg.PoolConfig;
+  /**
+   * Called when the pool this store made loses an idle connection (the
+   * database restarted or failed over, a proxy closed it). The pool has
+   * already dropped that connection and the next query opens another, so
+   * there is nothing to do but hear of it; pass the client's onError to see
+   * these with the rest. Not used with `pool`. Default: ignored.
+   */
+  onError?: (error: unknown) => void;
 }
+
+/** How long the store's own pool waits for a connection, unless `poolOptions` says otherwise. */
+const CONNECT_TIMEOUT_MS = 5_000;
 
 /**
  * Keeps everything in Postgres through the `pg` driver. For apps on Vercel,
@@ -20,7 +51,24 @@ export function postgres(options: PostgresOptions = {}): Store & Required<Pick<S
   const p = tablePrefix(options.prefix);
   const sql = statements("postgres", p);
   const owned = !options.pool;
-  const pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? process.env.DATABASE_URL });
+  const pool = options.pool ?? new pg.Pool({
+    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+    keepAlive: true,
+    ...options.poolOptions,
+    connectionString: options.connectionString ?? options.poolOptions?.connectionString ?? process.env.DATABASE_URL,
+  });
+  if (owned) {
+    // pg emits 'error' on the pool when an idle connection is lost, and an
+    // 'error' event with no listener is thrown, which would end the app. The
+    // pool has dropped the connection by now; the next query opens another.
+    pool.on("error", (error) => {
+      try {
+        options.onError?.(error);
+      } catch {
+        // An onError that throws must not become the uncaught exception this listener is here to stop.
+      }
+    });
+  }
 
   // A connection whose ROLLBACK fails (it died part way) is destroyed, not
   // handed back to the pool, and the error that stopped the work is the one thrown.

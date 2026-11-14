@@ -11,7 +11,12 @@ export interface AnthropicTriageOptions {
   model?: string;
   /** How hard the model thinks. Default "medium"; a stack trace rarely needs more. */
   effort?: "low" | "medium" | "high";
-  /** Default 800. A diagnosis is a paragraph. */
+  /**
+   * Default 4096. A diagnosis is a paragraph, but the model thinks first
+   * (thinking is on by default on current models) and that thinking counts
+   * toward this limit, so one sized for the paragraph alone can be used up
+   * before any of it is written.
+   */
   maxTokens?: number;
   /**
    * Route a policy refusal to Anthropic's default fallback model inside the
@@ -22,6 +27,9 @@ export interface AnthropicTriageOptions {
   /** Anything the model should know about this app: "A Next.js app on Vercel with a Neon database." */
   context?: string;
 }
+
+/** Room for the model's thinking as well as the paragraph it writes after it. */
+const DEFAULT_MAX_TOKENS = 4096;
 
 /** Under the client's 25 second wait, so the request ends on its own first. */
 const REQUEST_TIMEOUT_MS = 24_000;
@@ -86,7 +94,7 @@ export function anthropic(options: AnthropicTriageOptions = {}): TriageFn {
     const user = (options.context ? `About this app: ${options.context}\n\n` : "") + describe(ctx);
     const response = await client.beta.messages.create({
       model,
-      max_tokens: options.maxTokens ?? 800,
+      max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       system: SYSTEM,
       output_config: { effort: options.effort ?? "medium" },
       messages: [{ role: "user", content: user }],
@@ -104,6 +112,12 @@ export function anthropic(options: AnthropicTriageOptions = {}): TriageFn {
       .map((block) => block.text)
       .join("\n")
       .trim();
+    // The limit ran out before any of the diagnosis was written (on its
+    // thinking, say): thrown, so the client reports it to onError rather
+    // than the alert going out with no diagnosis and no word of why.
+    if (!text && response.stop_reason === "max_tokens") {
+      throw new Error(`triage: the model reached max_tokens (${options.maxTokens ?? DEFAULT_MAX_TOKENS}) before writing a diagnosis; raise maxTokens or lower effort`);
+    }
     return text || null;
   };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cronwatch } from "../src/index.js";
-import { capture, clock, MIN, HOUR, T0 } from "./helpers.js";
+import { cronwatch, memory } from "../src/index.js";
+import { capture, clock, MIN, HOUR, settle, T0 } from "./helpers.js";
 
 function make(options: Parameters<typeof cronwatch>[0] = {}) {
   const c = clock();
@@ -294,6 +294,256 @@ test("after a forget, cw.run() and cw.resumeRun() by name declare the job again 
   await cw.check();
   assert.equal((await cw.jobSummary("nightly"))!.definition.schedule, "0 2 * * *");
   assert.ok(!alerts.types().includes("recovered"), "no 'no longer scheduled' recovery");
+});
+
+test("a job that hangs on every run alerts stuck once, and recovers on its first success", async () => {
+  const { cw, c, alerts } = make();
+  const job = cw.job("hangs", { schedule: "*/5 * * * *", timezone: "UTC", timeout: "10m" });
+  // Twelve runs, five minutes apart, none of which ever finishes.
+  const handles = [];
+  for (let i = 0; i < 12; i++) {
+    handles.push(await job.start());
+    c.advance(5 * MIN);
+    await cw.check();
+  }
+  assert.deepEqual(alerts.types(), ["stuck"]);
+  assert.equal((await cw.jobSummary("hangs"))!.health, "stuck");
+  // A run that fails alerts as failed by its own rule; stuck stays open beside it.
+  await job.run(async () => { throw new Error("boom"); }).catch(() => {});
+  assert.deepEqual(alerts.types(), ["stuck", "failed"]);
+  assert.deepEqual((await cw.jobSummary("hangs"))!.open.sort(), ["failed", "stuck"]);
+  // A hung run that reports failing late is not counted again and alerts nothing.
+  await handles[0]!.fail(new Error("late"));
+  assert.deepEqual(alerts.types(), ["stuck", "failed"]);
+  // The first success closes both with one recovery.
+  await job.run(async () => {});
+  assert.deepEqual(alerts.types(), ["stuck", "failed", "recovered"]);
+  assert.deepEqual([...(alerts.alerts[2]!.details as { after: string[] }).after].sort(), ["failed", "stuck"]);
+  assert.deepEqual((await cw.jobSummary("hangs"))!.open, []);
+});
+
+test("a stuck run that finishes ok late closes stuck with a recovery, though other runs started meanwhile", async () => {
+  const { cw, c, alerts } = make();
+  const job = cw.job("slow-queue", { timeout: "10m" });
+  const first = await job.start();
+  c.advance(11 * MIN);
+  await cw.check();
+  assert.deepEqual(alerts.types(), ["stuck"]);
+  const second = await job.start();
+  assert.deepEqual((await cw.jobSummary("slow-queue"))!.open, ["stuck"], "a start leaves stuck open");
+  await first.finish();
+  assert.deepEqual(alerts.types(), ["stuck", "recovered"]);
+  await second.finish();
+  assert.deepEqual(alerts.types(), ["stuck", "recovered"]);
+});
+
+test("a store that hangs while recording a run's start does not hold the job back, and leaves no running row", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const base = memory();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let inserts = 0;
+  const store = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop !== "insertRun") return value;
+      // The first insert (the run's start) hangs until released.
+      return async (run: Parameters<typeof base.insertRun>[0]) => { if (++inserts === 1) await gate; return base.insertRun(run); };
+    },
+  });
+  const errors: string[] = [];
+  const { cw, alerts } = make({ store, onError: (e, where) => errors.push(`${where}: ${(e as Error).message}`) });
+  const job = cw.job("nightly");
+  let ran = false;
+  const running = job.run(async (j) => { ran = true; j.log("did the work"); return "done"; });
+  await settle();
+  assert.equal(ran, false, "still waiting on the store");
+  t.mock.timers.tick(4_999);
+  await settle();
+  assert.equal(ran, false);
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(ran, true, "the job ran once the deadline passed");
+  assert.deepEqual(errors, ["recording nightly: the store took longer than 5s to record the start of nightly; running it unrecorded"]);
+  // The job is done and its finish is waiting on the same store. The late
+  // start lands first, and the finish is written over it.
+  release();
+  assert.equal(await running, "done");
+  await settle();
+  const runs = await cw.runs("nightly");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]!.status, "ok");
+  assert.equal(runs[0]!.output, "did the work");
+  assert.deepEqual(await base.runningRuns(), []);
+  assert.equal(errors.length, 1);
+  assert.deepEqual(alerts.types(), []);
+});
+
+test("a start write that lands after the finish failed is finished then, not left running", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const base = memory();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let inserts = 0;
+  const store = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop !== "insertRun") return value;
+      return async (run: Parameters<typeof base.insertRun>[0]) => {
+        inserts += 1;
+        if (inserts === 1) { await gate; return base.insertRun(run); }
+        // The finish finds the store down, not hanging.
+        throw new Error("store down");
+      };
+    },
+  });
+  const errors: string[] = [];
+  const { cw, alerts } = make({ store, onError: (e, where) => errors.push(`${where}: ${(e as Error).message}`) });
+  const running = cw.job("nightly").run(async () => { throw new Error("boom"); });
+  await settle();
+  t.mock.timers.tick(5_000);
+  await assert.rejects(running, /boom/, "the job's own error is what run() throws");
+  assert.deepEqual(errors.map((e) => e.replace(/:.*/, "")), ["recording nightly", "recording nightly"]);
+  assert.deepEqual(await cw.runs("nightly"), []);
+  // The start write lands at last, after the finish gave up: the run is finished and judged now.
+  release();
+  await settle();
+  const runs = await cw.runs("nightly");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]!.status, "failed");
+  assert.match(runs[0]!.error!, /boom/);
+  assert.deepEqual(await base.runningRuns(), []);
+  assert.deepEqual(alerts.types(), ["failed"]);
+});
+
+test("a start write that lands while the finish is failing is finished by that finish, not left running", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const base = memory();
+  let releaseStart!: () => void;
+  let failFinish!: () => void;
+  const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+  const finishGate = new Promise<void>((resolve) => { failFinish = resolve; });
+  let inserts = 0;
+  let getRunDown = false;
+  const store = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === "insertRun") {
+        return async (run: Parameters<typeof base.insertRun>[0]) => {
+          inserts += 1;
+          if (inserts === 1) { await startGate; return base.insertRun(run); }
+          // The finish, written as a run of its own, hangs and then fails.
+          await finishGate;
+          throw new Error("store down");
+        };
+      }
+      // The read after that failure (was the run recorded meanwhile?) fails too, once.
+      if (prop === "getRun") return (id: string) => (getRunDown ? (getRunDown = false, Promise.reject(new Error("store down"))) : base.getRun(id));
+      return value;
+    },
+  });
+  const errors: string[] = [];
+  const { cw, alerts } = make({ store, onError: (e, where) => errors.push(`${where}: ${(e as Error).message}`) });
+  const running = cw.job("nightly").run(async () => { throw new Error("boom"); });
+  await settle();
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.equal(inserts, 2, "the job has run and its finish is being written");
+  // The start lands now, while the finish is still under way.
+  releaseStart();
+  await settle();
+  assert.equal((await base.getRun((await base.runningRuns())[0]!.id))!.status, "running");
+  // Then the finish fails, and cannot see that the start has landed.
+  getRunDown = true;
+  failFinish();
+  await assert.rejects(running, /boom/);
+  await settle();
+  const runs = await cw.runs("nightly");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]!.status, "failed");
+  assert.deepEqual(await base.runningRuns(), [], "no row left running by a live process");
+  assert.deepEqual(alerts.types(), ["failed"]);
+  assert.deepEqual(errors.map((e) => e.replace(/^recording nightly: /, "")), ["the store took longer than 5s to record the start of nightly; running it unrecorded", "store down"]);
+});
+
+test("a handle kept across a forget declares the job again on its next run, and writes it once", async () => {
+  let upserts = 0;
+  const base = memory();
+  const store = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop !== "upsertJob") return value;
+      return (...args: Parameters<typeof base.upsertJob>) => { upserts += 1; return base.upsertJob(...args); };
+    },
+  });
+  const { cw } = make({ store });
+  const job = cw.job("nightly", { schedule: "0 2 * * *", description: "Nightly export" });
+  await job.run(async () => {});
+  assert.equal(upserts, 1);
+  await cw.forget("nightly");
+  assert.deepEqual(cw.definedJobs(), []);
+
+  await job.run(async () => {});
+  assert.equal(upserts, 2);
+  assert.deepEqual(cw.definedJobs().map((d) => d.name), ["nightly"], "declared again, so checks and sources see it");
+  await job.run(async () => {});
+  await job.run(async () => {});
+  assert.equal(upserts, 2, "written once, not on every run");
+  assert.equal((await cw.jobSummary("nightly"))!.definition.description, "Nightly export");
+
+  // Forgotten by another process since: this one's check writes it again.
+  await base.deleteJob("nightly");
+  await cw.check();
+  assert.ok(await base.getJob("nightly"));
+});
+
+test("a forget that lands while a check is writing declarations is not undone by that check", async () => {
+  for (const read of ["check", "jobs", "jobSummary"] as const) {
+    const store = memory();
+    const { cw } = make({ store });
+    cw.job("keep", { schedule: "0 2 * * *" });
+    cw.job("nightly", { schedule: "0 2 * * *" });
+    // Neither is written yet, so the read's own loop is what would write them.
+    const reading = read === "check" ? cw.check() : read === "jobs" ? cw.jobs() : cw.jobSummary("nightly");
+    await cw.forget("nightly");
+    await reading;
+    assert.deepEqual(cw.definedJobs().map((d) => d.name), ["keep"], `${read}: still forgotten here`);
+    assert.equal(await store.getJob("nightly"), null, `${read}: not written again`);
+    assert.equal(await store.getState("nightly"), null, `${read}: no state left behind`);
+    // Its next run still brings it back.
+    await cw.run("nightly", async () => {});
+    assert.ok(await store.getJob("nightly"));
+  }
+});
+
+test("an onError that throws does not stop a check, the jobs after it, or a dashboard read", async () => {
+  const base = memory();
+  const broken = new Set<string>();
+  const store = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === "listRuns") return (job: string, limit: number) => (broken.has(job) ? Promise.reject(new Error("store down")) : base.listRuns(job, limit));
+      if (prop === "prune") return () => Promise.reject(new Error("prune down"));
+      return value;
+    },
+  });
+  let calls = 0;
+  const { cw, c, alerts } = make({
+    store,
+    sources: [{ name: "bad", sync: async () => { throw new Error("source down"); } }],
+    onError: () => { calls += 1; throw new Error("onError threw"); },
+  });
+  cw.job("a-broken", { schedule: "every 5m" });
+  cw.job("b-late", { schedule: "every 5m" });
+  await cw.jobs(); // written to the store now, so both are due an hour on
+  broken.add("a-broken");
+  c.advance(HOUR);
+  const result = await cw.check();
+  assert.ok(calls >= 3, "the source, the broken job, and the prune were each reported");
+  assert.deepEqual(result.jobs.map((j) => j.name), ["a-broken", "b-late"]);
+  assert.deepEqual(alerts.alerts.map((a) => `${a.job} ${a.type}`), ["b-late missed"], "the job after the broken one was still checked");
+  // A dashboard read of the broken job answers, showing it as failing.
+  assert.equal((await cw.jobSummary("a-broken"))!.health, "failing");
 });
 
 test("a failing alert channel does not break the run", async () => {

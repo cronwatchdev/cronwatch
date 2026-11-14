@@ -267,14 +267,29 @@ test("missed closed by a run start still recovers, even when that run fails quie
   assert.deepEqual(details(ok.alerts[0], "recovered").after, ["missed"]);
 });
 
-test("stuck closed by the next run start is recovered by a later success", () => {
+test("stuck stays open through later starts, failures, and timeouts, and closes with a recovery on the next success", () => {
   const d: JobDefinition = { name: "j" };
   const stuck = onRunFinish(d, run("j", "timeout", T0 - HOUR), emptyState("j"), [], T0);
   assert.deepEqual(stuck.alerts.map((a) => a.type), ["stuck"]);
-  // The next run starts in another process, so its finish sees stuck already closed.
-  const closed = startNow(d, stuck.state, T0 + MIN);
-  const ok = onRunFinish(d, run("j", "ok", T0 + MIN), closed, [], T0 + 2 * MIN);
-  assert.deepEqual(details(ok.alerts[0], "recovered").after, ["stuck"]);
+  // The next run starting closes nothing: it may hang as the last one did.
+  const started = startNow(d, stuck.state, T0 + MIN);
+  assert.equal(started.open.stuck, T0);
+  assert.deepEqual(started.pendingRecovery, []);
+  // It times out too: stuck is already open, so there is no second alert.
+  const again = onRunFinish(d, run("j", "timeout", T0 + MIN), started, [], T0 + HOUR);
+  assert.deepEqual(again.alerts, []);
+  assert.equal(again.state.open.stuck, T0, "open since the first time");
+  assert.equal(again.state.consecutiveFailures, 2);
+  // A run that fails opens failed by its own rule and leaves stuck open.
+  const failed = onRunFinish(d, run("j", "failed", T0 + HOUR), startNow(d, again.state, T0 + HOUR), [], T0 + HOUR + 1000);
+  assert.deepEqual(failed.alerts.map((a) => a.type), ["failed"]);
+  assert.equal(failed.state.open.stuck, T0);
+  // The first success closes both, with one recovery naming both.
+  const ok = onRunFinish(d, run("j", "ok", T0 + 2 * HOUR), startNow(d, failed.state, T0 + 2 * HOUR), [], T0 + 2 * HOUR + 1000);
+  assert.deepEqual(ok.alerts.map((a) => a.type), ["recovered"]);
+  assert.deepEqual([...details(ok.alerts[0], "recovered").after].sort(), ["failed", "stuck"]);
+  assert.deepEqual(ok.state.open, {});
+  assert.deepEqual(ok.state.pendingRecovery, []);
 });
 
 test("a recovery waits while another condition is still open", () => {
@@ -393,8 +408,9 @@ test("a run a source reports at its finish closes missed only when its start cov
   const covering = run("j", "ok", at(3, 2), 28 * MIN);
   assert.deepEqual(onRunStart(d, covering, open, at(3, 30)).open, {});
   assert.deepEqual(onRunStart(d, covering, open, at(3, 30)).pendingRecovery, ["missed"]);
-  // Stuck always closes on a start.
-  assert.deepEqual(onRunStart(d, before, { ...emptyState("j"), open: { stuck: at(3) } }, at(3, 30)).open, {});
+  // Stuck never closes on a start, whether or not the run catches the schedule up.
+  assert.deepEqual(onRunStart(d, before, { ...emptyState("j"), open: { stuck: at(3) } }, at(3, 30)).open, { stuck: at(3) });
+  assert.deepEqual(onRunStart(d, covering, { ...emptyState("j"), open: { stuck: at(3), missed: at(3, 11) } }, at(3, 30)).open, { stuck: at(3) });
   // No schedule: nothing is due, so any run closes missed.
   assert.deepEqual(onRunStart({ name: "j" }, before, open, at(3, 30)).open, {});
 });

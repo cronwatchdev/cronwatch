@@ -483,12 +483,26 @@ test("an evaluated import whose state write fails and is not retried is closed b
   assert.equal((await store.getRun(run.id))!.status, "running");
   c.advance(SEND_LEASE_MS + MIN);
   await cw.check();
+  // The placeholder holds the run's own error, so it is closed as the failure it was, with its own times.
   const closed = (await store.getRun(run.id))!;
-  assert.equal(closed.status, "timeout");
+  assert.equal(closed.status, "failed");
   assert.equal(closed.durationMs, MIN);
-  assert.equal(closed.error, "Imported, but its finish was never written; marked as timed out\nboom");
-  assert.deepEqual(sent.types(), ["stuck"]);
-  assert.notEqual((await cw.jobSummary("imported"))!.health, "healthy");
+  assert.equal(closed.finishedAt, run.finishedAt);
+  assert.equal(closed.error, "boom");
+  assert.deepEqual(sent.types(), ["failed"]);
+  assert.equal((await cw.jobSummary("imported"))!.health, "failing");
+  // The importer comes back and records the same run again: nothing changes, and nothing is counted twice.
+  assert.deepEqual(await cw.recordRun(run), []);
+  await cw.check();
+  assert.deepEqual(sent.types(), ["failed"]);
+  const state = (await store.getState("imported"))!;
+  assert.equal(state.consecutiveFailures, 1);
+  assert.deepEqual(Object.keys(state.open), ["failed"]);
+  assert.equal(state.pendingRuns, undefined);
+  // The next imported success recovers it.
+  c.advance(MIN);
+  await cw.recordRun({ ...run, id: "next-import", status: "ok", startedAt: c.now() - 1000, finishedAt: c.now(), durationMs: 1000, error: null });
+  assert.deepEqual(sent.types(), ["failed", "recovered"]);
 });
 
 test("an evaluated import whose finish write fails after its marker is closed by a check, and a late success recovers it", async () => {

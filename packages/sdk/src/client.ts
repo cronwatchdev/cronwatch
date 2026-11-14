@@ -35,7 +35,7 @@ import { composeAlert } from "./format.js";
 import { bearerToken, constantTimeEqual, json } from "./http.js";
 import { createRecorder } from "./job.js";
 import type { JobContext } from "./job.js";
-import { capOutput, describeError, OUTPUT_CAP, redactAndCap, redactSecrets } from "./output.js";
+import { capOutput, describeError, OUTPUT_CAP, redactAndCap, redactSecrets, stripNul } from "./output.js";
 import { parseSchedule } from "./schedule.js";
 import { checkExpectation, readStoredJob, toStored } from "./serialize.js";
 import { buildRoutes } from "./routes/index.js";
@@ -256,6 +256,12 @@ const PRUNE_INTERVAL_MS = 60 * 60_000;
  * job. Once it is spent the rest wait for the next check.
  */
 const RETRY_BUDGET_MS = 20_000;
+/**
+ * How long run() and handler() wait for the store to record a run's start
+ * (the job's declaration and the run's row) before running the job without
+ * it. A store that fails does so sooner; this is for one that hangs.
+ */
+const START_DEADLINE_MS = 5_000;
 /** Reads and writes of one job's state before an update gives up on a store that keeps changing under it. */
 const STATE_ATTEMPTS = 10;
 /** Runs read for a baseline, and the most read when failures crowd out the successes. */
@@ -535,8 +541,8 @@ export class Cronwatch {
   /**
    * Writes the declaration of `definition`'s name as it stands, unless the
    * store has it. A handle kept from an earlier declaration writes the one
-   * that replaced it, never its own over it, and one forgotten since writes
-   * its own. The writes of one name take turns, in the order they were asked
+   * that replaced it, never its own over it, and one forgotten since
+   * declares the job again as it was last declared here. The writes of one name take turns, in the order they were asked
    * for, so one still under way cannot land after a later one; and a name
    * declared again while its write was under way is still to be written. A
    * name is marked as written only while that same declaration stands, so a
@@ -545,9 +551,12 @@ export class Cronwatch {
    *
    * With `confirm`, as a run starts, a name already written is read back:
    * another process may have forgotten the job since, and a job still
-   * declared here comes back on its next run.
+   * declared here comes back on its next run. `running` says the write is
+   * for a run (by default, whenever `confirm` is): a name forgotten here is
+   * then declared again, where a check or a dashboard read, whose loop may
+   * have picked the name up just before the forget, leaves it forgotten.
    */
-  private async sync(definition: JobDefinition, confirm = false): Promise<void> {
+  private async sync(definition: JobDefinition, confirm = false, running = confirm): Promise<void> {
     await this.ensureReady();
     const name = definition.name;
     if (this.synced.has(name)) {
@@ -556,6 +565,16 @@ export class Cronwatch {
     }
     await this.serial(name, async () => {
       if (this.synced.has(name)) return;
+      if (!this.definitions.has(name)) {
+        // Forgotten here since this write was asked for. A check or a
+        // dashboard read that was on its way to write it leaves it
+        // forgotten: only a run brings a forgotten job back.
+        if (!running) return;
+        // A handle kept from before the forget: its run declares the job
+        // again, as cw.run() by name does (declared()), so the name is marked
+        // as written once more and the checks keep it declared.
+        this.declared(name);
+      }
       const standing = this.definitions.get(name) ?? definition;
       await this.store.upsertJob(toStored(standing), this.now());
       if (this.definitions.get(name) === standing) this.synced.add(name);
@@ -673,16 +692,41 @@ export class Cronwatch {
       metrics: {},
       trigger,
     };
+    // The run as it starts: what the start write holds, however late it lands.
+    const begun = { ...run };
     let recorded = false;
-    try {
+    /** The start write was given up on (START_DEADLINE_MS), and has landed since. */
+    let landedLate = false;
+    /** The finish has been recorded, or has failed to be: a start that lands after this has no finish coming. */
+    let concluded = false;
+    const writing = (async () => {
       await this.sync(definition, true);
-      await this.store.insertRun({ ...run });
-      recorded = true;
+      await this.store.insertRun({ ...begun });
+    })();
+    try {
+      if ((await within(writing, START_DEADLINE_MS)) === TIMED_OUT) {
+        // A store that hangs must not hold the job back: it runs now, as one
+        // whose start was never written. The write is still under way and
+        // may land later, leaving a running row. One that lands before the
+        // finish is finished over as usual; one that lands after it is
+        // finished then, here, so no row is left running to be called stuck.
+        this.report(new Error(`the store took longer than ${formatDuration(START_DEADLINE_MS)} to record the start of ${name}; running it unrecorded`), `recording ${name}`);
+        void writing.then(
+          () => {
+            landedLate = true;
+            if (concluded) return this.recordFinish(definition, run, true, run.finishedAt!).then(() => {}, (e) => this.report(e, `recording ${name}`));
+          },
+          () => {
+            // The write failed in the end: nothing was left behind.
+          },
+        );
+      } else {
+        recorded = true;
+      }
     } catch (e) {
       this.report(e, `recording ${name}`);
     }
-    // Closing missed and stuck happens beside the job, which never waits on it.
-    const begun = { ...run };
+    // Closing missed happens beside the job, which never waits on it.
     const started = recorded
       ? this.updateState(name, (before) => ({ state: holdRun(onRunStart(definition, begun, before, this.now()), run.id), result: undefined }))
           .then(() => {}, (e) => this.report(e, `starting ${name}`))
@@ -711,11 +755,29 @@ export class Cronwatch {
     this.conclude(definition, run, result, error, threw, recorder.expectText() ?? (typeof result === "string" ? result : null));
 
     await started;
+    const ignore = (why: string | null) => {
+      if (why) this.report(new Error(`run ${run.id} of ${name} ${why}; ignored`), `finishing ${name}`);
+    };
+    // Whether the finish was written over a start in the store, or as a run of its own.
+    const over = recorded || landedLate;
     try {
-      const ignored = await this.recordFinish(definition, run, recorded, finishedAt);
-      if (ignored) this.report(new Error(`run ${run.id} of ${name} ${ignored}; ignored`), `finishing ${name}`);
+      ignore(await this.recordFinish(definition, run, over, finishedAt));
     } catch (e) {
       this.report(e, `recording ${name}`);
+      // The late start landed while this finish, written as a run of its
+      // own, was failing: it found nothing to finish over, and the landing
+      // saw a finish still under way and left the row to it. So the row is
+      // finished now. (From here to `concluded` nothing waits, so a start
+      // that lands later still finds the finish over and finishes itself.)
+      if (!over && landedLate) {
+        try {
+          ignore(await this.recordFinish(definition, run, true, finishedAt));
+        } catch (again) {
+          this.report(again, `recording ${name}`);
+        }
+      }
+    } finally {
+      concluded = true;
     }
     return { run, result, error, threw };
   }
@@ -758,7 +820,7 @@ export class Cronwatch {
   private async recordFinish(definition: JobDefinition, run: Run, recorded: boolean, finishedAt: number): Promise<string | null> {
     if (!recorded) {
       // The start was never written; the store may be back by now.
-      await this.sync(definition);
+      await this.sync(definition, false, true);
       try {
         await this.store.insertRun(run);
         await this.finishRun(toStored(definition), run, finishedAt);
@@ -821,7 +883,7 @@ export class Cronwatch {
 
   /**
    * The start of execute() without the function: the run is inserted and
-   * missed and stuck close (onRunStart). A store that fails is reported and
+   * missed closes (onRunStart). A store that fails is reported and
    * the handle inserts the finished run instead, as execute() does.
    */
   private async recordStart(definition: JobDefinition, trigger = "start", id?: string): Promise<RunHandle> {
@@ -910,6 +972,37 @@ export class Cronwatch {
      * miss a line logged early, which run() would have seen.
      */
     let head: string | null = null;
+    /**
+     * The lines this handle last flushed, as logged (`raw`) and as they
+     * stand at the end of the stored output (`redacted`), or null before the
+     * first flush. The next lines are redacted together with them, so a
+     * secret that began in one flush and ends in the next (a private key
+     * logged a line at a time, a label and then its value) is blanked whole,
+     * where redacting each flush alone would store its second half.
+     */
+    let flushed: { raw: string; redacted: string } | null = null;
+    /**
+     * `lines` added to the stored output, redacted. While the output still
+     * ends with what this handle flushed last, that tail is redacted again
+     * with the new lines after it and replaced; otherwise (the first flush,
+     * or another process has written since) the lines are redacted alone
+     * and appended. `tail` is what to remember once the write lands: at most
+     * OUTPUT_CAP of the raw text, from the start of a line, and only while
+     * its redaction is still the end of what was written.
+     */
+    const appendRedacted = (stored: string | null, lines: string): { output: string | null; tail: typeof flushed } => {
+      const added = stripNul(lines);
+      const joins = flushed !== null && stored !== null && stored.endsWith(flushed.redacted);
+      let raw = joins ? `${flushed!.raw}\n${added}` : added;
+      const redacted = redactAndCap(raw, self.redact);
+      const output = joins ? stored!.slice(0, stored!.length - flushed!.redacted.length) + redacted : joinLines(stored, redacted);
+      if (raw.length <= OUTPUT_CAP) return { output, tail: { raw, redacted } };
+      const cut = raw.indexOf("\n", raw.length - OUTPUT_CAP);
+      if (cut === -1) return { output, tail: null };
+      raw = raw.slice(cut + 1);
+      const kept = redactAndCap(raw, self.redact);
+      return { output, tail: redacted.endsWith(kept) ? { raw, redacted: kept } : null };
+    };
     let queue: Promise<unknown> = Promise.resolve();
     const inTurn = <T>(fn: () => Promise<T>): Promise<T> => {
       const result = queue.then(fn);
@@ -970,7 +1063,7 @@ export class Cronwatch {
           durationMs: runDuration(from.startedAt, finishedAt),
           error: null,
           // Capped by conclude(), after it is redacted.
-          output: joinLines(from.output, added),
+          output: added === null ? from.output : appendRedacted(from.output, added).output,
           metrics: { ...from.metrics, ...recorder.metrics() },
         };
         const expectText = joinLines(head, joinLines(from.output, recorder.expectText() ?? (typeof result === "string" ? result : null)));
@@ -1022,9 +1115,12 @@ export class Cronwatch {
             self.report(new Error(`run ${id} of ${name} belongs to job "${stored.job}"; ignored`), `flushing ${name}`);
             return;
           }
-          const output = lines === null ? stored.output : joinOutput(stored.output, redactAndCap(lines, self.redact));
+          const next = lines === null ? null : appendRedacted(stored.output, lines);
+          const output = next === null ? stored.output : next.output === null ? null : capOutput(next.output);
           // Only over a row still running, so a flush never undoes a finish written meanwhile.
           if (!(await self.writeRunIf({ ...stored, output, metrics: { ...stored.metrics, ...metrics } }, ["running"]))) return putBack();
+          // Remembered only while the stored output still ends with it (the cap did not cut into it).
+          if (next !== null) flushed = next.tail !== null && output !== null && output.endsWith(next.tail.redacted) ? next.tail : null;
           const text = taken.expectText();
           if (text !== null && (head === null || head.length < OUTPUT_CAP)) head = (joinLines(head, text) ?? "").slice(0, OUTPUT_CAP);
         } catch (e) {
@@ -1141,7 +1237,7 @@ export class Cronwatch {
     if (!evaluate) {
       // Stored unjudged on purpose: a check must not evaluate it as one whose evaluation was lost.
       await this.updateState(run.job, (current) => ({ state: releaseRun(current, run.id), result: undefined }))
-        .catch((e: unknown) => this.onError(e, `recording ${run.job}`));
+        .catch((e: unknown) => this.report(e, `recording ${run.job}`));
       return [];
     }
     if (claim.lateAfterTimeout && run.status !== "ok") return [];
@@ -1227,7 +1323,7 @@ export class Cronwatch {
       try {
         alerts.push(...((await source.sync(this)) ?? []));
       } catch (e) {
-        this.onError(e, `source ${source.name}`);
+        this.report(e, `source ${source.name}`);
       }
     }
     for (const definition of this.definitions.values()) await this.sync(definition);
@@ -1249,11 +1345,20 @@ export class Cronwatch {
         const run = await this.store.getRun(listed.id);
         if (!run || run.status !== "running" || run.job !== listed.job) continue;
         run.status = "timeout";
-        if (stranded) {
-          // Its own status was never written; a late finish of it is judged
-          // as one after a timeout, so a success still recovers.
+        if (stranded && run.error !== null) {
+          // The placeholder of a finished import keeps the run's own error,
+          // and only a run that failed has one: it is closed as the failure
+          // it was, with its own times, and alerts as failed. A later
+          // import of the same run finds it finished and changes nothing.
+          run.status = "failed";
+          if (run.durationMs !== null) run.finishedAt = run.startedAt + run.durationMs;
+          else run.durationMs = runDuration(run.startedAt, run.finishedAt!);
+        } else if (stranded) {
+          // Its own status was never written and nothing says it failed; a
+          // late finish of it is judged as one after a timeout, so a success
+          // still recovers.
           run.durationMs ??= runDuration(run.startedAt, run.finishedAt!);
-          run.error = STRANDED_ERROR + (run.error === null ? "" : `\n${run.error}`);
+          run.error = STRANDED_ERROR;
         } else {
           run.finishedAt = now;
           run.durationMs = runDuration(run.startedAt, now);
@@ -1263,7 +1368,7 @@ export class Cronwatch {
         if (!(await this.writeRunIf(run, ["running"]))) continue;
         alerts.push(...(await this.finishRun(definition, run, now)));
       } catch (e) {
-        this.onError(e, `checking ${listed.job}`);
+        this.report(e, `checking ${listed.job}`);
       }
     }
 
@@ -1291,7 +1396,7 @@ export class Cronwatch {
         alerts.push(...(await this.evaluatePending(stored, recent, state, now)));
         jobs.push(summarize(stored, recent, state, nextExpectedAt, now));
       } catch (e) {
-        this.onError(e, `checking ${stored.name}`);
+        this.report(e, `checking ${stored.name}`);
         jobs.push(await this.unevaluable(stored, now));
       }
     }
@@ -1302,7 +1407,7 @@ export class Cronwatch {
       try {
         pruned = await this.store.prune(now - this.retentionMs);
       } catch (e) {
-        this.onError(e, "pruning");
+        this.report(e, "pruning");
       }
     }
 
@@ -1330,7 +1435,7 @@ export class Cronwatch {
         if (run.status === "running" || typeof run.finishedAt !== "number" || run.finishedAt > now - SEND_LEASE_MS) continue;
         alerts.push(...(await this.finishRun(stored.definition, run, now, true)));
       } catch (e) {
-        this.onError(e, `evaluating run ${id} of ${stored.name}`);
+        this.report(e, `evaluating run ${id} of ${stored.name}`);
       }
     }
     return alerts;
@@ -1346,7 +1451,7 @@ export class Cronwatch {
       const { nextExpectedAt } = onCheck(stored.definition, stored, recent[0] ?? null, state, now);
       return { job: summarize(stored, recent, state, nextExpectedAt, now), runs: recent.slice(0, runs) };
     } catch (e) {
-      this.onError(e, `reading ${stored.name}`);
+      this.report(e, `reading ${stored.name}`);
       return { job: await this.unevaluable(stored, now), runs: recent.slice(0, runs) };
     }
   }
@@ -1377,7 +1482,7 @@ export class Cronwatch {
   async jobSummary(name: string): Promise<JobSummary | null> {
     await this.ensureReady();
     const definition = this.definitions.get(name);
-    if (definition) await this.sync(definition, true);
+    if (definition) await this.sync(definition, true, false);
     const stored = await this.store.getJob(name);
     if (!stored) return null;
     return (await this.snapshot(this.readJob(stored), this.now(), 0)).job;
@@ -1664,12 +1769,6 @@ function joinLines(before: string | null, after: string | null): string | null {
   return `${before}\n${after}`;
 }
 
-/** Output appended to stored output, capped like any run's. */
-function joinOutput(before: string | null, after: string | null): string | null {
-  const joined = joinLines(before, after);
-  return joined === null ? null : capOutput(joined);
-}
-
 /** A whole number in range, or the fallback for anything that is not a number. */
 function clampLimit(limit: number, fallback: number, min: number): number {
   const n = typeof limit === "number" && Number.isFinite(limit) ? Math.trunc(limit) : fallback;
@@ -1692,6 +1791,22 @@ function after(ms: number, fn: () => void): () => void {
   };
   arm(ms);
   return () => clearTimeout(timer);
+}
+
+/** What within() resolves to when the time ran out first. */
+const TIMED_OUT = Symbol("timed out");
+
+/**
+ * The promise's value, or TIMED_OUT once `ms` has passed without it. The
+ * promise is left to settle on its own; what it rejects with is thrown only
+ * while it is still being waited for.
+ */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  return new Promise<T | typeof TIMED_OUT>((resolve, reject) => {
+    const t = setTimeout(() => resolve(TIMED_OUT), ms);
+    if (typeof t === "object" && "unref" in t) t.unref();
+    promise.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

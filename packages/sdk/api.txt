@@ -258,6 +258,8 @@ interface PostgresOptions
   connectionString?: string
   pool?: pg.Pool
   prefix?: string
+  poolOptions?: pg.PoolConfig
+  onError?: (error: unknown) => void
 function postgres(options?: PostgresOptions): Store & Required<Pick<Store, 'lastRun'>>
 
 # @cronwatch/sdk/d1

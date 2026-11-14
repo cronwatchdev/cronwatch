@@ -237,6 +237,57 @@ test("close waits for a check under way before it closes the store", async () =>
   assert.deepEqual(events, ["sent", "closed", "closed"]);
 });
 
+test("a secret that starts in one flush and ends in the next is redacted whole", async () => {
+  const { cw } = make();
+  const job = cw.job("deploy");
+  const run = await job.start();
+  run.log("starting");
+  run.log("-----BEGIN PRIVATE KEY-----");
+  run.log("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj");
+  await run.flush();
+  assert.equal((await cw.getRun(run.id))!.output, "starting\n[redacted]");
+  run.log("MFNRV0X0e1nSecondHalfOfTheKeySecondHalfOfTheKeySecondHalfOfTheKe");
+  run.log("-----END PRIVATE KEY-----");
+  run.log("api_token:");
+  await run.flush();
+  assert.equal((await cw.getRun(run.id))!.output, "starting\n[redacted]\napi_token:");
+  // A label flushed, then its value: at the next flush, and again at finish.
+  run.log("hunter2hunter2");
+  await run.flush();
+  assert.equal((await cw.getRun(run.id))!.output, "starting\n[redacted]\napi_token:\n[redacted]");
+  run.log("password:");
+  await run.flush();
+  run.log("correct-horse");
+  const finished = await run.finish();
+  assert.equal(finished!.output, "starting\n[redacted]\napi_token:\n[redacted]\npassword:\n[redacted]");
+  assert.doesNotMatch(JSON.stringify(await cw.getRun(run.id)), /SecondHalf|hunter2|correct-horse/);
+});
+
+test("flushes after another process wrote to the run still append, each redacted", async () => {
+  const store = memory();
+  const { cw } = make({ store });
+  const run = await cw.job("deploy").start();
+  run.log("one");
+  await run.flush();
+  // Another handle on the same run (another process) appends in between.
+  const other = await cw.job("deploy").resume(run.id);
+  other.log("from elsewhere");
+  await other.flush();
+  run.log("token=abc123abc123");
+  await run.flush();
+  assert.equal((await cw.getRun(run.id))!.output, "one\nfrom elsewhere\ntoken=[redacted]");
+  // A long run: the remembered tail stays bounded and the output capped.
+  for (let i = 0; i < 6; i++) {
+    run.log(`line ${i} ${"x".repeat(6000)}`);
+    await run.flush();
+  }
+  run.log("secret=tail-secret-value");
+  const finished = await run.finish();
+  assert.ok(finished!.output!.length <= 16 * 1024 + 40);
+  assert.match(finished!.output!, /secret=\[redacted\]$/);
+  assert.doesNotMatch(finished!.output!, /tail-secret-value/);
+});
+
 test("lines flushed while a check marks earlier runs stuck are kept on the run it marks next", async () => {
   let release!: () => void;
   let entered!: () => void;
