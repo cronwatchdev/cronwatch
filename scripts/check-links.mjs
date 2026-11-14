@@ -6,10 +6,16 @@
  * to other origins are not fetched. It also fails on what the site's CSP
  * would block in production: a style="" attribute, a <style> element, or a
  * <script> with its code inline (JSON-LD, which is data, is the exception),
- * a script or style sheet from an origin the CSP in deploy/nginx.conf does
- * not allow, or a script origin the CSP allows that no page loads from.
+ * an inline event handler (onclick="" and the like), a script, style sheet,
+ * image, frame, or media file from an origin the CSP in deploy/nginx.conf
+ * does not allow (a data: image included), a form posting to one, or a
+ * script origin the CSP allows that no page loads from. A directory with no
+ * pages in it fails too: a build that wrote nothing has nothing to pass.
  *
  *   node scripts/check-links.mjs [site/dist]
+ *
+ * CRONWATCH_NGINX_CONF names another nginx.conf to read the CSP from, for
+ * this script's tests.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -56,19 +62,33 @@ function resolveFile(urlPath) {
 }
 
 /** The CSP's sources for one directive, from the add_header line in deploy/nginx.conf. */
-const NGINX = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "deploy", "nginx.conf");
+const NGINX = process.env.CRONWATCH_NGINX_CONF ?? path.join(path.dirname(new URL(import.meta.url).pathname), "..", "deploy", "nginx.conf");
 const csp = /Content-Security-Policy "([^"]+)"/.exec(readFileSync(NGINX, "utf8"))?.[1] ?? "";
 function sources(directive) {
   const entry = csp.split(";").map((d) => d.trim().split(/\s+/)).find(([name]) => name === directive);
   return new Set(entry ? entry.slice(1) : []);
 }
-const scriptSrc = sources("script-src");
-const styleSrc = sources("style-src");
+/** A fetch directive's sources, or default-src's when the CSP does not name it, as a browser reads it. */
+function fetchSources(directive) {
+  return csp.split(";").some((d) => d.trim().split(/\s+/)[0] === directive) ? sources(directive) : sources("default-src");
+}
+const scriptSrc = fetchSources("script-src");
+const styleSrc = fetchSources("style-src");
+const imgSrc = fetchSources("img-src");
+const frameSrc = fetchSources("frame-src");
+const mediaSrc = fetchSources("media-src");
+// form-action does not fall back to default-src: unnamed, a form may post anywhere.
+const formAction = csp.split(";").some((d) => d.trim().split(/\s+/)[0] === "form-action") ? sources("form-action") : new Set(["*"]);
+/** Whether a directive's sources admit a URL on another origin: the origin itself, its scheme, or *. */
+function allows(set, url) {
+  return set.has(url.origin) || set.has(url.protocol) || set.has("*");
+}
 const scriptOrigins = new Set();
 
 const problems = [];
 let checked = 0;
 if (!csp) problems.push("deploy/nginx.conf: no Content-Security-Policy header found");
+if (pages.length === 0) problems.push(`${DIST}: no HTML pages; run npm run build:site first`);
 for (const page of pages) {
   const html = readFileSync(page, "utf8");
   const rel = `/${path.relative(DIST, page).split(path.sep).join("/")}`;
@@ -91,16 +111,55 @@ for (const page of pages) {
     if (/\stype\s*=\s*"application\/ld\+json"/i.test(attrs)) continue;
     problems.push(`${rel}: an inline <script>, which the CSP blocks`);
   }
-  const pageUrl = new URL(rel, "https://site.invalid");
-  // Other origins a page loads code or styles from must be in the CSP.
-  for (const m of html.matchAll(/<script\b[^>]*\ssrc="(https?:[^"]*)"/gi)) {
-    const origin = new URL(decodeEntities(m[1])).origin;
-    scriptOrigins.add(origin);
-    if (!scriptSrc.has(origin)) problems.push(`${rel}: a script from ${origin}, which the CSP's script-src does not allow`);
+  // An onclick="" and its kind are inline script to the CSP, quoted or not.
+  for (const m of html.matchAll(/<[a-z][^>]*?\s(on[a-z]+)\s*=/gi)) {
+    problems.push(`${rel}: an inline ${m[1].toLowerCase()} handler, which the CSP blocks (${m[0].slice(0, 60)})`);
   }
-  for (const m of html.matchAll(/<link\b(?=[^>]*\srel="stylesheet")[^>]*\shref="(https?:[^"]*)"/gi)) {
-    const origin = new URL(decodeEntities(m[1])).origin;
-    if (!styleSrc.has(origin)) problems.push(`${rel}: a style sheet from ${origin}, which the CSP's style-src does not allow`);
+  const pageUrl = new URL(rel, "https://site.invalid");
+  /** The URL when it is on another origin (https:, http:, or //host), or null. */
+  const elsewhere = (raw) => {
+    let url;
+    try {
+      url = new URL(decodeEntities(raw).trim(), pageUrl);
+    } catch {
+      return null;
+    }
+    return (url.protocol === "https:" || url.protocol === "http:") && url.origin !== pageUrl.origin ? url : null;
+  };
+  // Other origins a page loads code, styles, images, frames, or media from, or posts a form to, must be in the CSP.
+  for (const m of html.matchAll(/<script\b[^>]*\ssrc="([^"]*)"/gi)) {
+    const url = elsewhere(m[1]);
+    if (!url) continue;
+    scriptOrigins.add(url.origin);
+    if (!scriptSrc.has(url.origin)) problems.push(`${rel}: a script from ${url.origin}, which the CSP's script-src does not allow`);
+  }
+  for (const m of html.matchAll(/<link\b(?=[^>]*\srel="stylesheet")[^>]*\shref="([^"]*)"/gi)) {
+    const url = elsewhere(m[1]);
+    if (url && !styleSrc.has(url.origin)) problems.push(`${rel}: a style sheet from ${url.origin}, which the CSP's style-src does not allow`);
+  }
+  const loaded = [
+    [/<(?:img|input)\b[^>]*\ssrc="([^"]*)"/gi, imgSrc, "an image", "img-src"],
+    [/<(?:img|source)\b[^>]*\ssrcset="([^"]*)"/gi, imgSrc, "an image", "img-src"],
+    [/<link\b(?=[^>]*\srel="(?:[^"]*\s)?(?:icon|apple-touch-icon)")[^>]*\shref="([^"]*)"/gi, imgSrc, "an icon", "img-src"],
+    [/<video\b[^>]*\sposter="([^"]*)"/gi, imgSrc, "a poster image", "img-src"],
+    [/<(?:iframe|frame)\b[^>]*\ssrc="([^"]*)"/gi, frameSrc, "a frame", "frame-src"],
+    [/<(?:video|audio|track)\b[^>]*\ssrc="([^"]*)"/gi, mediaSrc, "a media file", "media-src"],
+    [/<form\b[^>]*\saction="([^"]*)"/gi, formAction, "a form posting", "form-action"],
+  ];
+  for (const [pattern, allowed, what, directive] of loaded) {
+    for (const m of html.matchAll(pattern)) {
+      // A srcset is a list of URLs, each with an optional width or density.
+      const urls = /srcset/.test(pattern.source) ? decodeEntities(m[1]).split(",").map((part) => part.trim().split(/\s+/)[0]).filter(Boolean) : [m[1]];
+      for (const raw of urls) {
+        if (/^\s*data:/i.test(raw)) {
+          // * does not cover data:, which a CSP must name.
+          if (!allowed.has("data:")) problems.push(`${rel}: ${what} from a data: URL, which the CSP's ${directive} does not allow`);
+          continue;
+        }
+        const url = elsewhere(raw);
+        if (url && !allows(allowed, url)) problems.push(`${rel}: ${what} ${what.endsWith("posting") ? "to" : "from"} ${url.origin}, which the CSP's ${directive} does not allow`);
+      }
+    }
   }
   for (const m of html.matchAll(/\s(?:href|src)="([^"]*)"/g)) {
     const raw = decodeEntities(m[1]);

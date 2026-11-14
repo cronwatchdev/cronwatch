@@ -5,6 +5,7 @@ import collections
 import concurrent.futures
 import datetime
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -16,6 +17,23 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ECOSYSTEMS = ("npm", "PyPI", "RubyGems", "Go", "crates.io", "Hex", "Packagist", "Maven", "NuGet")
+
+
+def require_fresh(source, manifests, resolve):
+    """Fail when a resolved inventory is older than a manifest it was resolved from.
+
+    These inventories are not committed, so a scan of one left from an earlier
+    resolution says nothing about what the manifests resolve to now. `resolve`
+    is the command that writes it again. A fresh checkout resolves after it
+    writes the manifests, so CI passes.
+    """
+    resolved = os.stat(source).st_mtime_ns
+    for manifest in manifests:
+        if manifest.exists() and os.stat(manifest).st_mtime_ns > resolved:
+            raise ValueError(
+                f"{source.relative_to(ROOT)} is older than {manifest.relative_to(ROOT)}, so it may not be what the manifest resolves to now; "
+                f"resolve it again with `{resolve}` (if that leaves the file as it is, delete it first)"
+            )
 
 
 def inventory(ecosystem):
@@ -32,6 +50,7 @@ def inventory(ecosystem):
                 add(package.get("name") or location.rsplit("node_modules/", 1)[1], package.get("version"), source)
     elif ecosystem == "PyPI":
         source = ROOT / "packages/python/uv.lock"
+        require_fresh(source, [source.with_name("pyproject.toml")], "cd packages/python && uv lock")
         for package in tomllib.loads(source.read_text())["package"]:
             if "registry" in package.get("source", {}):
                 add(package["name"], package.get("version"), source)
@@ -40,7 +59,13 @@ def inventory(ecosystem):
             ROOT / f"packages/ruby/test/rails/gemfiles/rails_{series}.gemfile.lock"
             for series in ("7_2", "8_0", "8_1")
         ]
+        gemfile = ROOT / "packages/ruby/Gemfile"
         for source in sources:
+            own = source.with_name(source.name.removesuffix(".lock"))
+            require_fresh(
+                source, [own, gemfile, ROOT / "packages/ruby/cronwatch.gemspec"],
+                f"cd packages/ruby && BUNDLE_GEMFILE={own.relative_to(ROOT / 'packages/ruby')} bundle lock",
+            )
             for name, version in re.findall(r"^    ([\w.-]+) \(([^ )]+)\)", source.read_text(), re.M):
                 add(name, re.sub(r"-(?:aarch64|arm64|x86_64|arm)-.*$", "", version), source)
     elif ecosystem == "Go":
@@ -57,23 +82,37 @@ def inventory(ecosystem):
         version = subprocess.check_output(["go", "env", "GOVERSION"], text=True).strip()
         add("stdlib", version.removeprefix("go"), ROOT / "packages/go/go.mod")
     elif ecosystem == "crates.io":
-        for source in (ROOT / "packages/rust/Cargo.lock", ROOT / "packages/rust/fuzz/Cargo.lock"):
+        # The workspace's lock is committed, and CI builds with --locked; the fuzz crate's is not.
+        fuzz = ROOT / "packages/rust/fuzz/Cargo.lock"
+        require_fresh(
+            fuzz, [fuzz.with_name("Cargo.toml"), *sorted((ROOT / "packages/rust").glob("*/Cargo.toml"))],
+            "cargo generate-lockfile --manifest-path packages/rust/fuzz/Cargo.toml",
+        )
+        for source in (ROOT / "packages/rust/Cargo.lock", fuzz):
             for package in tomllib.loads(source.read_text())["package"]:
                 if package.get("source", "").startswith("registry+"):
                     add(package["name"], package["version"], source)
     elif ecosystem == "Hex":
         for source in (ROOT / "packages/elixir/mix.lock", ROOT / "packages/elixir/webserver/mix.lock", ROOT / "packages/elixir/examples/crontab/mix.lock"):
+            require_fresh(source, [source.with_name("mix.exs")], f"cd {source.parent.relative_to(ROOT)} && MIX_ENV=test mix deps.get")
             for name, version in re.findall(r'"([^"\n]+)": \{:hex, :[^,]+, "([^"\n]+)"', source.read_text()):
                 add(name, version, source)
     elif ecosystem == "Packagist":
         source = ROOT / "packages/php/composer.lock"
+        require_fresh(source, [source.with_name("composer.json")], "cd packages/php && composer update --no-interaction")
         lock = json.loads(source.read_text())
         for package in lock.get("packages", []) + lock.get("packages-dev", []):
             add(package["name"], package["version"].removeprefix("v"), source)
     elif ecosystem == "Maven":
-        sources = sorted((ROOT / "packages/java").glob("*/target/security-dependencies.json"))
-        if not sources:
-            raise ValueError("resolve Maven dependency trees first (see security/README.md)")
+        # Every module's tree, however deep the module is (examples/crontab), and the parent's.
+        java = ROOT / "packages/java"
+        poms = [pom for pom in sorted(java.rglob("pom.xml")) if "target" not in pom.relative_to(java).parts]
+        missing = [pom for pom in poms if not (pom.parent / "target/security-dependencies.json").exists()]
+        if missing:
+            raise ValueError(f"no dependency tree for {missing[0].relative_to(ROOT)}: resolve Maven dependency trees first (see security/README.md)")
+        sources = [pom.parent / "target/security-dependencies.json" for pom in poms]
+        for source in sources:
+            require_fresh(source, poms, "the Maven command in security/README.md")
         def visit(node, source):
             if not node["groupId"].startswith("dev.cronwatch"):
                 add(node["groupId"] + ":" + node["artifactId"], node["version"], source)
@@ -82,10 +121,13 @@ def inventory(ecosystem):
         for source in sources:
             visit(json.loads(source.read_text()), source)
     elif ecosystem == "NuGet":
-        sources = sorted((ROOT / "packages/dotnet").glob("**/obj/project.assets.json"))
+        dotnet = ROOT / "packages/dotnet"
+        sources = sorted(dotnet.glob("**/obj/project.assets.json"))
         if not sources:
             raise ValueError("run dotnet restore first")
+        shared = [dotnet / name for name in ("Directory.Packages.props", "Directory.Build.props", "global.json")]
         for source in sources:
+            require_fresh(source, [*sorted(source.parent.parent.glob("*.csproj")), *shared], "cd packages/dotnet && dotnet restore --force")
             for name, package in json.loads(source.read_text()).get("libraries", {}).items():
                 if package.get("type") == "package":
                     add(*name.rsplit("/", 1), source)
@@ -103,6 +145,10 @@ def query(packages):
                 rows = json.load(response)["results"]
             if len(rows) != len(packages):
                 raise ValueError("OSV returned an incomplete response")
+            # A row cut short names where its rest is; reading only the first page would pass what the rest holds.
+            cut = [f"{name}@{version}" for (_, name, version), row in zip(packages, rows) if row.get("next_page_token")]
+            if cut:
+                raise ValueError(f"OSV returned only part of the advisories for {', '.join(cut)}; scan fewer packages at once")
             return list(zip(packages, rows))
         except (urllib.error.URLError, TimeoutError):
             if attempt == 2:
@@ -111,6 +157,10 @@ def query(packages):
 
 
 def scan(entries, exceptions, today):
+    # Only the exceptions of the ecosystems being scanned are weighed: an
+    # expired one in another ecosystem fails that ecosystem's scan, not this one.
+    scanned = {ecosystem for ecosystem, _, _ in entries}
+    exceptions = [exception for exception in exceptions if exception["ecosystem"] in scanned]
     for exception in exceptions:
         if datetime.date.fromisoformat(exception["expires"]) <= today:
             raise ValueError(f"expired advisory exception: {exception['name']}")

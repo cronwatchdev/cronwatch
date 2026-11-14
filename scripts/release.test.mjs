@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { apalisVersion, minorOf, planEdits, VERSIONED } from "./release.mjs";
+import { readdirSync, existsSync } from "node:fs";
+import { apalisVersion, GO_MODULES, GO_UNRELEASED, goModuleProblems, minorOf, planEdits, VERSIONED } from "./release.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const readRepo = (file) => readFileSync(path.join(ROOT, file), "utf8");
@@ -75,4 +76,22 @@ test("a prerelease leaves the install lines alone", () => {
 test("an install line out of step is refused", () => {
   const read = (file) => (file === "site/docs/elixir.md" ? readRepo(file).replace(/~> \d+\.\d+/, "~> 0.1") : readRepo(file));
   assert.throws(() => planEdits(VERSIONED, read, current, "99.0.0"), /site\/docs\/elixir\.md says 0\.1/);
+});
+
+test("every Go module nested in packages/go is released or named as unreleased, versioned, and API checked", () => {
+  const found = readdirSync(path.join(ROOT, "packages/go")).filter((d) => existsSync(path.join(ROOT, "packages/go", d, "go.mod")));
+  const apidiff = readRepo("scripts/go-apidiff.sh");
+  assert.deepEqual(goModuleProblems(found, VERSIONED, apidiff), []);
+  assert.deepEqual([...found].sort(), [...GO_MODULES, ...GO_UNRELEASED].sort());
+});
+
+test("a Go module the release does not know, has no row for, or does not check stops it", () => {
+  const found = [...GO_MODULES, ...GO_UNRELEASED];
+  const apidiff = `for name in "" ${GO_MODULES.join(" ")}; do`;
+  assert.deepEqual(goModuleProblems(found, VERSIONED, apidiff), []);
+  assert.match(goModuleProblems([...found, "temporal"], VERSIONED, apidiff).join("\n"), /^packages\/go\/temporal is a Go module scripts\/release\.mjs does not know; add it to GO_MODULES/);
+  assert.match(goModuleProblems(found.filter((d) => d !== "river"), VERSIONED, apidiff).join("\n"), /^packages\/go\/river has no go\.mod/);
+  assert.match(goModuleProblems(found, VERSIONED.filter((row) => row.file !== "packages/go/asynq/go.mod"), apidiff).join("\n"), /^no VERSIONED row for packages\/go\/asynq\/go\.mod/);
+  assert.match(goModuleProblems(found, VERSIONED, 'for name in "" robfigcron gocron river; do').join("\n"), /^scripts\/go-apidiff\.sh does not compare packages\/go\/asynq/);
+  assert.match(goModuleProblems(found, VERSIONED, "for name in $modules; do").join("\n"), /^scripts\/go-apidiff\.sh has no/);
 });

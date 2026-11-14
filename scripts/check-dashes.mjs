@@ -1,6 +1,9 @@
 /**
  * Fails if an em dash (U+2014), en dash (U+2013), figure dash (U+2012), or
  * horizontal bar (U+2015) appears anywhere in the repository. Runs before every build and test, so one can never quietly appear.
+ * The same four spelled so that a browser or a program writes them count
+ * too: an HTML entity by name or by number, and a backslash-u escape in a
+ * string. Only this script and its tests may spell them, to say what to catch.
  *
  * Scans every file git tracks or would track (untracked files not ignored by
  * .gitignore), whatever its extension, skipping only binaries. Outside a git
@@ -31,12 +34,18 @@ const BINARY = new Set([
 ]);
 // Written as escapes so this file does not trip its own check.
 const BAD = /[\u2012-\u2015]/;
+// The same characters as an HTML entity (by name, decimal, or hex) or as a
+// string escape (\uXXXX, \u{XXXX}, and \N{EM DASH} and its kind in Python),
+// which become the character on the page or in the output.
+const SPELLED = /&(?:mdash|ndash|horbar);|&#0*821[0-3];|&#x0*201[2-5];|\\u201[2-5]|\\u\{0*201[2-5]\}|\\N\{(?:EM DASH|EN DASH|FIGURE DASH|HORIZONTAL BAR)\}/i;
+// The files that name the spellings in order to catch them.
+const SPELLS_THEM = new Set(["scripts/check-dashes.mjs", "scripts/checks.test.mjs"]);
 
 const hits = [];
 
-function scan(label, text) {
+function scan(label, text, spelled = true) {
   text.split("\n").forEach((line, i) => {
-    if (BAD.test(line)) hits.push(`${label}:${i + 1}  ${line.trim().slice(0, 90)}`);
+    if (BAD.test(line) || (spelled && SPELLED.test(line))) hits.push(`${label}:${i + 1}  ${line.trim().slice(0, 90)}`);
   });
 }
 
@@ -84,12 +93,12 @@ if (commitsAt >= 0) {
     if (!existsSync(full) || !statSync(full).isFile()) continue;
     const buffer = readFileSync(full);
     if (buffer.subarray(0, 8000).includes(0)) continue;
-    scan(file, buffer.toString("utf8"));
+    scan(file, buffer.toString("utf8"), !SPELLS_THEM.has(file.split(path.sep).join("/")));
   }
 }
 
 if (hits.length > 0) {
-  console.error(`\nFound ${hits.length} dash(es): em, en, figure, or horizontal bar. Use a period, colon, comma, or parentheses.\n`);
+  console.error(`\nFound ${hits.length} dash(es): em, en, figure, or horizontal bar, as the character, an HTML entity, or a string escape. Use a period, colon, comma, or parentheses.\n`);
   for (const h of hits) console.error("  " + h);
   console.error("");
   process.exit(1);

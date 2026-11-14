@@ -40,6 +40,15 @@ import { addMarkdownChangelog, addReadmeChangelog, addRootChangelog, today } fro
  * an install line's constraint, which a prerelease leaves alone); a pattern
  * with the g flag moves every match in its file, and must match at least once.
  */
+/**
+ * The Go modules nested in packages/go that are released with the core, each
+ * under a tag of its own, and the ones that hold tests and examples only and
+ * are never tagged. A module directory in neither list stops the release
+ * (checkTable), as a package directory missing from the tables does.
+ */
+export const GO_MODULES = ["robfigcron", "gocron", "river", "asynq"];
+export const GO_UNRELEASED = ["sqltest", "examples"];
+
 export const VERSIONED = [
   { file: "packages/sdk/package.json", pattern: /^( {2}"version": ")([^"]+)(")/m },
   // What the SDK reports about itself (VERSION, and GET <base>/api).
@@ -68,7 +77,7 @@ export const VERSIONED = [
   // an app that requires one ignores it and gets these versions.
   // (A requirement is on a require line of its own or in a require block.)
   { file: "packages/go/robfigcron/go.mod", pattern: /^((?:require |\t)cronwatch\.dev\/go v)(\S+)()$/m },
-  ...["gocron", "river", "asynq"].flatMap((name) => [
+  ...GO_MODULES.filter((name) => name !== "robfigcron").flatMap((name) => [
     { file: `packages/go/${name}/go.mod`, pattern: /^((?:require |\t)cronwatch\.dev\/go v)(\S+)()$/m },
     { file: `packages/go/${name}/go.mod`, pattern: /^((?:require |\t)cronwatch\.dev\/go\/robfigcron v)(\S+)()$/m },
   ]),
@@ -156,9 +165,9 @@ const PUBLISH = [
   // packages/go/sqltest and packages/go/examples hold tests and examples
   // only and are never tagged.
   { dir: "packages/go", commands: (v) => [
-    ...["", "robfigcron/", "gocron/", "river/", "asynq/"].map((sub) =>
+    ...["", ...GO_MODULES.map((name) => `${name}/`)].map((sub) =>
       `git tag -a packages/go/${sub}v${v} -m "Release ${v} (Go${sub ? `, ${sub.slice(0, -1)}` : ""})" v${v}^{} && git push origin packages/go/${sub}v${v}`),
-    `# packages/go: then GOPROXY=https://proxy.golang.org go list -m cronwatch.dev/go@v${v} cronwatch.dev/go/robfigcron@v${v} cronwatch.dev/go/gocron@v${v} cronwatch.dev/go/river@v${v} cronwatch.dev/go/asynq@v${v} makes the proxy fetch them (once cronwatch.dev serves the go-import tags)`,
+    `# packages/go: then GOPROXY=https://proxy.golang.org go list -m ${["", ...GO_MODULES.map((name) => `/${name}`)].map((sub) => `cronwatch.dev/go${sub}@v${v}`).join(" ")} makes the proxy fetch them (once cronwatch.dev serves the go-import tags)`,
   ] },
   // crates.io reads each crate from the tarball cargo uploads, so the crates
   // need no tag of their own. Published by hand for now (packages/rust/DESIGN.md,
@@ -282,6 +291,39 @@ function checkTable() {
   if (unversioned.length > 0) fail(`no VERSIONED row for ${unversioned.map((d) => `packages/${d}`).join(", ")}; add the file that holds its version to the table in scripts/release.mjs`);
   const unpublished = dirs.filter((d) => !PUBLISH.some((row) => row.dir === `packages/${d}`));
   if (unpublished.length > 0) fail(`no PUBLISH row for ${unpublished.map((d) => `packages/${d}`).join(", ")}; add how it ships to the table in scripts/release.mjs`);
+  const goModules = readdirSync(path.join(ROOT, "packages/go")).filter((d) => {
+    try {
+      return statSync(path.join(ROOT, "packages/go", d, "go.mod")).isFile();
+    } catch {
+      return false;
+    }
+  });
+  const problems = goModuleProblems(goModules, VERSIONED, read("scripts/go-apidiff.sh"));
+  if (problems.length > 0) fail(problems.join("\n         "));
+}
+
+/**
+ * What is wrong with the Go modules nested in packages/go, given the
+ * directories there that hold a go.mod: one in neither GO_MODULES nor
+ * GO_UNRELEASED (it would be released requiring a stale core, with no tag and
+ * no API check), a listed one that is gone or has no VERSIONED row, and a
+ * released one scripts/go-apidiff.sh does not compare.
+ */
+export function goModuleProblems(found, rows, apidiff) {
+  const problems = [];
+  const unknown = found.filter((d) => !GO_MODULES.includes(d) && !GO_UNRELEASED.includes(d));
+  if (unknown.length > 0) problems.push(`${unknown.map((d) => `packages/go/${d}`).join(", ")} ${unknown.length === 1 ? "is a Go module" : "are Go modules"} scripts/release.mjs does not know; add ${unknown.length === 1 ? "it" : "each"} to GO_MODULES (released and tagged with the core) or to GO_UNRELEASED (tests or examples only)`);
+  const gone = [...GO_MODULES, ...GO_UNRELEASED].filter((d) => !found.includes(d));
+  if (gone.length > 0) problems.push(`${gone.map((d) => `packages/go/${d}`).join(", ")} has no go.mod; take it out of GO_MODULES or GO_UNRELEASED in scripts/release.mjs`);
+  const unversioned = GO_MODULES.filter((d) => found.includes(d) && !rows.some((row) => row.file === `packages/go/${d}/go.mod`));
+  if (unversioned.length > 0) problems.push(`no VERSIONED row for ${unversioned.map((d) => `packages/go/${d}/go.mod`).join(", ")}; add its requirement on the core to the table in scripts/release.mjs`);
+  const compared = /^for name in ""((?: [\w-]+)*); do$/m.exec(apidiff)?.[1].trim().split(/\s+/).filter(Boolean);
+  if (!compared) problems.push('scripts/go-apidiff.sh has no `for name in "" <modules>; do` line to check the Go modules against');
+  else {
+    const unchecked = GO_MODULES.filter((d) => found.includes(d) && !compared.includes(d));
+    if (unchecked.length > 0) problems.push(`scripts/go-apidiff.sh does not compare ${unchecked.map((d) => `packages/go/${d}`).join(", ")}; add ${unchecked.length === 1 ? "it" : "them"} to its \`for name in\` line`);
+  }
+  return problems;
 }
 
 /**
@@ -567,8 +609,21 @@ function main() {
     const untracked = git("status", "--porcelain").split("\n").filter((line) => line.startsWith("??"));
     if (untracked.length > 0) console.log(`\nLeft out of the commit (untracked):\n${untracked.join("\n")}`);
     git("add", "-u");
-    execFileSync("git", ["commit", "-m", `Release ${next}`], { cwd: ROOT, stdio: "inherit" });
-    git("tag", "-a", tag, "-m", `Release ${next}`);
+    // A hook or a signing key can refuse either. Say where that leaves the
+    // release, as a failed step does: before the commit nothing is lost, and
+    // after it the release only lacks its tag, which a rerun could not add
+    // (the version is no longer greater than the current one).
+    const said = (error) => (typeof error.stderr === "string" && error.stderr.trim() !== "" ? `\n${error.stderr.trim()}` : "");
+    try {
+      execFileSync("git", ["commit", "-m", `Release ${next}`], { cwd: ROOT, stdio: "inherit" });
+    } catch (error) {
+      fail(`git commit failed${said(error)}\nNothing is committed or tagged; the working tree holds the whole bump, staged. Fix what refused the commit, then finish by hand:\n  git commit -m "Release ${next}" && git tag -a ${tag} -m "Release ${next}"\nor drop the bump with \`git restore --staged . && git restore .\`.`);
+    }
+    try {
+      git("tag", "-a", tag, "-m", `Release ${next}`);
+    } catch (error) {
+      fail(`git tag failed${said(error)}\n"Release ${next}" is committed but not tagged. Do not run the release again; fix what refused the tag, then finish by hand:\n  git tag -a ${tag} -m "Release ${next}"\nand carry on from the push: git push --atomic origin ${branch} ${tag}`);
+    }
     console.log(`\nCommitted "Release ${next}" and tagged ${tag}. Nothing is pushed or published.`);
   }
 
