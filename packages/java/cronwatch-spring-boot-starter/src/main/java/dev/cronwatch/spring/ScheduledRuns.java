@@ -16,8 +16,10 @@ import org.springframework.scheduling.support.ScheduledTaskObservationContext;
  * Each {@code @Scheduled} invocation as a run, from the {@code Observation} Spring makes of it: the
  * run is opened on {@code onStart}, in the thread that runs the method, so {@link
  * Cronwatch#current()} and {@code job.log} work inside it, and closed on {@code onStop}, failed
- * with the error the observation carries. A method whose ShedLock lock another instance held is
- * given back rather than judged. Never throws into Spring's task.
+ * with the error the observation carries. A method under ShedLock's {@code @SchedulerLock} whose
+ * lock another instance held, and which so returned without an error, is given back rather than
+ * judged; a lock some other code asked for inside a method that is not itself locked changes
+ * nothing, since that method ran. Never throws into Spring's task.
  */
 final class ScheduledRuns implements ObservationHandler<ScheduledTaskObservationContext> {
   /**
@@ -52,22 +54,23 @@ final class ScheduledRuns implements ObservationHandler<ScheduledTaskObservation
   @Override
   public void onStart(ScheduledTaskObservationContext context) {
     ObservedRun run = null;
+    boolean mayTakeBack = false;
     try {
       if (!closed) {
-        run = open(context);
+        CronwatchScheduling.Target target =
+            scheduling.target(context.getTargetClass(), context.getMethod());
+        if (target != null && !target.reactive()) {
+          mayTakeBack = shedLock && target.locked();
+          run = open(target, mayTakeBack);
+        }
       }
     } catch (RuntimeException e) {
       scheduling.client().reportError(e, "scheduled");
     }
-    context.put(RunFrames.Frame.class, RunFrames.push(run));
+    context.put(RunFrames.Frame.class, RunFrames.push(run, run != null && mayTakeBack));
   }
 
-  private @Nullable ObservedRun open(ScheduledTaskObservationContext context) {
-    CronwatchScheduling.Target target =
-        scheduling.target(context.getTargetClass(), context.getMethod());
-    if (target == null || target.reactive()) {
-      return null;
-    }
+  private @Nullable ObservedRun open(CronwatchScheduling.Target target, boolean mayTakeBack) {
     Job job = scheduling.job(target);
     if (job == null) {
       return null;
@@ -76,7 +79,7 @@ final class ScheduledRuns implements ObservationHandler<ScheduledTaskObservation
         // The id's prefix is a key, not the trigger, and stays scheduled: through 1.x.
         RunOptions.trigger(TRIGGER)
             .withId("scheduled:" + scheduling.appSlug() + ":" + UUID.randomUUID());
-    if (shedLock && target.locked()) {
+    if (mayTakeBack) {
       options = options.mayTakeBack();
     }
     return job.open(options);
@@ -95,11 +98,14 @@ final class ScheduledRuns implements ObservationHandler<ScheduledTaskObservation
       return;
     }
     try {
-      if (Boolean.FALSE.equals(frame.lockTaken)) {
-        // Another instance held the lock: the method did not run here.
+      Throwable error = unwrap(context.getError());
+      if (frame.mayTakeBack && error == null && Boolean.FALSE.equals(frame.lockTaken)) {
+        // Another instance held the method's own lock: it did not run here.
         run.takeBack();
       } else {
-        run.close(unwrap(context.getError()));
+        // A method that is not itself locked ran, whatever a lock asked for inside it answered,
+        // and one that threw is a failure to record.
+        run.close(error);
       }
     } catch (RuntimeException e) {
       scheduling.client().reportError(e, "scheduled");

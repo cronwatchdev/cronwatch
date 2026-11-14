@@ -64,6 +64,107 @@ final class Runs {
     }
   }
 
+  /**
+   * The write of a run's start (the job's declaration and the run's row), which the run waits for
+   * only so long ({@link Core.Timings#startDeadlineMs}): what became of it, and what its run has
+   * come to since, so a write that lands after the wait was given up never leaves a running row
+   * behind. It goes on, on the thread of the client's that began it, since a store call that is
+   * blocked cannot be told apart from one about to answer and a JDBC call cannot always be
+   * interrupted; when it lands, that thread does what is left to do.
+   */
+  static final class Start {
+    private final ReentrantLock lock = new ReentrantLock();
+
+    /** The write has ended, and whether the row is there. */
+    private boolean done;
+
+    private boolean wrote;
+
+    /** The run went on without waiting for the write. */
+    private boolean abandoned;
+
+    /** What a write that lands late must still do, once the run has ended without its row. */
+    private @Nullable Runnable owed;
+
+    /**
+     * Gives up waiting: true when the write is still under way, false when it ended meanwhile (its
+     * answer is then {@link #wrote}).
+     */
+    boolean abandon() {
+      lock.lock();
+      try {
+        if (done) {
+          return false;
+        }
+        abandoned = true;
+        return true;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    boolean abandoned() {
+      lock.lock();
+      try {
+        return abandoned;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    /** Whether the row is there now, however late it landed. */
+    boolean wrote() {
+      lock.lock();
+      try {
+        return wrote;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    /**
+     * The write ended. One that lands after its run has ended without it does what the run left
+     * owed (the finish, or taking the row back), here, on the thread that wrote it.
+     */
+    void ended(boolean landed) {
+      Runnable late;
+      lock.lock();
+      try {
+        done = true;
+        wrote = landed;
+        late = landed ? owed : null;
+        owed = null;
+      } finally {
+        lock.unlock();
+      }
+      if (late != null) {
+        late.run();
+      }
+    }
+
+    /**
+     * The run has ended with its row not written by then: {@code late} is left for a write that
+     * lands afterwards, or run now when it has landed meanwhile.
+     */
+    void owe(Runnable late) {
+      lock.lock();
+      try {
+        if (!abandoned) {
+          return;
+        }
+        if (!wrote) {
+          if (!done) {
+            owed = late;
+          }
+          return;
+        }
+      } finally {
+        lock.unlock();
+      }
+      late.run();
+    }
+  }
+
   /** A run once recorded, and what its function returned. */
   record Executed<T>(Run run, @Nullable T value) {}
 
@@ -150,6 +251,7 @@ final class Runs {
     final RunOptions options;
     final Run run;
     final boolean recorded;
+    final Start start;
     final @Nullable Future<?> closing;
     final Recorder recorder;
     final JobContext context;
@@ -168,6 +270,7 @@ final class Runs {
         RunOptions options,
         Run run,
         boolean recorded,
+        Start start,
         @Nullable Future<?> closing,
         Recorder recorder,
         JobContext context) {
@@ -175,6 +278,7 @@ final class Runs {
       this.options = options;
       this.run = run;
       this.recorded = recorded;
+      this.start = start;
       this.closing = closing;
       this.recorder = recorder;
       this.context = context;
@@ -208,8 +312,9 @@ final class Runs {
   /**
    * Opens a run in the calling thread: its row inserted (a store failure goes to the error handler
    * and the run goes on unrecorded), the run made current with its MDC keys, its timeout timer set,
-   * and the shutdown hook told of it. Missed and stuck are closed beside it, or at its close when
-   * it may be given back.
+   * and the shutdown hook told of it. Missed is closed beside it, or at its close when it may be
+   * given back. The write of the start is waited for only so long ({@link #awaitStart}): past it
+   * the run goes on unrecorded.
    *
    * @throws CronwatchException for a run id no store could hold
    */
@@ -226,20 +331,21 @@ final class Runs {
     // shutdown hook is told of the run before its row is written, so a JVM that stops once the row
     // is there always finds it: the hook waits for the write and records the run failed.
     Recorder recorder = new Recorder();
-    Future<Boolean> begun = core.submit(() -> beginRun(def, run));
+    Start start = new Start();
+    Future<Boolean> begun = core.submit(() -> beginRun(def, run, start));
     OpenRun open = new OpenRun(def, run, recorder, begun);
     // An id given again while its first run is open (a message delivered twice) leaves the first on
     // the list: this one's row is refused, and the hook has nothing of its own to record.
     boolean listed = core.open.putIfAbsent(run.id(), open) == null;
     boolean recorded;
     try {
-      recorded = Core.awaitUninterruptibly(begun);
+      recorded = awaitStart(def.name(), begun, start);
     } catch (RuntimeException | Error e) {
       core.open.remove(run.id(), open);
       throw e;
     }
-    // Closing missed and stuck happens beside the job, which never waits on it. A run that may be
-    // given back closes them only once it is known not to be: one taken back must leave the state
+    // Closing missed happens beside the job, which never waits on it. A run that may be
+    // given back closes it only once it is known not to be: one taken back must leave the state
     // as it was, or a job overdue would have missed closed by each attempt given back and opened
     // again by the next check, an alert each time.
     Future<?> closing =
@@ -252,7 +358,7 @@ final class Runs {
             startedAt,
             recorder,
             task -> core.spawn(task, "cancelling " + def.name()));
-    Opened o = new Opened(def, options, run, recorded, closing, recorder, context);
+    Opened o = new Opened(def, options, run, recorded, start, closing, recorder, context);
     double timeout = timeoutOrDefault(def.stored());
     long delay = (long) Math.min(Math.max(0, timeout), Evaluate.MAX_DURATION_MS);
     Runnable atTimeout =
@@ -282,6 +388,53 @@ final class Runs {
     o.previous = CurrentRun.set(context);
     o.saved = Mdc.put(def.name(), run.id());
     return o;
+  }
+
+  /**
+   * Waits for a run's start to be written, at most {@link Core.Timings#startDeadlineMs}, however
+   * often the caller is interrupted meanwhile. A store that hangs must not hold the job back: past
+   * the deadline it is reported and the run goes on as one whose start was never written. The write
+   * is not interrupted (a JDBC call cannot always be, and one cut part way is worse than one that
+   * lands late): it goes on on its own thread, and {@link Start} sees to a row that lands later.
+   */
+  private boolean awaitStart(String name, Future<Boolean> begun, Start start) {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(core.timings.startDeadlineMs);
+    boolean interrupted = false;
+    try {
+      while (true) {
+        try {
+          return begun.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+          interrupted = true;
+        } catch (TimeoutException e) {
+          if (!start.abandon()) {
+            // It ended as the deadline passed.
+            return start.wrote();
+          }
+          core.report(
+              "the store took longer than "
+                  + Durations.format((double) core.timings.startDeadlineMs)
+                  + " to record the start of "
+                  + name
+                  + "; running it unrecorded",
+              "recording " + name);
+          return false;
+        } catch (java.util.concurrent.ExecutionException e) {
+          Throwable cause = e.getCause();
+          if (cause instanceof Error err) {
+            throw err;
+          }
+          if (cause instanceof RuntimeException r) {
+            throw r;
+          }
+          throw new CronwatchException(CronwatchException.Kind.OTHER, String.valueOf(cause), cause);
+        }
+      }
+    } finally {
+      if (interrupted) {
+        Thread.currentThread().interrupt();
+      }
+    }
   }
 
   /**
@@ -373,7 +526,15 @@ final class Runs {
         core.submit(
             () ->
                 finishExecuted(
-                    def, run, o.recorder, text, failure, markTimeout, o.recorded, started));
+                    def,
+                    run,
+                    o.recorder,
+                    text,
+                    failure,
+                    markTimeout,
+                    o.recorded,
+                    o.start,
+                    started));
     OpenRun open = o.open;
     if (open != null) {
       open.recording = recording;
@@ -417,8 +578,11 @@ final class Runs {
   /** Deletes a run's running row, for {@link #takeBack}; false when it must be recorded instead. */
   private boolean takeBackNow(Opened o) {
     boolean back = true;
-    if (o.recorded) {
+    if (o.recorded || o.start.wrote()) {
       back = Core.awaitUninterruptibly(core.submit(() -> discardRun(o.run)));
+    } else {
+      // A start given up on that lands after this is taken back then, on the thread that wrote it.
+      o.start.owe(() -> discardRun(o.run));
     }
     if (back) {
       unlist(o);
@@ -478,7 +642,8 @@ final class Runs {
   /**
    * The start of a run: the definition synced and the row inserted. Says whether it was written.
    */
-  private boolean beginRun(JobDef def, Run run) {
+  private boolean beginRun(JobDef def, Run run, Start start) {
+    boolean wrote;
     try {
       core.sync(def, true);
       Core.call(
@@ -486,18 +651,24 @@ final class Runs {
             core.store.insertRun(run);
             return null;
           });
-      return true;
+      wrote = true;
     } catch (RuntimeException e) {
-      core.report(e, "recording " + def.name());
-      return false;
+      // A write given up on that fails in the end left nothing behind (its run was recorded
+      // without it, and the row refused), and has been reported as late already.
+      if (!start.abandoned()) {
+        core.report(e, "recording " + def.name());
+      }
+      wrote = false;
     }
+    start.ended(wrote);
+    return wrote;
   }
 
   /**
-   * Closes missed (when the run catches the schedule up) and stuck for a run that has started, and
-   * holds the run in {@code pendingRuns} until its finish is evaluated, so a check can evaluate it
-   * if this process stops between writing the finish and its evaluation. {@code run} is the run as
-   * it started. Never throws.
+   * Closes missed (when the run catches the schedule up) for a run that has started (stuck stays
+   * open until a run finishes ok), and holds the run in {@code pendingRuns} until its finish is
+   * evaluated, so a check can evaluate it if this process stops between writing the finish and its
+   * evaluation. {@code run} is the run as it started. Never throws.
    */
   @Nullable Void closeOnStart(JobDef def, Run run) {
     String name = def.name();
@@ -527,6 +698,7 @@ final class Runs {
       @Nullable String failure,
       boolean timedOut,
       boolean recorded,
+      Start start,
       @Nullable Future<?> closing) {
     String name = def.name();
     long finishedAt = core.now();
@@ -555,14 +727,31 @@ final class Runs {
         core.report(e, "starting " + name);
       }
     }
+    boolean finishRecorded = false;
     try {
-      String why = recordFinish(def, finished, recorded, finishedAt);
+      // A start given up on that has landed since is finished over, as one written in time.
+      String why = recordFinish(def, finished, recorded || start.wrote(), finishedAt);
+      finishRecorded = true;
       if (why != null) {
         core.report(
             "run " + finished.id() + " of " + name + " " + why + "; ignored", "finishing " + name);
       }
     } catch (RuntimeException e) {
       core.report(e, "recording " + name);
+    }
+    if (!finishRecorded) {
+      // The finish could not be recorded, and the start's write is still under way (or landed
+      // while the finish was failing): when its row is there, the run is finished and judged then,
+      // so no row is left running to be called stuck by a process that is still alive.
+      Run late = finished;
+      start.owe(
+          () -> {
+            try {
+              recordFinish(def, late, true, finishedAt);
+            } catch (RuntimeException e) {
+              core.report(e, "recording " + name);
+            }
+          });
     }
     Error error = concluded.error();
     if (error != null) {
@@ -646,8 +835,8 @@ final class Runs {
    */
   @Nullable String recordFinish(JobDef def, Run run, boolean recorded, long finishedAt) {
     if (!recorded) {
-      // The start was never written; the store may be back by now.
-      core.sync(def);
+      // The start was never written; the store may be back by now. The write is a run's.
+      core.sync(def, false, true);
       try {
         Core.call(
             () -> {

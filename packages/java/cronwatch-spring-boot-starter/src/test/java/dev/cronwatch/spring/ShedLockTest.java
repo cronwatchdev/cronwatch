@@ -122,4 +122,77 @@ class ShedLockTest {
           "with ShedLock, the check runs under its lock");
     }
   }
+
+  /** A service whose method is under a lock, called from methods that are not. */
+  public static class Cleanup {
+    static final AtomicInteger RAN = new AtomicInteger();
+
+    /** Runs only with the lock, which the provider never grants. */
+    @SchedulerLock(name = "cleanup", lockAtMostFor = "PT10S")
+    public void sweep() {
+      RAN.incrementAndGet();
+    }
+  }
+
+  /** Methods that are not themselves locked, each asking for a lock inside. */
+  public static class Outer {
+    static final AtomicInteger WORKED = new AtomicInteger();
+    private final Cleanup cleanup;
+
+    /** Made by Spring. */
+    public Outer(Cleanup cleanup) {
+      this.cleanup = cleanup;
+    }
+
+    @Scheduled(fixedRate = 1000)
+    public void failing() {
+      cleanup.sweep();
+      throw new IllegalStateException("after the lock was refused");
+    }
+
+    @Scheduled(fixedRate = 1000)
+    public void working() {
+      cleanup.sweep();
+      WORKED.incrementAndGet();
+    }
+  }
+
+  /** The app whose lock provider grants nothing. */
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  @EnableScheduling
+  @EnableSchedulerLock(defaultLockAtMostFor = "PT30S")
+  @Import({Cleanup.class, Outer.class})
+  public static class Nested {
+    /** A lock provider that grants no lock. */
+    @Bean
+    public LockProvider lockProvider() {
+      return new Granting(false);
+    }
+  }
+
+  /**
+   * A method that is not itself under {@code @SchedulerLock} ran, whatever a lock asked for inside
+   * it answered: its run was given back when that lock was refused, its failure with it, so a
+   * method that threw never alerted.
+   */
+  @Test
+  void aLockRefusedInsideAnUnlockedMethodDoesNotGiveItsRunBack() throws Exception {
+    MemoryStore store = new MemoryStore();
+    Apps.Errors errors = new Apps.Errors();
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(Nested.class, store, errors, "cronwatch.app=billing")) {
+      Cronwatch cw = ctx.getBean(Cronwatch.class);
+      await("a failed run", () -> !finished(cw, "Outer.failing").isEmpty());
+      Run failed = finished(cw, "Outer.failing").get(0);
+      assertEquals(RunStatus.FAILED, failed.status());
+      assertTrue(
+          String.valueOf(failed.error()).contains("after the lock was refused"), failed.toString());
+      await("a run that worked", () -> !finished(cw, "Outer.working").isEmpty());
+      assertEquals(RunStatus.OK, finished(cw, "Outer.working").get(0).status());
+      assertTrue(Outer.WORKED.get() > 0);
+      assertEquals(0, Cleanup.RAN.get(), "the lock was never granted");
+      assertTrue(errors.seen.stream().noneMatch(e -> e.startsWith("discarding")), errors.joined());
+    }
+  }
 }

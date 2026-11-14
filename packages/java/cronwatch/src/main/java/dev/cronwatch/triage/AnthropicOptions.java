@@ -89,7 +89,10 @@ public final class AnthropicOptions {
       return this;
     }
 
-    /** The most tokens a diagnosis may use. Default 800; any other value is sent as given. */
+    /**
+     * The most tokens a diagnosis may use, the model's thinking included. Default 4096; any other
+     * value is sent as given.
+     */
     public Builder maxTokens(long maxTokens) {
       this.maxTokens = maxTokens;
       return this;

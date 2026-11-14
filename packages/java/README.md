@@ -61,7 +61,7 @@ Durations take the SDK's text (`"15m"`, `"1h30m"`, stored as written), a `java.t
 
 `Cronwatch.current()` answers the run the calling thread is in, so code deep in a call chain can log to it. A thread the job starts has none of its own: `job.wrap(runnable)` carries it across, and so does Micrometer's context propagation (Spring's `ContextPropagatingTaskDecorator`, Reactor's automatic propagation) when it is on the class path. With SLF4J on the class path, `cronwatch_job` and `cronwatch_run` are in the MDC during a run.
 
-A job's timeout sets `job.cancelled()` and calls what `job.onCancel(...)` registered; nothing is stopped, as the SDK stops nothing. `RunOptions.interruptAtTimeout()` also interrupts the running thread at the timeout, and a run that then ends by throwing is recorded as timed out, so the stuck alert goes out at once. When the JVM begins to stop (`System.exit`, a `SIGTERM`), a shutdown hook records every run still open in the process as failed (`noShutdownHook()` leaves it out). The client's own work (recording a run, sending alerts, checks) runs on virtual threads of its own, and an interrupt of the caller never cuts a write in half.
+A job's timeout sets `job.cancelled()` and calls what `job.onCancel(...)` registered; nothing is stopped, as the SDK stops nothing. `RunOptions.interruptAtTimeout()` also interrupts the running thread at the timeout, and a run that then ends by throwing is recorded as timed out, so the stuck alert goes out at once. Stuck stays open until a run finishes ok: a later run that only starts, times out too, or fails does not close it, so a job that hangs every time alerts once. A store that hangs while a run's start is written holds the job back for five seconds at most: it is then reported and the job runs unrecorded, and the write, if it lands later, never leaves a running row behind. When the JVM begins to stop (`System.exit`, a `SIGTERM`), a shutdown hook records every run still open in the process as failed (`noShutdownHook()` leaves it out). The client's own work (recording a run, sending alerts, checks) runs on virtual threads of its own, and an interrupt of the caller never cuts a write in half.
 
 ```java
 try (Cronwatch cw = Cronwatch.builder().build()) {
@@ -88,9 +88,11 @@ try (Cronwatch cw = Cronwatch.builder().build()) {
 }
 ```
 
+Each flush is redacted together with the lines the handle flushed before it, so a secret logged across two flushes (a private key a line at a time, a label and then its value) is still blanked whole.
+
 ### Stores
 
-`MemoryStore` is the default, for tests and trying it out. `SqlStore.sqlite(dataSource)` keeps the SDK's three tables in a SQLite database, in WAL mode, through one connection it keeps; `SqlStore.postgres(dataSource)` keeps them in Postgres (`JSONB` for the JSON, many processes may start at once), and `SqlStore.mysql(dataSource)` in MySQL 8.0.13 or newer or MariaDB 10.6 or newer; `SqlStore.of(dataSource)` picks the dialect from the driver, and `.prefix("cw_")` sets the table prefix. The tables are made on first use, byte for byte as the SDK makes them, so a Node process and a Java process can share them in either order. The store's writes never join a transaction your code has open: each statement takes a connection of its own from the data source, in autocommit, so give it a plain data source, not one that hands out your transaction's connection.
+`MemoryStore` is the default, for tests and trying it out. `SqlStore.sqlite(dataSource)` keeps the SDK's three tables in a SQLite database, in WAL mode, through one connection it keeps; `SqlStore.postgres(dataSource)` keeps them in Postgres (`JSONB` for the JSON, many processes may start at once), and `SqlStore.mysql(dataSource)` in MySQL 8.0.13 or newer or MariaDB 10.6 or newer (MariaDB Connector/J 4 turns TLS on by default and refuses a server without it, so for one that has none the app's own `DataSource` needs `sslMode=disable` in its URL; the store adds nothing to the connection); `SqlStore.of(dataSource)` picks the dialect from the driver, and `.prefix("cw_")` sets the table prefix. The tables are made on first use, byte for byte as the SDK makes them, so a Node process and a Java process can share them in either order. The store's writes never join a transaction your code has open: each statement takes a connection of its own from the data source, in autocommit, so give it a plain data source, not one that hands out your transaction's connection.
 
 ```java
 var dataSource = new org.postgresql.ds.PGSimpleDataSource();
@@ -134,7 +136,7 @@ Cronwatch cw = Cronwatch.builder()
     .build();
 ```
 
-Each alert but a recovery gets a few sentences from Claude on what went wrong, from one POST to the Messages API (no Anthropic client), the request the SDK's official client makes. The key is `apiKey(...)`, else `ANTHROPIC_API_KEY`, read when triage runs; `ANTHROPIC_BASE_URL` or `baseUrl(...)` points it at a gateway. It is tried once per alert, and never holds an alert up for more than 25 seconds.
+Each alert but a recovery gets a few sentences from Claude on what went wrong, from one POST to the Messages API (no Anthropic client), the request the SDK's official client makes. The key is `apiKey(...)`, else `ANTHROPIC_API_KEY`, read when triage runs; `ANTHROPIC_BASE_URL` or `baseUrl(...)` points it at a gateway. It is tried once per alert, and never holds an alert up for more than 25 seconds. `maxTokens` is 4096 by default, which the model's thinking counts toward; an answer cut off at the limit before any of the diagnosis is written is reported to the error handler (`triage for <job>`) and the alert goes out without one.
 
 ### pg_cron
 
@@ -176,7 +178,7 @@ cronwatch.web.token=${CRONWATCH_TOKEN}
 # cronwatch.web.origin=https://app.example.com, cronwatch.web.open=true, cronwatch.web.order=-110
 ```
 
-The filter runs ahead of Spring Security's chain (order -110, before its -100), since the dashboard checks its own token; with `cronwatch.web.open=true` it has none, so it runs behind the chain (order -90) and your security rules guard it. `cronwatch.web.order` sets either.
+The filter runs ahead of Spring Security's chain (order -110, before its -100), since the dashboard checks its own token; with `cronwatch.web.open=true` it has none, so it runs behind the chain (order -90) and your security rules guard it. `cronwatch.web.order` sets either. Behind the chain, Spring Security's protection against cross-site request forgery refuses a POST without its token, which the dashboard's forms do not carry, so every button (silence, check now, delete) and the JSON API's POST and DELETE answer 403 until the dashboard's paths are left out of it: `http.csrf(csrf -> csrf.ignoringRequestMatchers("/cronwatch/**"))`. The dashboard refuses a cross-site POST itself, by its `Origin` and `Sec-Fetch-Site`.
 
 Tomcat, Jetty, and Spring Security refuse an encoded slash (`%2F`) in a path by default, so a job whose name holds a `/` is reached through the dashboard behind them only if the app allows it; the JDK's server passes it through.
 
@@ -215,7 +217,7 @@ cronwatch.app=billing
 cronwatch.jobs[NightlyReports.build].grace=15m
 ```
 
-With `@EnableScheduling`, every `@Scheduled` method is watched with no code changes (`cronwatch.scheduled.enabled=false` turns it off). Each invocation is a run (trigger `spring-scheduled`; runs recorded before 0.11 carry `scheduled`), recorded from the `Observation` Spring makes of it, in the thread that runs the method, so `Cronwatch.current()` works inside it; a method that throws fails its run and Spring's error handler does what it did before. A job is named `SimpleClassName.method` after the bean's own class, the full name when two classes' simple names would give one name, and `@CronwatchJob` names it and gives its options:
+With `@EnableScheduling`, every `@Scheduled` method is watched with no code changes (`cronwatch.scheduled.enabled=false` turns it off). Each invocation is a run (trigger `spring-scheduled`; runs recorded before 0.11 carry `scheduled`), recorded from the `Observation` Spring makes of it, in the thread that runs the method, so `Cronwatch.current()` works inside it; a method that throws fails its run and Spring's error handler does what it did before. An app that turns those observations off (`management.observations.enable.tasks.scheduled.execution=false`) still has its runs recorded, through a registry of the starter's own. A job is named `SimpleClassName.method` after the bean's own class, the full name when two classes' simple names would give one name, and `@CronwatchJob` names it and gives its options:
 
 ```java spring
 class NightlyReports {
@@ -229,9 +231,9 @@ class NightlyReports {
 
 A `cron` is declared as written, in the annotation's zone (else the JVM's), and checked against Spring's own reading of it: Spring runs a job whose day of the month and day of the week are both given only when both match, where CronWatch (croner) runs it when either does, so an expression the two read differently is reported once and watched without a schedule. A `fixedRate` is `every <rate>`; so is a `fixedDelay`, whose runs start a delay after the last one ended, so its next run is due later than `every <delay>` says by however long the last one took. Give such a job a grace at least as long as its longest run (`@CronwatchJob(grace = "30m")`, or `cronwatch.jobs[<name>].grace`), or each long run is followed by a missed alert and a recovery. A method with several `@Scheduled` annotations is one job without a schedule. A method that returns a `Mono`, a `Flux`, or a Kotlin flow, or suspends, is observed by Spring around its subscription rather than its work, so it is reported and watched without runs. Jobs are tagged `spring-scheduled` and `spring-scheduled:<app>`, so two apps sharing a store never unschedule each other's jobs.
 
-**ShedLock.** When the app runs its `@Scheduled` methods on every instance under ShedLock's `@SchedulerLock`, the starter wraps the app's `LockProvider`, so the instances that do not get the lock give their run back and only the one that ran the method records it.
+**ShedLock.** When the app runs its `@Scheduled` methods on every instance under ShedLock's `@SchedulerLock`, the starter wraps the app's `LockProvider`, so the instances that do not get the lock give their run back and only the one that ran the method records it. Only a method that is itself under `@SchedulerLock` is given back so: one that is not ran, whatever a lock asked for inside it answered, and its run is recorded.
 
-**The check** runs every `cronwatch.check-every` from when the context starts, with each integration's sync before it (jobs gone from the app declared again without their schedule, so they are never reported missed). How it runs across a cluster is `cronwatch.check-mode`: under a ShedLock lock of its own name (`cronwatch-check`) when the app has a `LockProvider`, as a Quartz job when the app's Quartz scheduler is clustered, else in each instance.
+**The check** runs every `cronwatch.check-every` from when the context starts, with each integration's sync before it (jobs gone from the app declared again without their schedule, so they are never reported missed). How it runs across a cluster is `cronwatch.check-mode`: under a ShedLock lock of its own name (`cronwatch-check`) when the app has a `LockProvider`, as a Quartz job when the app's Quartz scheduler is clustered, else in each instance. A check job a JDBC job store kept from an earlier start is put on the interval set now, and taken off the scheduler when the check no longer runs through Quartz (but with `cronwatch.check-mode=none`, where it is left to the app).
 
 ## Quartz
 
@@ -245,11 +247,11 @@ CronwatchQuartz.scheduleCheck(scheduler);   // a check every minute, once per cl
 scheduler.start();
 ```
 
-A cron trigger is declared on its expression in the trigger's zone, checked against Quartz's own fire times; Quartz counts the days of the week from 1 for Sunday, so an expression naming one by number is reported and watched without a schedule (use `MON`, not `2`). A simple trigger repeating forever is `every <interval>`; other triggers, a trigger with a `Calendar`, and several triggers on different schedules make a job without a schedule. A refire (`refireImmediately`) is a new run. In a clustered job store, a job a node was running when it died is fired again on another node, and that firing finishes the earlier run as failed (`Quartz recovered the job after its node stopped`).
+A cron trigger is declared on its expression in the trigger's zone, checked against Quartz's own fire times; Quartz counts the days of the week from 1 for Sunday, so an expression naming one by number is reported and watched without a schedule (use `MON`, not `2`). A simple trigger repeating forever is `every <interval>`; other triggers, a trigger with a `Calendar`, and several triggers on different schedules make a job without a schedule, and so does a trigger that is paused or has not started yet (one that repeats keeps its schedule when its start is no further off than its interval), until it is resumed or has started. A refire (`refireImmediately`) is a new run. A job listener of the app's that throws once a job has run hides how the job ended from the listeners after it, so that run is recorded failed with the listener's throw. `scheduleCheck` puts a check job already there on the interval given, and `unscheduleCheck` takes it off. In a clustered job store, a job a node was running when it died is fired again on another node, and that firing finishes the earlier run as failed (`Quartz recovered the job after its node stopped`).
 
 ## JobRunr
 
-`dev.cronwatch:cronwatch-jobrunr` is a server filter for JobRunr 8: every recurring job is declared by its id with its schedule (a cron in its zone, checked against JobRunr's own fire times, or `every <interval>`), and every attempt is a run in the worker thread, so a retry is a run of its own. A job that is not recurring is watched when its JobRunr name is given to `watchJob`.
+`dev.cronwatch:cronwatch-jobrunr` is a server filter for JobRunr 8 and 9: every recurring job is declared by its id with its schedule (a cron in its zone, checked against JobRunr's own fire times, or `every <interval>`), and every attempt is a run in the worker thread, so a retry is a run of its own. A job that is not recurring is watched when its JobRunr name is given to `watchJob`.
 
 ```java jobrunr
 Cronwatch cw = Cronwatch.builder().build();

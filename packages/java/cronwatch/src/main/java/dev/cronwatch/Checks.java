@@ -197,16 +197,29 @@ final class Checks {
     }
     Run marked;
     Long finishedAt = run.finishedAt();
-    if (stranded && finishedAt != null) {
-      // Its own status was never written; a late finish of it is judged as one after a timeout, so
-      // a success still recovers.
+    if (stranded && finishedAt != null && run.error() != null) {
+      // The placeholder of a finished import keeps the run's own error, and only a run that failed
+      // has one: it is closed as the failure it was, with its own times, and alerts as failed. A
+      // later import of the same run finds it finished and changes nothing.
+      Long durationMs = run.durationMs();
+      marked =
+          run.finished(
+              RunStatus.FAILED,
+              durationMs != null ? Long.valueOf(run.startedAt() + durationMs) : finishedAt,
+              durationMs != null ? durationMs : Evaluate.runDuration(run.startedAt(), finishedAt),
+              run.error(),
+              run.output(),
+              run.metrics());
+    } else if (stranded && finishedAt != null) {
+      // Its own status was never written and nothing says it failed; a late finish of it is judged
+      // as one after a timeout, so a success still recovers.
       Long durationMs = run.durationMs();
       marked =
           run.finished(
               RunStatus.TIMEOUT,
               finishedAt,
               durationMs != null ? durationMs : Evaluate.runDuration(run.startedAt(), finishedAt),
-              Runs.STRANDED_ERROR + (run.error() == null ? "" : "\n" + run.error()),
+              Runs.STRANDED_ERROR,
               run.output(),
               run.metrics());
     } else {
@@ -412,7 +425,8 @@ final class Checks {
     core.ensureReady();
     JobDef def = core.declared(name);
     if (def != null) {
-      core.sync(def, true);
+      // Read back like a run's, but a read never declares a job forgotten here again.
+      core.sync(def, true, false);
     }
     StoredJob stored = Core.call(() -> core.store.getJob(name));
     return stored == null ? null : snapshot(readJob(stored), core.now(), 0).job();

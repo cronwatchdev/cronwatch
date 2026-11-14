@@ -9,6 +9,7 @@ import dev.cronwatch.bridge.ScheduleException;
 import dev.cronwatch.bridge.SchedulerBridge;
 import dev.cronwatch.bridge.Watch;
 import dev.cronwatch.json.Json;
+import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -25,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
@@ -34,6 +36,7 @@ import org.springframework.core.Ordered;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.scheduling.support.CronExpression;
+import org.springframework.scheduling.support.ScheduledTaskObservationContext;
 import org.springframework.util.StringUtils;
 
 /**
@@ -56,6 +59,14 @@ public final class CronwatchScheduling
 
   private static final String SCHEDULER = "Spring";
 
+  private static final System.Logger LOGGER = System.getLogger("dev.cronwatch.spring");
+
+  /** The name of the observation Spring makes for each invocation of a scheduled method. */
+  static final String OBSERVATION = "tasks.scheduled.execution";
+
+  /** The target the probe's observation names: no bean of the app's. */
+  private static final Object PROBE = new Object();
+
   /**
    * What an invocation's run needs of its method: the job's name, its options for a fallback, and
    * whether it is reactive (never a run) or under a ShedLock lock.
@@ -71,6 +82,7 @@ public final class CronwatchScheduling
   private final ReentrantLock lock = new ReentrantLock();
   private final Set<ObservationRegistry> given = Collections.newSetFromMap(new IdentityHashMap<>());
   private volatile Map<String, Target> targets = Map.of();
+  private final AtomicBoolean saidUnobserved = new AtomicBoolean();
 
   /** A cron's reading as it was checked, the schedule to declare or the problem. */
   private record Checked(@Nullable String schedule, @Nullable String problem) {}
@@ -133,7 +145,9 @@ public final class CronwatchScheduling
    * Gives Spring's scheduling a registry CronWatch's handler is in: the one an earlier configurer
    * set, or the app's, when it has handlers of its own (they are still called), else one of the
    * starter's holding only CronWatch's handler, so an app without observability gets no new
-   * observations anywhere else.
+   * observations anywhere else. A registry that does not let a scheduled task's observation through
+   * ({@code management.observations.enable.tasks.scheduled.execution=false}, or a predicate of the
+   * app's) would record no run at all, so the starter's own is used in its place, and said once.
    */
   @Override
   public void configureTasks(ScheduledTaskRegistrar registrar) {
@@ -151,6 +165,21 @@ public final class CronwatchScheduling
       if (given.add(chosen)) {
         chosen.observationConfig().observationHandler(runs);
       }
+      if (!observes(chosen)) {
+        // The app turned scheduled tasks' observations off: on its registry no invocation would
+        // reach the handler, and every method, declared with its schedule, would be reported
+        // missed.
+        if (!saidUnobserved.getAndSet(true)) {
+          LOGGER.log(
+              System.Logger.Level.INFO,
+              "[cronwatch] the app's observation registry does not observe scheduled tasks ("
+                  + OBSERVATION
+                  + " is turned off), so @Scheduled runs are recorded through a registry of"
+                  + " CronWatch's own, which holds nothing else.");
+        }
+        chosen = ObservationRegistry.create();
+        chosen.observationConfig().observationHandler(runs);
+      }
       // The app's registry gets the handler too, so a configurer that sets it after this one
       // (Spring Boot's actuator) keeps the runs.
       if (appRegistry != null && !appRegistry.isNoop() && given.add(appRegistry)) {
@@ -160,6 +189,23 @@ public final class CronwatchScheduling
       lock.unlock();
     }
     registrar.setObservationRegistry(chosen);
+  }
+
+  /**
+   * Whether {@code registry} lets a scheduled task's observation through: Spring makes each
+   * invocation's the way this one is made, and a registry whose predicates refuse the name answers
+   * the no-op observation, which no handler is told of.
+   */
+  static boolean observes(ObservationRegistry registry) {
+    Method probe;
+    try {
+      probe = CronwatchScheduling.class.getMethod("sync");
+    } catch (NoSuchMethodException e) {
+      return true;
+    }
+    return !Observation.createNotStarted(
+            OBSERVATION, () -> new ScheduledTaskObservationContext(PROBE, probe), registry)
+        .isNoop();
   }
 
   /** Stops recording runs; the jobs stay declared. */

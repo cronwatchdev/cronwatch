@@ -20,6 +20,12 @@ final class RunFrames {
   static final class Frame {
     final @Nullable ObservedRun run;
 
+    /**
+     * Whether the run was opened to be given back: its method is itself under ShedLock's lock, so a
+     * lock not taken means the method did not run here.
+     */
+    final boolean mayTakeBack;
+
     /** The stack of the thread the invocation started in, which it is taken off at its end. */
     final Deque<Frame> stack;
 
@@ -29,20 +35,29 @@ final class RunFrames {
     /** What the first lock asked for in the invocation answered: null until one was asked. */
     volatile @Nullable Boolean lockTaken;
 
-    Frame(@Nullable ObservedRun run, Deque<Frame> stack) {
+    Frame(@Nullable ObservedRun run, boolean mayTakeBack, Deque<Frame> stack) {
       this.run = run;
+      this.mayTakeBack = mayTakeBack;
       this.stack = stack;
     }
   }
 
-  /** Pushes a frame for an invocation starting in this thread. */
+  /** Pushes a frame for an invocation starting in this thread, its run not one to give back. */
   static Frame push(@Nullable ObservedRun run) {
+    return push(run, false);
+  }
+
+  /**
+   * Pushes a frame for an invocation starting in this thread; {@code mayTakeBack} says whether its
+   * run is given back when the first lock asked for was not taken.
+   */
+  static Frame push(@Nullable ObservedRun run, boolean mayTakeBack) {
     Deque<Frame> stack = STACK.get();
     if (stack == null) {
       stack = new ConcurrentLinkedDeque<>();
       STACK.set(stack);
     }
-    Frame f = new Frame(run, stack);
+    Frame f = new Frame(run, mayTakeBack, stack);
     stack.push(f);
     return f;
   }

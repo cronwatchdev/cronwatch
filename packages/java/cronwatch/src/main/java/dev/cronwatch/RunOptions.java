@@ -86,10 +86,10 @@ public final class RunOptions {
    * Takes a run back rather than judging it when the function throws something {@code discard}
    * answers true for: an attempt a scheduler gives back without failing. The running row is deleted
    * (the store's {@code deleteRunIf}), nothing is judged or alerted, the job's state is left as it
-   * was (missed and stuck are closed only once the run is known not to be given back), and the
-   * throwable is still thrown. A row a check already marked stuck is left as it is, a store without
-   * {@code deleteRunIf} records the run as it ended, and a predicate that throws is reported
-   * ({@code discarding <job>}) and the run recorded.
+   * was (missed is closed only once the run is known not to be given back), and the throwable is
+   * still thrown. A row a check already marked stuck is left as it is, a store without {@code
+   * deleteRunIf} records the run as it ended, and a predicate that throws is reported ({@code
+   * discarding <job>}) and the run recorded.
    */
   public RunOptions withDiscardWhen(Predicate<? super Throwable> discard) {
     return new RunOptions(
@@ -98,8 +98,8 @@ public final class RunOptions {
 
   /**
    * For a run opened with {@link Job#open(RunOptions)} that its integration may give back ({@link
-   * ObservedRun#takeBack()}): missed and stuck are closed only once it is closed, so a run given
-   * back leaves the job's state as it was. {@link #withDiscardWhen} implies it.
+   * ObservedRun#takeBack()}): missed is closed only once it is closed, so a run given back leaves
+   * the job's state as it was. {@link #withDiscardWhen} implies it.
    */
   public RunOptions mayTakeBack() {
     return new RunOptions(trigger, interruptAtTimeout, id, discardWhen, true);

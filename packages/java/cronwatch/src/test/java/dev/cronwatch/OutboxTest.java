@@ -3,7 +3,6 @@ package dev.cronwatch;
 import static dev.cronwatch.Support.MIN;
 import static dev.cronwatch.Support.T0;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -646,14 +645,39 @@ class OutboxTest {
       assertEquals(RunStatus.RUNNING, Objects.requireNonNull(shared.getRun(run.id())).status());
       clock.advance(Evaluate.SEND_LEASE_MS + MIN);
       cw.check();
+      // The placeholder holds the run's own error, so it is closed as the failure it was, with its
+      // own times.
       Run closed = Objects.requireNonNull(shared.getRun(run.id()));
-      assertEquals(RunStatus.TIMEOUT, closed.status());
+      assertEquals(RunStatus.FAILED, closed.status());
       assertEquals(MIN, closed.durationMs());
-      assertEquals(
-          "Imported, but its finish was never written; marked as timed out\nboom", closed.error());
-      assertEquals(List.of("stuck"), capture.types());
-      assertNotEquals(
-          JobHealth.HEALTHY, Objects.requireNonNull(cw.jobSummary("imported")).health());
+      assertEquals(run.finishedAt(), closed.finishedAt());
+      assertEquals("boom", closed.error());
+      assertEquals(List.of("failed"), capture.types());
+      assertEquals(JobHealth.FAILING, Objects.requireNonNull(cw.jobSummary("imported")).health());
+      // The importer comes back and records the same run again: nothing changes, and nothing is
+      // counted twice.
+      assertEquals(List.of(), cw.recordRun(run));
+      cw.check();
+      assertEquals(List.of("failed"), capture.types());
+      JobState state = Objects.requireNonNull(shared.getState("imported"));
+      assertEquals(1, state.consecutiveFailures());
+      assertEquals(List.of(Condition.FAILED), List.copyOf(state.open().keySet()));
+      assertNull(state.pendingRuns());
+      // The next imported success recovers it.
+      clock.advance(MIN);
+      cw.recordRun(
+          Run.of(
+              "next-import",
+              "imported",
+              RunStatus.OK,
+              clock.now() - 1000,
+              clock.now(),
+              1000L,
+              null,
+              null,
+              Metrics.empty(),
+              "source"));
+      assertEquals(List.of("failed", "recovered"), capture.types());
     }
   }
 

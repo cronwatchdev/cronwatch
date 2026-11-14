@@ -1,6 +1,7 @@
 package dev.cronwatch.triage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import dev.cronwatch.Alert;
 import dev.cronwatch.Cronwatch;
@@ -94,9 +95,21 @@ class TriageConformanceTest {
       count++;
     }
     for (JsObject c : Fixtures.objects(f, "responses")) {
-      String got = Anthropic.diagnosis(c.get("response"));
-      Object want = c.get("result");
-      failures.same(Json.stringify(c.get("response")), got.isEmpty() ? null : got, want);
+      String label = Json.stringify(c.get("response"));
+      if (c.has("error")) {
+        // An answer the model cut off before any text: an error, with the SDK's message.
+        String message = null;
+        try {
+          Anthropic.diagnosis(c.get("response"), Anthropic.DEFAULT_MAX_TOKENS);
+        } catch (dev.cronwatch.CronwatchException e) {
+          message = e.getMessage();
+        }
+        failures.same(label + ": error", message, c.get("error"));
+        assertFalse(c.has("result"), label);
+      } else {
+        String got = Anthropic.diagnosis(c.get("response"), Anthropic.DEFAULT_MAX_TOKENS);
+        failures.same(label, got.isEmpty() ? null : got, c.get("result"));
+      }
       count++;
     }
     Set<String> kept =

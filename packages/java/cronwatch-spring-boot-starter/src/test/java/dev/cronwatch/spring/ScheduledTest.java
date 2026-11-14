@@ -423,4 +423,59 @@ class ScheduledTest {
     assertEquals(5000L, ScheduledMethods.millis("5", TimeUnit.SECONDS));
     assertEquals(-1L, ScheduledMethods.millis("soon", TimeUnit.SECONDS));
   }
+
+  /** An app whose registry observes everything but scheduled tasks. */
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  @EnableScheduling
+  @Import(Ticks.class)
+  public static class Unobserved {
+    static final AtomicInteger SEEN = new AtomicInteger();
+
+    /**
+     * The app's registry with scheduled tasks' observations turned off, as {@code
+     * management.observations.enable.tasks.scheduled.execution=false} turns them off.
+     */
+    @Bean
+    public ObservationRegistry observationRegistry() {
+      ObservationRegistry registry = ObservationRegistry.create();
+      registry
+          .observationConfig()
+          .observationPredicate((name, context) -> !name.equals("tasks.scheduled.execution"))
+          .observationHandler(
+              new ObservationHandler<Observation.Context>() {
+                @Override
+                public boolean supportsContext(Observation.Context context) {
+                  return context instanceof ScheduledTaskObservationContext;
+                }
+
+                @Override
+                public void onStop(Observation.Context context) {
+                  SEEN.incrementAndGet();
+                }
+              });
+      return registry;
+    }
+  }
+
+  /**
+   * With scheduled tasks' observations turned off on the app's registry, no invocation reached the
+   * handler: every method was declared with its schedule, recorded no run, and was reported missed.
+   * The runs are recorded through a registry of the starter's own.
+   */
+  @Test
+  void runsAreRecordedWhenTheAppTurnsScheduledObservationsOff() throws Exception {
+    assertFalse(CronwatchScheduling.observes(new Unobserved().observationRegistry()));
+    assertTrue(CronwatchScheduling.observes(new Observed().observationRegistry()));
+    MemoryStore store = new MemoryStore();
+    Apps.Errors errors = new Apps.Errors();
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(Unobserved.class, store, errors, "cronwatch.app=billing")) {
+      Cronwatch cw = ctx.getBean(Cronwatch.class);
+      await("a recorded run", () -> !finished(cw, "Ticks.tick").isEmpty());
+      assertEquals(RunStatus.OK, finished(cw, "Ticks.tick").get(0).status());
+      assertEquals(0, Unobserved.SEEN.get(), "the app's own handlers still see none");
+      assertTrue(errors.seen.isEmpty(), errors.joined());
+    }
+  }
 }

@@ -707,4 +707,191 @@ class CronwatchQuartzTest {
         dev.cronwatch.Metrics.empty(),
         "quartz");
   }
+
+  /**
+   * A job listener ahead of this one that throws once the job has run stops Quartz telling the
+   * listeners after it, and Quartz says so with the same exception as for one that stopped the job
+   * running: the run was given back, so a job that ran left no run and was later reported missed.
+   * It is closed failed with the listener's throw.
+   */
+  @Test
+  void aRunWhoseEndAnotherListenerHidIsClosedNotGivenBack() throws Exception {
+    MemoryStore store = new MemoryStore();
+    List<String> errors = Quartzes.errors();
+    Scheduler scheduler = Quartzes.ram();
+    try (Cronwatch cw = Quartzes.client(store, errors)) {
+      AtomicInteger threw = new AtomicInteger();
+      // Ahead of CronWatch's listener: Quartz tells its listeners in the order they were added.
+      scheduler
+          .getListenerManager()
+          .addJobListener(
+              new org.quartz.listeners.JobListenerSupport() {
+                @Override
+                public String getName() {
+                  return "audit";
+                }
+
+                @Override
+                public void jobWasExecuted(
+                    JobExecutionContext context, @Nullable JobExecutionException e) {
+                  threw.incrementAndGet();
+                  throw new IllegalStateException("audit log is down");
+                }
+              });
+      CronwatchQuartz q = CronwatchQuartz.watch(cw, scheduler);
+      scheduler.start();
+      scheduler.scheduleJob(detail(Reports.class, "audited", "DEFAULT", "audited"), once("t"));
+      await("the listener's throw", () -> threw.get() == 1);
+      await(
+          "the run closed",
+          () ->
+              cw.runs("audited", 5).stream().anyMatch(r -> !r.status().equals(RunStatus.RUNNING)));
+      assertEquals(1, CALLS.get("audited").get(), "Quartz ran it");
+      List<Run> runs = cw.runs("audited", 5);
+      assertEquals(1, runs.size(), runs.toString());
+      assertEquals(RunStatus.FAILED, runs.get(0).status());
+      String error = String.valueOf(runs.get(0).error());
+      assertTrue(error.contains("JobListener 'audit' threw exception"), error);
+      assertEquals("Report written", runs.get(0).output());
+      q.close();
+    } finally {
+      scheduler.shutdown(true);
+    }
+  }
+
+  @Test
+  void quartzsWordOfAListenerThatThrewSaysWhetherTheJobRan() {
+    assertFalse(
+        CronwatchQuartz.afterExecution(
+            "Unable to notify JobListener(s) of Job to be executed: (Job will NOT be executed!)."
+                + " trigger= DEFAULT.t job= DEFAULT.j"));
+    assertTrue(
+        CronwatchQuartz.afterExecution(
+            "Unable to notify JobListener(s) of Job that was executed: (error will be ignored)."
+                + " trigger= DEFAULT.t job= DEFAULT.j"));
+    assertFalse(CronwatchQuartz.afterExecution(null));
+  }
+
+  /**
+   * A paused job, and one whose trigger has not started, makes no run: declared on its cron it was
+   * reported missed at the next time the cron names. Each is declared without a schedule until it
+   * is resumed or has started.
+   */
+  @Test
+  void aPausedOrNotYetStartedTriggerIsDeclaredWithoutASchedule() throws Exception {
+    MemoryStore store = new MemoryStore();
+    List<String> errors = Quartzes.errors();
+    Scheduler scheduler = Quartzes.ram();
+    try (Cronwatch cw = Quartzes.client(store, errors)) {
+      JobDetail paused = detail(Reports.class, "paused", "DEFAULT", "p");
+      scheduler.scheduleJob(paused, cron("t1", "0 0 2 * * ?", "UTC"));
+      scheduler.scheduleJob(
+          detail(Reports.class, "later", "DEFAULT", "p"),
+          cron("t2", "0 0 3 * * ?", "UTC")
+              .getTriggerBuilder()
+              .startAt(
+                  org.quartz.DateBuilder.futureDate(30, org.quartz.DateBuilder.IntervalUnit.DAY))
+              .build());
+      // An interval longer than the wait for its start covers it: every 2h expects no run sooner.
+      scheduler.scheduleJob(
+          detail(Reports.class, "soon", "DEFAULT", "p"),
+          TriggerBuilder.newTrigger()
+              .withIdentity("t3")
+              .withSchedule(
+                  SimpleScheduleBuilder.simpleSchedule().withIntervalInHours(2).repeatForever())
+              .startAt(
+                  org.quartz.DateBuilder.futureDate(1, org.quartz.DateBuilder.IntervalUnit.HOUR))
+              .build());
+      scheduler.scheduleJob(
+          detail(Reports.class, "muchLater", "DEFAULT", "p"),
+          TriggerBuilder.newTrigger()
+              .withIdentity("t4")
+              .withSchedule(
+                  SimpleScheduleBuilder.simpleSchedule().withIntervalInHours(2).repeatForever())
+              .startAt(
+                  org.quartz.DateBuilder.futureDate(30, org.quartz.DateBuilder.IntervalUnit.DAY))
+              .build());
+      scheduler.pauseJob(paused.getKey());
+      CronwatchQuartz q =
+          CronwatchQuartz.watch(cw, scheduler, QuartzOptions.defaults().app("billing"));
+      try {
+        assertTrue(q.settle(Duration.ofSeconds(10)));
+        String bare = "{\"tags\":[\"quartz\",\"quartz:billing\"],\"name\":\"%s\"}";
+        assertEquals(String.format(bare, "paused"), stored(store, "paused"));
+        assertEquals(String.format(bare, "later"), stored(store, "later"));
+        assertEquals(String.format(bare, "muchLater"), stored(store, "muchLater"));
+        assertEquals(
+            "{\"schedule\":\"every 2h\",\"tags\":[\"quartz\",\"quartz:billing\"],"
+                + "\"name\":\"soon\"}",
+            stored(store, "soon"));
+
+        // Resumed, it is on its cron again: the scheduler's word of the change asks for a read.
+        scheduler.resumeJob(paused.getKey());
+        await(
+            "the resumed job on its schedule",
+            () -> {
+              try {
+                return stored(store, "paused").contains("\"schedule\":\"0 0 2 * * *\"");
+              } catch (Exception e) {
+                return false;
+              }
+            });
+        scheduler.pauseTrigger(TriggerKey.triggerKey("t1"));
+        await(
+            "the paused job without its schedule",
+            () -> {
+              try {
+                return !stored(store, "paused").contains("\"schedule\"");
+              } catch (Exception e) {
+                return false;
+              }
+            });
+        assertTrue(errors.isEmpty(), errors.toString());
+      } finally {
+        q.close();
+      }
+    } finally {
+      scheduler.shutdown(true);
+    }
+  }
+
+  /**
+   * A check job the job store kept from an earlier start was left as it was: another interval never
+   * took effect, and an app that stopped checking through Quartz had it fire for good.
+   */
+  @Test
+  void aCheckJobAlreadyThereTakesTheNewIntervalAndCanBeTakenOff() throws Exception {
+    Scheduler scheduler = Quartzes.ram();
+    TriggerKey key =
+        TriggerKey.triggerKey(
+            CronwatchQuartz.CHECK_JOB.getName(), CronwatchQuartz.CHECK_JOB.getGroup());
+    try {
+      CronwatchQuartz.scheduleCheck(scheduler, Duration.ofMinutes(1));
+      Trigger first = scheduler.getTrigger(key);
+      assertEquals(60_000, ((org.quartz.SimpleTrigger) first).getRepeatInterval());
+
+      // The same interval again changes nothing.
+      CronwatchQuartz.scheduleCheck(scheduler, Duration.ofMinutes(1));
+      assertEquals(first.getStartTime(), scheduler.getTrigger(key).getStartTime());
+
+      CronwatchQuartz.scheduleCheck(scheduler, Duration.ofMinutes(5));
+      assertEquals(
+          300_000, ((org.quartz.SimpleTrigger) scheduler.getTrigger(key)).getRepeatInterval());
+      assertEquals(1, scheduler.getTriggersOfJob(CronwatchQuartz.CHECK_JOB).size());
+
+      // The durable job left without its trigger gets one again.
+      assertTrue(scheduler.unscheduleJob(key));
+      assertTrue(scheduler.checkExists(CronwatchQuartz.CHECK_JOB));
+      CronwatchQuartz.scheduleCheck(scheduler, Duration.ofMinutes(5));
+      assertEquals(
+          300_000, ((org.quartz.SimpleTrigger) scheduler.getTrigger(key)).getRepeatInterval());
+
+      assertTrue(CronwatchQuartz.unscheduleCheck(scheduler));
+      assertFalse(scheduler.checkExists(CronwatchQuartz.CHECK_JOB));
+      assertNull(scheduler.getTrigger(key));
+      assertFalse(CronwatchQuartz.unscheduleCheck(scheduler), "nothing left to take off");
+    } finally {
+      scheduler.shutdown(true);
+    }
+  }
 }

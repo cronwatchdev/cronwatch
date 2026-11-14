@@ -48,6 +48,20 @@ class SpringWebTest {
     properties.add("spring.main.web-application-type=" + type);
     properties.add("spring.main.banner-mode=off");
     properties.add("logging.level.root=warn");
+    // Spring Security is on the test class path for one test, which sets its chain up itself:
+    // Boot 3.5's own security configuration (Boot 4 has it in a module these tests leave out)
+    // would otherwise guard every app here. A name that is not on the class path is ignored.
+    properties.add(
+        "spring.autoconfigure.exclude="
+            + "org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration,"
+            + "org.springframework.boot.autoconfigure.security.servlet"
+            + ".SecurityFilterAutoConfiguration,"
+            + "org.springframework.boot.autoconfigure.security.servlet"
+            + ".UserDetailsServiceAutoConfiguration,"
+            + "org.springframework.boot.autoconfigure.security.reactive"
+            + ".ReactiveSecurityAutoConfiguration,"
+            + "org.springframework.boot.autoconfigure.security.reactive"
+            + ".ReactiveUserDetailsServiceAutoConfiguration");
     properties.addAll(List.of(more));
     return new SpringApplicationBuilder(App.class)
         .initializers(
@@ -268,6 +282,113 @@ class SpringWebTest {
           assertEquals(
               200, get(port(context), "/cronwatch/api/jobs").status(), type + ": moved ahead");
         }
+      }
+    }
+  }
+
+  /** Spring Security's own filter chain at the order Spring Boot gives it, letting everyone in. */
+  @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+  @org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+  static class Secured {
+    /** Everyone may ask for anything; cross-site request forgery protection is as it comes. */
+    @org.springframework.context.annotation.Bean
+    org.springframework.security.web.SecurityFilterChain chain(
+        org.springframework.security.config.annotation.web.builders.HttpSecurity http,
+        org.springframework.core.env.Environment environment)
+        throws Exception {
+      http.authorizeHttpRequests(requests -> requests.anyRequest().permitAll());
+      if (environment.getProperty("test.csrf-ignores-dashboard", Boolean.class, false)) {
+        http.csrf(csrf -> csrf.ignoringRequestMatchers("/cronwatch/**"));
+      }
+      return http.build();
+    }
+
+    /** The chain where Spring Boot's own security configuration puts it, at order -100. */
+    @org.springframework.context.annotation.Bean
+    AtSecuritysOrder securityAtItsOrder(
+        @org.springframework.beans.factory.annotation.Qualifier("springSecurityFilterChain")
+            jakarta.servlet.Filter chain) {
+      return new AtSecuritysOrder(chain);
+    }
+  }
+
+  /** Spring Security's chain as a filter of the order Spring Boot registers it with. */
+  static final class AtSecuritysOrder
+      implements jakarta.servlet.Filter, org.springframework.core.Ordered {
+    private final jakarta.servlet.Filter chain;
+
+    AtSecuritysOrder(jakarta.servlet.Filter chain) {
+      this.chain = chain;
+    }
+
+    @Override
+    public void doFilter(
+        jakarta.servlet.ServletRequest request,
+        jakarta.servlet.ServletResponse response,
+        jakarta.servlet.FilterChain next)
+        throws java.io.IOException, jakarta.servlet.ServletException {
+      chain.doFilter(request, response, next);
+    }
+
+    @Override
+    public int getOrder() {
+      return -100;
+    }
+  }
+
+  /**
+   * An open dashboard sits behind Spring Security's chain, whose protection against cross-site
+   * request forgery refuses a POST without its token, and the dashboard's forms carry none: the
+   * reads work and every button answers 403, until the app leaves the dashboard's paths out of that
+   * protection (the dashboard refuses a cross-site POST itself).
+   */
+  @Test
+  void anOpenDashboardBehindSpringSecurityNeedsItsPathsLeftOutOfCsrf() throws Exception {
+    List<Map.Entry<String, String>> form =
+        List.of(Map.entry("content-type", "application/x-www-form-urlencoded"));
+    try (Cronwatch cw = Cronwatch.builder().noCronSecret().noShutdownHook().build()) {
+      cw.run("x", job -> {});
+      try (ConfigurableApplicationContext context =
+          start(cw, "servlet", Secured.class, "cronwatch.web.open=true")) {
+        int port = port(context);
+        assertEquals(200, get(port, "/cronwatch/api/jobs").status(), "a read");
+        RawHttp.Answer refused =
+            RawHttp.send(
+                port,
+                "POST",
+                "/cronwatch/jobs/x/silence",
+                form,
+                "for=1h".getBytes(StandardCharsets.UTF_8));
+        assertEquals(403, refused.status(), "Spring Security refuses the form: " + refused.text());
+        assertEquals(null, cw.jobSummary("x").silencedUntil());
+      }
+      try (ConfigurableApplicationContext context =
+          start(
+              cw,
+              "servlet",
+              Secured.class,
+              "cronwatch.web.open=true",
+              "test.csrf-ignores-dashboard=true")) {
+        int port = port(context);
+        RawHttp.Answer silenced =
+            RawHttp.send(
+                port,
+                "POST",
+                "/cronwatch/jobs/x/silence",
+                form,
+                "for=1h".getBytes(StandardCharsets.UTF_8));
+        assertEquals(303, silenced.status(), silenced.text());
+        assertTrue(cw.jobSummary("x").silencedUntil() != null);
+        // The dashboard's own rule still stands: a POST from another site is refused.
+        RawHttp.Answer crossSite =
+            RawHttp.send(
+                port,
+                "POST",
+                "/cronwatch/jobs/x/unsilence",
+                List.of(Map.entry("origin", "https://elsewhere.test")),
+                null);
+        assertEquals(403, crossSite.status(), crossSite.text());
+        assertTrue(crossSite.text().contains("Cross-site request refused"), crossSite.text());
       }
     }
   }

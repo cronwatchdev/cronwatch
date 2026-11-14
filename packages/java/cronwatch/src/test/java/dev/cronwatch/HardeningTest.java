@@ -952,4 +952,68 @@ class HardeningTest {
       Support.await("the first check after starting again", () -> checks.get() == 2);
     }
   }
+
+  /**
+   * The SDK's test of an error handler that throws inside a check: every report there goes through
+   * the guarded {@code report}, so a throw in the handler stops neither the check, nor the jobs
+   * after the one that failed, nor a dashboard read.
+   */
+  @Test
+  void aThrowingErrorHandlerStopsNeitherACheckNorTheJobsAfterItNorADashboardRead()
+      throws Exception {
+    Wrapped store = new Wrapped(new MemoryStore());
+    Clock clock = new Clock();
+    Capture alerts = new Capture();
+    AtomicInteger calls = new AtomicInteger();
+    List<String> wheres = new CopyOnWriteArrayList<>();
+    try (Cronwatch cw =
+        Cronwatch.builder()
+            .store(store)
+            .clock(clock::now)
+            .alert(alerts)
+            .noCronSecret()
+            .noShutdownHook()
+            .source(
+                new Source() {
+                  @Override
+                  public String name() {
+                    return "bad";
+                  }
+
+                  @Override
+                  public List<Alert> sync(Cronwatch cronwatch) {
+                    throw new IllegalStateException("source down");
+                  }
+                })
+            .onError(
+                (where, e) -> {
+                  calls.incrementAndGet();
+                  wheres.add(where);
+                  throw new IllegalStateException("onError threw");
+                })
+            .build()) {
+      cw.job("b-late", JobOptions.builder().schedule("every 5m"));
+      cw.jobs(); // written to the store now, so it is due an hour on
+      // A job another writer left with a schedule nothing can read: its evaluation throws.
+      store.inner.upsertJob(
+          Definition.fromJson("{\"schedule\":\"not a schedule\",\"name\":\"a-broken\"}"), T0);
+      store.broken.add("prune");
+      clock.advance(HOUR);
+      CheckResult result = cw.check();
+      assertTrue(
+          calls.get() >= 3,
+          "the source, the broken job, and the prune were each reported: " + wheres);
+      assertTrue(wheres.contains("source bad"), wheres.toString());
+      assertTrue(wheres.contains("checking a-broken"), wheres.toString());
+      assertTrue(wheres.contains("pruning"), wheres.toString());
+      assertEquals(
+          List.of("a-broken", "b-late"), result.jobs().stream().map(JobSummary::name).toList());
+      assertEquals(
+          List.of("b-late missed"),
+          alerts.alerts.stream().map(a -> a.job() + " " + a.type().value()).toList(),
+          "the job after the broken one was still checked");
+      // A dashboard read of the broken job answers, showing it as failing.
+      assertEquals(JobHealth.FAILING, cw.jobSummary("a-broken").health());
+    }
+  }
 }

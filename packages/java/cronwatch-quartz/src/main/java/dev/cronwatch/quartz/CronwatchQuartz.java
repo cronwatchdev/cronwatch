@@ -87,9 +87,11 @@ import org.quartz.listeners.SchedulerListenerSupport;
  * differently (nearly every expression naming a day of the week by number, since Quartz counts from
  * 1 for Sunday) is reported once and watched without a schedule. A {@link SimpleTrigger} repeating
  * forever is declared {@code every <interval>}; any other trigger, a trigger with a {@code
- * Calendar}, or several triggers on different schedules is a job without a schedule. A job removed
- * from the scheduler keeps its runs and is declared again without its schedule, so it is never
- * reported missed.
+ * Calendar}, or several triggers on different schedules is a job without a schedule, and so is a
+ * job with a trigger that is paused or whose start time is still to come (further off than its
+ * interval, for one that repeats), until it is resumed or has started. A job removed from the
+ * scheduler keeps its runs and is declared again without its schedule, so it is never reported
+ * missed.
  *
  * <p>In a clustered job store, a job a node was running when it died is fired again on another node
  * with {@code isRecovering()}: that firing first finishes the earlier firing's run, if it is still
@@ -237,7 +239,7 @@ public final class CronwatchQuartz implements AutoCloseable {
 
   /**
    * Schedules {@link CronwatchCheckJob} on {@code scheduler} every minute, unless it is scheduled
-   * already: a sync and a CronWatch check, once per minute across a cluster sharing a JDBC job
+   * so already: a sync and a CronWatch check, once per minute across a cluster sharing a JDBC job
    * store, in place of {@link Cronwatch#startChecking()} on every node.
    *
    * @throws SchedulerException when the scheduler refuses the job
@@ -246,20 +248,16 @@ public final class CronwatchQuartz implements AutoCloseable {
     scheduleCheck(scheduler, Duration.ofMinutes(1));
   }
 
-  /** {@link #scheduleCheck(Scheduler)} on another interval. */
+  /**
+   * {@link #scheduleCheck(Scheduler)} on another interval. A check job a JDBC job store kept from
+   * an earlier start is put on this interval when its own differs, and given its trigger again when
+   * it has none.
+   */
   public static void scheduleCheck(Scheduler scheduler, Duration every) throws SchedulerException {
-    if (scheduler.checkExists(CHECK_JOB)) {
-      return;
-    }
-    JobDetail job =
-        JobBuilder.newJob(CronwatchCheckJob.class)
-            .withIdentity(CHECK_JOB)
-            .withDescription("CronWatch's check: missed and stuck runs, retries, pruning")
-            .storeDurably()
-            .build();
+    TriggerKey key = TriggerKey.triggerKey(CHECK_JOB.getName(), CHECK_JOB.getGroup());
     Trigger trigger =
         TriggerBuilder.newTrigger()
-            .withIdentity(TriggerKey.triggerKey(CHECK_JOB.getName(), CHECK_JOB.getGroup()))
+            .withIdentity(key)
             .forJob(CHECK_JOB)
             .startNow()
             .withSchedule(
@@ -269,10 +267,38 @@ public final class CronwatchQuartz implements AutoCloseable {
                     .withMisfireHandlingInstructionNextWithRemainingCount())
             .build();
     try {
+      if (scheduler.checkExists(CHECK_JOB)) {
+        Trigger kept = scheduler.getTrigger(key);
+        if (kept == null) {
+          scheduler.scheduleJob(trigger);
+        } else if (!(kept instanceof SimpleTrigger simple)
+            || simple.getRepeatInterval() != every.toMillis()
+            || simple.getRepeatCount() != SimpleTrigger.REPEAT_INDEFINITELY) {
+          scheduler.rescheduleJob(key, trigger);
+        }
+        return;
+      }
+      JobDetail job =
+          JobBuilder.newJob(CronwatchCheckJob.class)
+              .withIdentity(CHECK_JOB)
+              .withDescription("CronWatch's check: missed and stuck runs, retries, pruning")
+              .storeDurably()
+              .build();
       scheduler.scheduleJob(job, Set.of(trigger), false);
     } catch (ObjectAlreadyExistsException e) {
       // Another node scheduled it first.
     }
+  }
+
+  /**
+   * Takes {@link CronwatchCheckJob} off {@code scheduler}, for an app that no longer checks through
+   * Quartz: a JDBC job store keeps the job over a restart, where it would go on firing beside
+   * whatever checks now. Says whether there was one.
+   *
+   * @throws SchedulerException when the scheduler cannot delete the job
+   */
+  public static boolean unscheduleCheck(Scheduler scheduler) throws SchedulerException {
+    return scheduler.deleteJob(CHECK_JOB);
   }
 
   /** The watch that declares this scheduler's jobs, for an integration built on this one. */
@@ -437,12 +463,44 @@ public final class CronwatchQuartz implements AutoCloseable {
           continue;
         }
         for (Trigger trigger : triggers) {
-          out.add(entryOf(name, trigger, now, seen));
+          out.add(
+              fires(trigger)
+                  ? entryOf(name, trigger, now, seen)
+                  : new Entry(
+                      name,
+                      label(name),
+                      "",
+                      "",
+                      null,
+                      options.jobDefaults.copy(),
+                      optionsFor(name)));
         }
       }
     }
     checked.keySet().retainAll(seen);
     return out;
+  }
+
+  /**
+   * Whether a trigger is one Quartz fires now: not paused, and past its start time. One that is
+   * paused, or whose start is still to come, makes no run, so its job is declared without a
+   * schedule (and so never reported missed) until it is resumed or has started. A trigger repeating
+   * forever whose start is no further off than its interval keeps its schedule: {@code every
+   * <interval>} expects its first run no sooner than that.
+   */
+  @SuppressWarnings("JavaUtilDate") // Quartz's API answers a Date
+  private boolean fires(Trigger trigger) throws SchedulerException {
+    // Quartz starts a trigger by the machine's clock, whatever clock the client was given.
+    java.util.Date start = trigger.getStartTime();
+    long wait = start == null ? 0 : start.getTime() - System.currentTimeMillis();
+    boolean withinInterval =
+        trigger instanceof SimpleTrigger simple
+            && simple.getRepeatCount() == SimpleTrigger.REPEAT_INDEFINITELY
+            && wait <= simple.getRepeatInterval();
+    if (wait > 0 && !withinInterval) {
+      return false;
+    }
+    return scheduler.getTriggerState(trigger.getKey()) != Trigger.TriggerState.PAUSED;
   }
 
   private Entry entryOf(String name, Trigger trigger, long now, Set<String> seen) {
@@ -747,6 +805,15 @@ public final class CronwatchQuartz implements AutoCloseable {
     }
   }
 
+  /**
+   * Whether Quartz's word of a job listener that threw is of one told the job was executed, not one
+   * told it was about to be: {@code JobRunShell} says "Job that was executed" of the first and "Job
+   * to be executed" of the second.
+   */
+  static boolean afterExecution(@Nullable String msg) {
+    return msg != null && msg.contains("that was executed");
+  }
+
   /** The global job listener: a run opened before {@code execute} and closed after it. */
   private final class Listener implements JobListener {
     @Override
@@ -835,6 +902,46 @@ public final class CronwatchQuartz implements AutoCloseable {
     }
 
     @Override
+    public void triggerPaused(TriggerKey triggerKey) {
+      changed();
+    }
+
+    @Override
+    public void triggersPaused(String triggerGroup) {
+      changed();
+    }
+
+    @Override
+    public void triggerResumed(TriggerKey triggerKey) {
+      changed();
+    }
+
+    @Override
+    public void triggersResumed(String triggerGroup) {
+      changed();
+    }
+
+    @Override
+    public void jobPaused(JobKey jobKey) {
+      changed();
+    }
+
+    @Override
+    public void jobsPaused(String jobGroup) {
+      changed();
+    }
+
+    @Override
+    public void jobResumed(JobKey jobKey) {
+      changed();
+    }
+
+    @Override
+    public void jobsResumed(String jobGroup) {
+      changed();
+    }
+
+    @Override
     public void jobAdded(JobDetail jobDetail) {
       changed();
     }
@@ -850,9 +957,13 @@ public final class CronwatchQuartz implements AutoCloseable {
     }
 
     /**
-     * A job listener after this one that threw stops Quartz running the job, and no listener is
-     * told it was executed; Quartz says so here, in the worker thread, with the firing. Its run is
-     * given back, as a firing that never ran.
+     * A job listener that threw, of which Quartz says here, in the worker thread, with the firing.
+     * One after this one that threw before the job ran stops Quartz running it, and no listener is
+     * told it was executed: its run is given back, as a firing that never ran. One ahead of this
+     * one that threw once the job had run stops Quartz telling the listeners after it, this one
+     * among them, so the run is still open: the job did run, and how it ended is not said, so the
+     * run is closed failed with the listener's throw rather than given back, which would lose it
+     * and leave the job to be reported missed.
      */
     @Override
     public void schedulerError(String msg, SchedulerException cause) {
@@ -863,7 +974,11 @@ public final class CronwatchQuartz implements AutoCloseable {
             && p.getJobExecutionContext().get(RUN_KEY) instanceof ObservedRun run) {
           p.getJobExecutionContext().put(RUN_KEY, null);
           try {
-            run.takeBack(cause);
+            if (afterExecution(msg)) {
+              run.close(cause);
+            } else {
+              run.takeBack(cause);
+            }
           } finally {
             endFiring();
           }

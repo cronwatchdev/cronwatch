@@ -21,11 +21,11 @@
   <packaging>jar</packaging>
 
   <name>CronWatch for JobRunr</name>
-  <description>CronWatch for JobRunr 8: every attempt recorded as a run, the recurring jobs declared with their schedules, and a check job run once per cluster.</description>
+  <description>CronWatch for JobRunr 8 and 9: every attempt recorded as a run, the recurring jobs declared with their schedules, and a check job run once per cluster.</description>
 
   <properties>
-    <jobrunr.version>8.8.2</jobrunr.version>
-    <jackson.version>2.22.3</jackson.version>
+    <jobrunr.version>9.0.4</jobrunr.version>
+    <jackson.version>2.23.0</jackson.version>
   </properties>
 
   <dependencies>

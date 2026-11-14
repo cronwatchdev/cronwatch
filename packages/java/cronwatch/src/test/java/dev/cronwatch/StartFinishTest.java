@@ -658,4 +658,67 @@ class StartFinishTest {
     assertEquals("close", calls.get(calls.size() - 1), "nothing reached the store after it");
     assertThrows(CronwatchException.class, cw::check);
   }
+
+  /**
+   * The SDK's test of a secret split across two flushes: each flush was redacted alone, so a
+   * private key logged a line at a time, or a label and then its value, left its second part
+   * stored. The new lines are redacted together with what the handle flushed last.
+   */
+  @Test
+  void aSecretThatStartsInOneFlushAndEndsInTheNextIsRedactedWhole() {
+    Made m = Support.make();
+    RunHandle run = m.cw().job("deploy").start();
+    run.log("starting");
+    run.log("-----BEGIN PRIVATE KEY-----");
+    run.log("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj");
+    run.flush();
+    assertEquals("starting\n[redacted]", m.cw().getRun(run.id()).output());
+    run.log("MFNRV0X0e1nSecondHalfOfTheKeySecondHalfOfTheKeySecondHalfOfTheKe");
+    run.log("-----END PRIVATE KEY-----");
+    run.log("api_token:");
+    run.flush();
+    assertEquals("starting\n[redacted]\napi_token:", m.cw().getRun(run.id()).output());
+    // A label flushed, then its value: at the next flush, and again at finish.
+    run.log("hunter2hunter2");
+    run.flush();
+    assertEquals("starting\n[redacted]\napi_token:\n[redacted]", m.cw().getRun(run.id()).output());
+    run.log("password:");
+    run.flush();
+    run.log("correct-horse");
+    Run finished = run.finish();
+    assertEquals(
+        "starting\n[redacted]\napi_token:\n[redacted]\npassword:\n[redacted]", finished.output());
+    String stored = m.cw().getRun(run.id()).toJson();
+    for (String secret : List.of("SecondHalf", "hunter2", "correct-horse")) {
+      assertFalse(stored.contains(secret), stored);
+    }
+    assertEquals(List.of(), m.errors().wheres());
+  }
+
+  /** The SDK's test beside it: another writer in between, and a long run's bounded tail. */
+  @Test
+  void flushesAfterAnotherProcessWroteToTheRunStillAppendEachRedacted() {
+    Made m = Support.make();
+    RunHandle run = m.cw().job("deploy").start();
+    run.log("one");
+    run.flush();
+    // Another handle on the same run (another process) appends in between.
+    RunHandle other = m.cw().resumeRun("deploy", run.id());
+    other.log("from elsewhere");
+    other.flush();
+    run.log("token=abc123abc123");
+    run.flush();
+    assertEquals("one\nfrom elsewhere\ntoken=[redacted]", m.cw().getRun(run.id()).output());
+    // A long run: the remembered tail stays bounded and the output capped.
+    for (int i = 0; i < 6; i++) {
+      run.log("line " + i + " " + "x".repeat(6000));
+      run.flush();
+    }
+    run.log("secret=tail-secret-value");
+    Run finished = run.finish();
+    String output = finished.output();
+    assertTrue(output.length() <= 16 * 1024 + 40, "capped: " + output.length());
+    assertTrue(output.endsWith("secret=[redacted]"), output.substring(output.length() - 60));
+    assertFalse(output.contains("tail-secret-value"));
+  }
 }

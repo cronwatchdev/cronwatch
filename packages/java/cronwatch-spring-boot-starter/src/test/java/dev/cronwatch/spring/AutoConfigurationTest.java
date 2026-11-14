@@ -2,6 +2,7 @@ package dev.cronwatch.spring;
 
 import static dev.cronwatch.spring.Apps.stored;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -482,6 +483,63 @@ class AutoConfigurationTest {
       stopping.join();
       assertEquals(List.of("tick ended", "stop returned"), order);
       assertEquals(0, checks.get(), "stopped during the tick: no check");
+    }
+  }
+
+  /** An app whose scheduler already holds the check job, as a JDBC job store keeps it. */
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  public static class WithKeptCheck {
+    /** A scheduler on the RAM job store holding the check job of an earlier start. */
+    @Bean(destroyMethod = "shutdown")
+    public Scheduler scheduler() throws SchedulerException {
+      Properties p = new Properties();
+      p.setProperty("org.quartz.scheduler.instanceName", "kept-" + UUID.randomUUID());
+      p.setProperty("org.quartz.threadPool.threadCount", "1");
+      p.setProperty("org.quartz.scheduler.skipUpdateCheck", "true");
+      Scheduler s = new StdSchedulerFactory(p).getScheduler();
+      CronwatchQuartz.scheduleCheck(s, Duration.ofMinutes(1));
+      return s;
+    }
+  }
+
+  /**
+   * The check job a job store kept was never changed or removed: another {@code
+   * cronwatch.check-every} did not take effect, and an app that moved its check off Quartz kept the
+   * job firing beside the check that ran.
+   */
+  @Test
+  void aCheckJobTheSchedulerKeptFollowsTheCheckModeAndInterval() throws Exception {
+    org.quartz.TriggerKey key =
+        org.quartz.TriggerKey.triggerKey(
+            CronwatchQuartz.CHECK_JOB.getName(), CronwatchQuartz.CHECK_JOB.getGroup());
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(
+            WithKeptCheck.class,
+            new MemoryStore(),
+            new Apps.Errors(),
+            "cronwatch.check-mode=quartz",
+            "cronwatch.check-every=5m")) {
+      org.quartz.Trigger trigger = ctx.getBean(Scheduler.class).getTrigger(key);
+      assertEquals(300_000L, ((org.quartz.SimpleTrigger) trigger).getRepeatInterval());
+    }
+    for (String mode : List.of("local", "auto")) {
+      Apps.Errors errors = new Apps.Errors();
+      try (ConfigurableApplicationContext ctx =
+          Apps.run(
+              WithKeptCheck.class, new MemoryStore(), errors, "cronwatch.check-mode=" + mode)) {
+        assertFalse(ctx.getBean(Scheduler.class).checkExists(CronwatchQuartz.CHECK_JOB), mode);
+        assertTrue(errors.seen.isEmpty(), errors.joined());
+      }
+    }
+    // The app checks for itself, perhaps with a check job of its own scheduling: left alone.
+    try (ConfigurableApplicationContext ctx =
+        Apps.run(
+            WithKeptCheck.class,
+            new MemoryStore(),
+            new Apps.Errors(),
+            "cronwatch.check-mode=none")) {
+      assertTrue(ctx.getBean(Scheduler.class).checkExists(CronwatchQuartz.CHECK_JOB));
     }
   }
 }

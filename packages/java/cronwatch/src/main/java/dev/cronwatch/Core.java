@@ -80,6 +80,13 @@ final class Core {
     long triageMs = 25_000;
     long retryBudgetMs = 20_000;
     long closeWaitMs = 5_000;
+
+    /**
+     * How long a run waits for the store to record its start (the job's declaration and the run's
+     * row) before its function runs without it: the SDK's {@code START_DEADLINE_MS}.
+     */
+    long startDeadlineMs = 5_000;
+
     long shutdownMs = 5_000;
     long firstCheckMs = 1_000;
     long minIntervalMs = 5_000;
@@ -423,9 +430,10 @@ final class Core {
   /**
    * Writes the declaration of {@code def}'s name as it stands, unless the store has it, once per
    * declaration: a handle kept from an earlier declaration writes the one that replaced it, never
-   * its own over it, and one forgotten since writes its own. A name is marked as written only while
-   * that same declaration stands, so a forget that lands during the write (deleting the row after
-   * it) leaves the name to be written again, as does one forgotten before it.
+   * its own over it, and one forgotten since declares the job again as it was last declared here. A
+   * name is marked as written only while that same declaration stands, so a forget that lands
+   * during the write (deleting the row after it) leaves the name to be written again, as does one
+   * forgotten before it.
    */
   void sync(JobDef def) {
     sync(def, false);
@@ -434,9 +442,20 @@ final class Core {
   /**
    * {@link #sync(JobDef)}, and with {@code confirm}, as a run starts, a name already written is
    * read back: another process may have forgotten the job since, and a job still declared here
-   * comes back on its next run.
+   * comes back on its next run. The write is then for a run.
    */
   void sync(JobDef def, boolean confirm) {
+    sync(def, confirm, confirm);
+  }
+
+  /**
+   * {@link #sync(JobDef, boolean)}, where {@code running} says the write is for a run: a name
+   * forgotten here is then declared again as it was last declared, as a run by name does, so a
+   * handle kept from before the forget marks the name as written once more and the checks keep it
+   * declared. A check or a dashboard read, whose loop may have picked the name up just before the
+   * forget, leaves it forgotten: only a run brings a forgotten job back.
+   */
+  void sync(JobDef def, boolean confirm, boolean running) {
     ensureReady();
     String name = def.name();
     if (standing(name, def) == null) {
@@ -448,6 +467,12 @@ final class Core {
     inTurn(
         name,
         () -> {
+          if (declared(name) == null) {
+            if (!running) {
+              return false;
+            }
+            declaredOrForgotten(name);
+          }
           JobDef standing = standing(name, def);
           if (standing == null) {
             return false;

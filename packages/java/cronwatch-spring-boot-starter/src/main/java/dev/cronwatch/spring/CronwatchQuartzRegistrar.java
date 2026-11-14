@@ -58,6 +58,18 @@ final class CronwatchQuartzRegistrar
       }
     }
     if (!quartzCheck) {
+      // A check job a JDBC job store kept from a start that checked through Quartz would go on
+      // firing beside the check that runs now. With cronwatch.check-mode=none the app checks for
+      // itself, perhaps with a check job of its own scheduling, which is left alone.
+      if (mode != CronwatchProperties.CheckMode.NONE) {
+        for (Scheduler s : all) {
+          try {
+            CronwatchQuartz.unscheduleCheck(s);
+          } catch (SchedulerException | RuntimeException e) {
+            cw.reportError(e, "quartz");
+          }
+        }
+      }
       return;
     }
     // The check job on one scheduler only, a clustered one first (each clustered scheduler would

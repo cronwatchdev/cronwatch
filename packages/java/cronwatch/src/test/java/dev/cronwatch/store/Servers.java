@@ -127,7 +127,10 @@ public final class Servers {
           // container, never an app's.
           case MYSQL ->
               "jdbc:mysql://" + host(u, 3306) + path + "?allowPublicKeyRetrieval=true&useSSL=false";
-          case MARIADB -> "jdbc:mariadb://" + host(u, 3306) + path;
+          // MariaDB Connector/J 4 asks for TLS unless told otherwise, and refuses a server without
+          // it: off here, for a test server in a container, as it is for MySQL's above. An app's
+          // own data source says what its server needs.
+          case MARIADB -> "jdbc:mariadb://" + host(u, 3306) + path + "?sslMode=disable";
         };
     if (!settings.isEmpty()) {
       jdbc += (jdbc.contains("?") ? "&" : "?") + settings;

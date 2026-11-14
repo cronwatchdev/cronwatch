@@ -464,8 +464,8 @@ public final class Cronwatch implements AutoCloseable {
   }
 
   /**
-   * The start of a run without the function: the run is inserted and missed and stuck close. A
-   * store that fails is reported and the handle inserts the finished run instead.
+   * The start of a run without the function: the run is inserted and missed closes. A store that
+   * fails is reported and the handle inserts the finished run instead.
    */
   private RunHandle recordStart(JobDef def, String trigger, @Nullable String id) {
     String name = def.name();

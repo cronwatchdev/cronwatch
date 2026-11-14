@@ -43,8 +43,13 @@ public final class Anthropic implements Triage {
   /** How hard the model thinks unless told otherwise. */
   public static final String DEFAULT_EFFORT = "medium";
 
-  /** The most tokens a diagnosis may use unless told otherwise. A diagnosis is a paragraph. */
-  public static final long DEFAULT_MAX_TOKENS = 800;
+  /**
+   * The most tokens a diagnosis may use unless told otherwise. A diagnosis is a paragraph, but the
+   * model thinks first (thinking is on by default on current models) and that thinking counts
+   * toward this limit, so one sized for the paragraph alone can be used up before any of it is
+   * written.
+   */
+  public static final long DEFAULT_MAX_TOKENS = 4096;
 
   /** The beta that routes a policy refusal to the default fallback model in the same request. */
   public static final String FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -135,7 +140,7 @@ public final class Anthropic implements Triage {
               + " with JSON that could not be read: "
               + e.getMessage());
     }
-    String text = diagnosis(message);
+    String text = diagnosis(message, options.maxTokens);
     return text.isEmpty() ? null : text;
   }
 
@@ -270,8 +275,14 @@ public final class Anthropic implements Triage {
     return String.join("\n", lines);
   }
 
-  /** The text blocks of a Messages API answer, joined and trimmed; {@code ""} for a refusal. */
-  static String diagnosis(@Nullable Object message) {
+  /**
+   * The text blocks of a Messages API answer, joined and trimmed; {@code ""} for a refusal.
+   *
+   * @throws CronwatchException when the answer has no text because the model reached {@code
+   *     maxTokens} (on its thinking, say): thrown, so the client reports it to the error handler
+   *     rather than the alert going out with no diagnosis and no word of why
+   */
+  static String diagnosis(@Nullable Object message, long maxTokens) {
     if (!(message instanceof JsObject o)) {
       return "";
     }
@@ -286,7 +297,15 @@ public final class Anthropic implements Triage {
         }
       }
     }
-    return Js.trim(String.join("\n", texts));
+    String text = Js.trim(String.join("\n", texts));
+    if (text.isEmpty() && "max_tokens".equals(o.get("stop_reason"))) {
+      throw new CronwatchException(
+          CronwatchException.Kind.OTHER,
+          "triage: the model reached max_tokens ("
+              + maxTokens
+              + ") before writing a diagnosis; raise maxTokens or lower effort");
+    }
+    return text;
   }
 
   /** Names what is set, never the API key. */

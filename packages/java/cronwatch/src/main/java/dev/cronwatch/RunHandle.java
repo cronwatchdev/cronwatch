@@ -46,6 +46,23 @@ public final class RunHandle implements AutoCloseable {
    */
   private @Nullable String head;
 
+  /**
+   * The lines this handle last flushed, as logged ({@code raw}) and as they stand at the end of the
+   * stored output ({@code redacted}).
+   */
+  private record Flushed(String raw, String redacted) {}
+
+  /** An output with lines added, and what to remember of them once the write lands, or null. */
+  private record Appended(@Nullable String output, @Nullable Flushed tail) {}
+
+  /**
+   * What this handle flushed last, or null before the first flush. The next lines are redacted
+   * together with it, so a secret that began in one flush and ends in the next (a private key
+   * logged a line at a time, a label and then its value) is blanked whole, where redacting each
+   * flush alone would store its second half. Read and written in turn ({@link #turn}).
+   */
+  private @Nullable Flushed flushed;
+
   RunHandle(
       Core core,
       Runs runs,
@@ -142,10 +159,35 @@ public final class RunHandle implements AutoCloseable {
     return before + "\n" + after;
   }
 
-  /** Output appended to stored output, capped like any run's. */
-  private static @Nullable String joinOutput(@Nullable String before, @Nullable String after) {
-    String joined = joinLines(before, after);
-    return joined == null ? null : Output.cap(joined);
+  /**
+   * {@code lines} added to the stored output, redacted (the SDK's {@code appendRedacted}). While
+   * the output still ends with what this handle flushed last, that tail is redacted again with the
+   * new lines after it and replaced; otherwise (the first flush, or another process has written
+   * since) the lines are redacted alone and appended. The tail is what to remember once the write
+   * lands: at most {@link Output#OUTPUT_CAP} of the raw text, from the start of a line, and only
+   * while its redaction is still the end of what was written.
+   */
+  private Appended appendRedacted(@Nullable String stored, String lines) {
+    String added = Output.stripNul(lines);
+    Flushed last = flushed;
+    boolean joins = last != null && stored != null && stored.endsWith(last.redacted());
+    String raw = joins ? last.raw() + "\n" + added : added;
+    String redacted = Output.redactAndCap(raw, core::redact);
+    String output =
+        joins
+            ? stored.substring(0, stored.length() - last.redacted().length()) + redacted
+            : joinLines(stored, redacted);
+    if (raw.length() <= Output.OUTPUT_CAP) {
+      return new Appended(output, new Flushed(raw, redacted));
+    }
+    int cut = raw.indexOf('\n', raw.length() - Output.OUTPUT_CAP);
+    if (cut < 0) {
+      return new Appended(output, null);
+    }
+    String kept = raw.substring(cut + 1);
+    String keptRedacted = Output.redactAndCap(kept, core::redact);
+    return new Appended(
+        output, redacted.endsWith(keptRedacted) ? new Flushed(kept, keptRedacted) : null);
   }
 
   /**
@@ -212,10 +254,12 @@ public final class RunHandle implements AutoCloseable {
             "flushing " + name);
         return;
       }
+      Appended appended = lines == null ? null : appendRedacted(stored.output(), lines);
+      String appendedOutput = appended == null ? null : appended.output();
       String output =
-          lines == null
+          appended == null
               ? stored.output()
-              : joinOutput(stored.output(), Output.redactAndCap(lines, core::redact));
+              : appendedOutput == null ? null : Output.cap(appendedOutput);
       Run next =
           stored.finished(
               stored.status(),
@@ -236,6 +280,11 @@ public final class RunHandle implements AutoCloseable {
       if (!wrote) {
         putBack(taken);
         return;
+      }
+      if (appended != null) {
+        // Remembered only while the stored output still ends with it (the cap did not cut into it).
+        Flushed tail = appended.tail();
+        flushed = tail != null && output != null && output.endsWith(tail.redacted()) ? tail : null;
       }
       String text = taken.expectText();
       if (text != null) {
@@ -382,7 +431,7 @@ public final class RunHandle implements AutoCloseable {
               Evaluate.runDuration(from.startedAt(), finishedAt),
               null,
               // Capped by conclude, after it is redacted.
-              joinLines(from.output(), added),
+              added == null ? from.output() : appendRedacted(from.output(), added).output(),
               from.metrics().merged(rec.metrics()));
       String expected = rec.expectText();
       if (expected == null) {

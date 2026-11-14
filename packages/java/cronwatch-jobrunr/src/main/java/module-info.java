@@ -1,6 +1,7 @@
 /**
- * CronWatch for JobRunr 8: {@link dev.cronwatch.jobrunr.CronwatchJobRunr} is the server filter that
- * records every attempt, declares the recurring jobs, and runs the check as a recurring job.
+ * CronWatch for JobRunr 8 and 9: {@link dev.cronwatch.jobrunr.CronwatchJobRunr} is the server
+ * filter that records every attempt, declares the recurring jobs, and runs the check as a recurring
+ * job.
  */
 @org.jspecify.annotations.NullMarked
 module dev.cronwatch.jobrunr {

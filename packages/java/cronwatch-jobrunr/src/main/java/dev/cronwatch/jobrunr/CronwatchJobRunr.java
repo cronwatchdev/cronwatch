@@ -47,9 +47,10 @@ import org.jobrunr.storage.StorageProvider;
 import org.jspecify.annotations.Nullable;
 
 /**
- * CronWatch for JobRunr 8: every recurring job is declared as a CronWatch job with its schedule,
- * and every attempt is recorded as a run, so a job that fails, runs late, never runs, gets stuck,
- * or runs slow is reported. It is a {@link JobServerFilter}: give it to the background job server.
+ * CronWatch for JobRunr 8 and 9: every recurring job is declared as a CronWatch job with its
+ * schedule, and every attempt is recorded as a run, so a job that fails, runs late, never runs,
+ * gets stuck, or runs slow is reported. It is a {@link JobServerFilter}: give it to the background
+ * job server.
  *
  * <pre>{@code
  * CronwatchJobRunr watcher = CronwatchJobRunr.watch(cw, storageProvider, JobRunrOptions.defaults());
