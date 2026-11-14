@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from cronwatch import AbortError, AbortSignal, Alert, Run, TriageContext, _js
-from cronwatch.triage.anthropic import _REQUEST_TIMEOUT_MS, Anthropic, AnthropicTriage
+from cronwatch.triage.anthropic import _REQUEST_TIMEOUT_MS, DEFAULT_MAX_TOKENS, Anthropic, AnthropicTriage
 
 from helpers import MIN, make
 
@@ -131,7 +131,35 @@ def test_answers_are_read_as_the_sdk_reads_them() -> None:
         r = c["response"]
         blocks = [Block(b["type"], b.get("text")) for b in r["content"]]
         client = StubClient(Response(r["stop_reason"], blocks))
+        if "error" in c:
+            # No text at all, and the limit is why: raised, so the client reports it.
+            assert "result" not in c
+            with pytest.raises(RuntimeError) as raised:
+                triage_for({}, client)(context_for("a missed run with no runs"))
+            assert str(raised.value) == c["error"], r
+            continue
         assert _js.dumps(triage_for({}, client)(context_for("a missed run with no runs"))) == _js.dumps(c["result"]), r
+
+
+def test_the_limit_reached_before_any_text_is_reported_and_the_alert_still_goes_out() -> None:
+    from helpers import Errors, boom, make
+
+    assert DEFAULT_MAX_TOKENS == 4096
+    spent = StubClient(Response("max_tokens", [Block("thinking")]))
+    with pytest.raises(RuntimeError, match=r"^triage: the model reached max_tokens \(1500\) before writing a diagnosis; raise maxTokens or lower effort$"):
+        triage_for({"maxTokens": 1500}, spent)(context_for("a missed run with no runs"))
+    # Text that was cut short is still the diagnosis; a refusal and an empty end_turn are nothing, without an error.
+    assert triage_for({}, StubClient(Response("max_tokens", [Block("text", "The disk is")])))(context_for("a missed run with no runs")) == "The disk is"
+    assert triage_for({}, StubClient(Response("end_turn", [])))(context_for("a missed run with no runs")) is None
+    assert triage_for({}, StubClient(Response("refusal", [])))(context_for("a missed run with no runs")) is None
+    # Through the client: no diagnosis, the alert sent, and the reason handed to on_error.
+    errors = Errors()
+    cw, _, alerts = make(triage=triage_for({}, spent), on_error=errors)
+    with pytest.raises(RuntimeError):
+        cw.job("nightly").run(boom("no disk"))
+    assert alerts.types() == ["failed"] and alerts.alerts[0].triage is None
+    assert errors.wheres == ["triage for nightly"]
+    assert errors.messages == ["triage: the model reached max_tokens (4096) before writing a diagnosis; raise maxTokens or lower effort"]
 
 
 def test_job_output_is_fenced_as_data() -> None:

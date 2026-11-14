@@ -31,6 +31,7 @@ except ImportError as error:  # pragma: no cover, the message is tested in a sub
     raise ImportError(f'cronwatch.stores.postgres needs psycopg 3.2 or newer: pip install "cronwatch-sdk[postgres]" ({error})') from error
 
 from .. import _fork, _pg
+from .._duration import Duration, parse_duration
 from .._deprecated import names as _deprecated_names
 from ..types import JobDefinition, JobState, Run, RunStatus, StoredJob
 from . import _sql
@@ -46,10 +47,32 @@ class PostgresStore:
     ``ConnectionPool`` (anything whose ``connection()`` is a context manager
     giving a psycopg connection) instead; it is not closed by ``close()``.
     ``prefix`` names the tables: lowercase letters, digits, and underscores,
-    default "cronwatch_"."""
+    default "cronwatch_".
 
-    def __init__(self, conninfo: str | None = None, *, pool: Any = None, prefix: str = _sql.DEFAULT_PREFIX) -> None:
+    The store's own connection gets timeouts where the connection string
+    sets none (see cronwatch._pg.with_timeouts): ``connect_timeout=10``, TCP
+    keepalive (``keepalives_idle=30``, ``keepalives_interval=10``,
+    ``keepalives_count=3``) and ``tcp_user_timeout=30000``, so a database
+    that is unreachable or has gone silent fails a write within about a
+    minute (reported to on_error) rather than hold the job that waits on
+    it. Set any of them in the connection string to choose your own.
+    ``statement_timeout`` (a duration, such as "30s"; default None) also
+    bounds each statement on the server; it is sent as a startup option,
+    which PgBouncer refuses unless ``ignore_startup_parameters`` lists
+    ``options``. A ``pool=`` is the app's and is left as it was made."""
+
+    def __init__(
+        self,
+        conninfo: str | None = None,
+        *,
+        pool: Any = None,
+        prefix: str = _sql.DEFAULT_PREFIX,
+        statement_timeout: Duration | None = None,
+    ) -> None:
         self.prefix = _sql.table_prefix(prefix)
+        self._statement_timeout_ms = None if statement_timeout is None else int(parse_duration(statement_timeout, "statement_timeout"))
+        if self._statement_timeout_ms is not None and self._statement_timeout_ms <= 0:
+            raise ValueError("PostgresStore(): statement_timeout must be longer than zero")
         self._sql = _sql.statements("postgres", self.prefix)
         self._pool = pool
         self._conninfo = conninfo if conninfo is not None else os.environ.get("DATABASE_URL", "")
@@ -84,7 +107,8 @@ class PostgresStore:
                 self._connection.close()
             except Exception:  # noqa: BLE001, a broken connection may not close cleanly
                 pass
-        self._connection = _pg.connect(psycopg, self._conninfo, autocommit=True, row_factory=dict_row, cursor_factory=psycopg.RawCursor)
+        conninfo = _pg.with_timeouts(psycopg, self._conninfo, self._statement_timeout_ms)
+        self._connection = _pg.connect(psycopg, conninfo, autocommit=True, row_factory=dict_row, cursor_factory=psycopg.RawCursor)
         return self._connection
 
     @contextmanager

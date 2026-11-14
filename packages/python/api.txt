@@ -163,6 +163,7 @@ class JobWithRuns
     job: JobSummary
     runs: list[Run]
     def to_dict(self) -> dict[str, Any]
+OPEN = _Open()
 class Run
     id: str
     job: str
@@ -578,7 +579,7 @@ class MemoryStore
 
 # cronwatch.stores.postgres
 class PostgresStore
-    def __init__(self, conninfo: str | None=None, *, pool: Any=None, prefix: str=_sql.DEFAULT_PREFIX) -> None
+    def __init__(self, conninfo: str | None=None, *, pool: Any=None, prefix: str=_sql.DEFAULT_PREFIX, statement_timeout: Duration | None=None) -> None
     def init(self) -> None
     def upsert_job(self, definition: JobDefinition, now: int) -> None
     def get_job(self, name: str) -> StoredJob | None
@@ -624,7 +625,7 @@ class Anthropic
     def params(self, context: Any) -> dict[str, Any]
     def __call__(self, context: Any) -> str | None
 DEFAULT_EFFORT = 'medium'
-DEFAULT_MAX_TOKENS = 800
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MODEL = 'claude-opus-5'
 
 # cronwatch.types

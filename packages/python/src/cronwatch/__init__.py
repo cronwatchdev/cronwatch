@@ -27,6 +27,7 @@ from . import alerts, stores
 from .alerts import ChannelContext, Console, Custom
 from ._client import ChannelTimeout, CheckInterrupted, Cronwatch, JobHandle, TriageContext
 from ._duration import format_duration, parse_duration
+from ._env import OPEN
 from ._job import AbortError, AbortSignal, JobContext, current
 from ._output import redact_secrets
 from ._run_handle import RunHandle
@@ -115,6 +116,7 @@ __all__ = [
     "JobStats",
     "JobSummary",
     "JobWithRuns",
+    "OPEN",
     "Run",
     "RunHandle",
     "RunStatus",

@@ -11,16 +11,66 @@ whether the web routes make a development token when none is configured."""
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
 from collections.abc import Callable
 
 from . import _js
 
-__all__ = ["environment", "is_development", "is_production", "read_secret_env", "secret_option", "set_fallback"]
+__all__ = ["OPEN", "environment", "is_development", "is_production", "is_open", "read_secret_env", "secret_option", "set_fallback", "warn_open"]
 
 _VARIABLES = ("CRONWATCH_ENV", "APP_ENV", "ENVIRONMENT")
 _ALIASES = {"prod": "production", "dev": "development", "local": "development"}
 _fallback: Callable[[], str | None] | None = None
+_log = logging.getLogger("cronwatch")
+
+
+class _Open:
+    """The type of OPEN, which has one value."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "cronwatch.OPEN"
+
+
+#: Passed as ``token=``, ``cron_secret=``, or ``secret=``: serve the routes, or
+#: run a handler, for anyone, with no token or secret, on purpose (behind the
+#: app's own auth, say). None means the same and still works, but it is also
+#: what ``os.environ.get("CRONWATCH_TOKEN")`` gives for a variable that is not
+#: set, so a None outside development is warned about (warn_open) and OPEN is not.
+OPEN = _Open()
+
+_warned_open: set[str] = set()
+_warned_open_lock = threading.Lock()
+
+
+def is_open(value: object) -> bool:
+    """Whether a token or secret option opts out: OPEN, or None."""
+    return value is None or value is OPEN
+
+
+def warn_open(value: object, what: str, name: str, variable: str) -> None:
+    """Warns, once per process for each `what`, that `what` (the dashboard's
+    routes, job handlers) is open to anyone because `name` was None, outside
+    development. OPEN, the opt-out by name, does not warn."""
+    if value is not None or is_development():
+        return
+    with _warned_open_lock:
+        if what in _warned_open:
+            return
+        _warned_open.add(what)
+    _log.warning(
+        "%s open to anyone, with no %s asked for, because %s is None. If that is meant, pass cronwatch.OPEN, which says so and "
+        'does not warn. If it came from os.environ.get("%s") with the variable not set, leave %s out (the variable is read by '
+        'default, and without it nothing is served) or give the lookup a default of "".',
+        what,
+        "token" if "token" in name.lower() else "secret",
+        name,
+        variable,
+        name,
+    )
 
 
 def set_fallback(read: Callable[[], str | None] | None) -> None:
@@ -66,13 +116,15 @@ def read_secret_env(name: str) -> str | None:
 
 
 def secret_option(value: object, what: str, unset: object) -> object:
-    """A token or secret passed in code: a str, None (the opt-out), or `unset`
-    (not given). A str is trimmed, as read_secret_env() trims, and one that is
+    """A token or secret passed in code: a str, OPEN or None (the opt-out,
+    which comes back as None), or `unset` (not given). A str is trimmed, as read_secret_env() trims, and one that is
     empty or only whitespace counts as not given (`unset` comes back).
     Anything else (False, a number, bytes) raises a TypeError naming the
     option, so it never becomes a password."""
     if value is unset or value is None:
         return value
+    if value is OPEN:
+        return None
     if not isinstance(value, str):
         raise TypeError(f"{what} must be a string, or None to opt out, not {type(value).__name__}")
     return unset if _blank(value) else _js.trim(value)

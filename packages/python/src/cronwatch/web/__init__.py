@@ -22,8 +22,10 @@ token:       required to reach anything. Send it as `Authorization: Bearer <toke
              string or None raises TypeError. With no token while the environment is
              development (cronwatch._env; "test" is not), the routes make a random one and print a
              sign-in link to stdout on their first request; with no token otherwise they
-             answer 503. Pass token=None to opt out and serve them open everywhere, for
-             example behind your own auth. /api/check also accepts the client's cron_secret
+             answer 503. Pass token=cronwatch.OPEN to opt out and serve them open everywhere,
+             for example behind your own auth. token=None does the same and, outside
+             development, logs a warning once: it is also what os.environ.get() gives for
+             a variable that is not set. /api/check also accepts the client's cron_secret
              as a bearer, for a platform cron.
 base_path:   where the routes are mounted, so links resolve. Defaults to the mount point
              the server passes (SCRIPT_NAME, or ASGI's root_path).
@@ -56,8 +58,6 @@ import threading
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from email.parser import BytesParser
-from email.policy import HTTP
 from typing import Any
 from urllib.parse import quote, quote_plus, unquote_to_bytes, urlsplit
 
@@ -75,7 +75,7 @@ class _Unset:
         return "UNSET"
 
 
-#: Tells "token not given" (read CRONWATCH_TOKEN) from "token=None" (open on purpose).
+#: Tells "token not given" (read CRONWATCH_TOKEN) from token=cronwatch.OPEN or None (open on purpose).
 _UNSET: Any = _Unset()
 
 _COOKIE = "cronwatch_token"
@@ -111,7 +111,7 @@ _SECURITY_HEADERS = {"x-content-type-options": "nosniff", "referrer-policy": "sa
 
 _LOCKED = (
     "Set CRONWATCH_TOKEN (or pass token= to cw.routes(), or TOKEN in Django's CRONWATCH setting), "
-    "or pass token=None to serve them open behind your own auth."
+    "or pass token=cronwatch.OPEN to serve them open behind your own auth."
 )
 
 # An Authorization header that is a bearer: the scheme in any case, then
@@ -640,7 +640,8 @@ class Web:
         trust_proxy: bool = False,
     ) -> None:
         self._client = client
-        self._opted_out = token is None
+        self._opted_out = _env.is_open(token)
+        _env.warn_open(token, "the CronWatch dashboard and its API are", "token", "CRONWATCH_TOKEN")
         # A blank token, given or read, counts as unset; one given that is not a string raises.
         given = _env.secret_option(token, "routes: token", _UNSET)
         configured = None if self._opted_out else (given if isinstance(given, str) else _env.read_secret_env("CRONWATCH_TOKEN"))
@@ -1112,22 +1113,79 @@ def _form_value(value: Any) -> str:
     return _js_string(value)
 
 
-def _multipart(kind: str, data: bytes) -> dict[str, str]:
-    """multipart/form-data as request.formData() reads it: fields as text, files as "[object File]"."""
-    message = BytesParser(policy=HTTP).parsebytes(f"content-type: {kind}\r\n\r\n".encode("latin-1") + data)
-    if not message.is_multipart():
-        raise ValueError("not multipart")
-    out: dict[str, str] = {}
-    for part in message.iter_parts():
-        name = part.get_param("name", header="content-disposition")
-        if name is None:
+def _media_param(header: str, name: str) -> str | None:
+    """A media type's parameter, unquoted, its name matched without regard to case."""
+    for part in header.split(";")[1:]:
+        key, eq, value = part.partition("=")
+        if not eq or _js.trim(key).lower() != name:
             continue
-        if part.get_filename() is not None:
-            out[str(name)] = "[object File]"
+        value = _js.trim(value)
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            return re.sub(r"\\(.)", r"\1", value[1:-1], flags=re.DOTALL)
+        return value
+    return None
+
+
+def _multipart(kind: str, data: bytes) -> dict[str, str]:
+    """multipart/form-data as request.formData() reads it: fields as text,
+    files as "[object File]". One pass over the bytes, each found with
+    bytes.find, and a part's Content-Disposition split on ";" and nothing
+    more: the body comes from anyone (the sign-in form is read before any
+    token), and the standard library's email parser takes time quadratic in
+    a crafted header. Raises ValueError for a body that does not parse."""
+    boundary = _media_param(kind, "boundary")
+    if not boundary:
+        raise ValueError("no boundary")
+    delimiter = b"--" + boundary.encode("utf-8", "surrogatepass")
+    if data.startswith(delimiter):
+        at = 0
+    else:
+        crlf = data.find(b"\r\n" + delimiter)
+        lf = data.find(b"\n" + delimiter)
+        if crlf >= 0:
+            at = crlf + 2
+        elif lf >= 0:
+            at = lf + 1
         else:
-            payload = part.get_payload(decode=True)
-            out[str(name)] = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else ""
-    return out
+            raise ValueError("not multipart")
+    following = b"\n" + delimiter
+    out: dict[str, str] = {}
+    while True:
+        at += len(delimiter)
+        if data.startswith(b"--", at):
+            return out
+        # The rest of the delimiter's line.
+        eol = data.find(b"\n", at)
+        if eol < 0:
+            raise ValueError("unfinished multipart body")
+        at = eol + 1
+        # The part's headers, up to an empty line.
+        disposition = ""
+        while True:
+            end = data.find(b"\n", at)
+            if end < 0:
+                raise ValueError("unfinished multipart body")
+            line_end = end - 1 if end > at and data[end - 1] == 0x0D else end
+            line = data[at:line_end].decode("utf-8", "replace")
+            at = end + 1
+            if line == "":
+                break
+            key, colon, value = line.partition(":")
+            if colon and _js.trim(key).lower() == "content-disposition":
+                disposition = _js.trim(value)
+        # The part's body, up to the next delimiter on a line of its own.
+        nxt = data.find(following, at)
+        if nxt < 0:
+            raise ValueError("unfinished multipart body")
+        end = nxt - 1 if nxt > at and data[nxt - 1] == 0x0D else nxt
+        value = data[at : max(end, at)].decode("utf-8", "replace")
+        at = nxt + 1
+        if _js.trim(disposition.split(";")[0]).lower() != "form-data":
+            continue
+        name = _media_param(disposition, "name")
+        if not name:
+            continue
+        out[name] = "[object File]" if _media_param(disposition, "filename") else value
 
 
 #: Internal names, still answering under their old public names (each

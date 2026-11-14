@@ -94,7 +94,7 @@ def test_handler_fails_closed_without_a_secret_outside_development(monkeypatch: 
     res = handler(get())
     assert res.status == 503
     assert "CRON_SECRET" in body(res)["error"]
-    assert body(res)["error"].endswith("pass secret=None to handler() to allow anyone.")
+    assert body(res)["error"].endswith("pass secret=cronwatch.OPEN to handler() to allow anyone.")
     handler(get())
     assert ran == []
     assert errors.wheres == ["handler"], "reported once"

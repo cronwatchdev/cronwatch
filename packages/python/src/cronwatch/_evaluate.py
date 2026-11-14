@@ -713,14 +713,16 @@ def catches_up(definition: JobDefinition, run: Run, now: int) -> bool:
 
 def on_run_start(definition: JobDefinition, run: Run, state: JobState, now: int) -> JobState:
     """Called when a run starts, or when a run a source reports is recorded.
-    Missed and stuck are about the absence of a run, so a run starting closes
-    them without an alert; the recovered message waits for a successful
-    finish. Missed closes only when the run catches the schedule up
-    (catches_up), which a run starting now always does."""
+    Missed is about the absence of a run, so a run starting closes it without
+    an alert; the recovered message waits for a successful finish. It closes
+    only when the run catches the schedule up (catches_up), which a run
+    starting now always does. Nothing else closes here. Stuck in particular
+    stays open: a run that has only started may hang as the last one did, and
+    closing stuck for it would open it, and alert, again at every timeout of
+    a job that hangs every time. Only a run that finishes ok closes stuck."""
     following = _clone_state(state)
     if catches_up(definition, run, now):
         _close_condition(following, Condition.MISSED)
-    _close_condition(following, Condition.STUCK)
     return following
 
 
@@ -844,7 +846,9 @@ def is_stranded(run: Run, now: int) -> bool:
     writes one as running, with ``finished_at`` set to when it was written,
     and the finish that follows never landed (the importer stopped, or a
     store write failed and it was not retried). A check closes one
-    SEND_LEASE_MS after it was written, as it closes a stuck run."""
+    SEND_LEASE_MS after it was written: as the failed run it was when the
+    placeholder holds an error (only a run that failed has one), else as it
+    closes a stuck run."""
     return run.status == RunStatus.RUNNING and run.finished_at is not None and now - run.finished_at > SEND_LEASE_MS
 
 

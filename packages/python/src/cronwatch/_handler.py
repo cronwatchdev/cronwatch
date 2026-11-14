@@ -21,7 +21,9 @@ only whitespace counts as unset, and anything but a string or None raises
 TypeError.
 With no secret at all the handler answers 503 unless the environment is
 development (see cronwatch._env; "test" is not), and reports it once to on_error as
-"handler". ``secret=None`` lets anyone run the job.
+"handler". ``secret=cronwatch.OPEN`` lets anyone run the job (``secret=None``
+does too, and outside development logs a warning once: it is also what
+os.environ.get() gives for a variable that is not set).
 
 The answer is JSON: ``{"ok", "job", "run", "status", "durationMs"}``, status
 200 when the run was ok and 500 when it failed, with the error's first line
@@ -61,9 +63,9 @@ __all__ = ["AsyncHandler", "Handler"]
 
 NO_SECRET = (
     "CRON_SECRET is not set, so this job will not run for an unauthenticated request. "
-    "Set it, or pass secret=None to handler() to allow anyone."
+    "Set it, or pass secret=cronwatch.OPEN to handler() to allow anyone."
 )
-NO_SECRET_REPORT = "handler() refused a request because no CRON_SECRET is set; pass secret=None to allow unauthenticated requests"
+NO_SECRET_REPORT = "handler() refused a request because no CRON_SECRET is set; pass secret=cronwatch.OPEN to allow unauthenticated requests"
 
 
 def make_handler(client: Cronwatch, definition: JobDefinition, fn: Callable[..., Any], secret: Any) -> Handler:
@@ -75,7 +77,7 @@ def make_handler(client: Cronwatch, definition: JobDefinition, fn: Callable[...,
     given = _env.secret_option(secret, "handler: secret", _UNSET)
     own = None if given is None else ("" if given is _UNSET else str(given))
     kind = AsyncHandler if is_async_callable(fn) else Handler
-    return kind(client, definition, fn, own)
+    return kind(client, definition, fn, own, secret is None)
 
 
 def _json(body: Mapping[str, Any], status: int) -> WebResponse:
@@ -153,12 +155,18 @@ class Handler:
     #: Django's CSRF middleware leaves it alone: the caller proves itself with the bearer secret, not a cookie.
     csrf_exempt = True
 
-    def __init__(self, client: Cronwatch, definition: JobDefinition, fn: Callable[..., Any], own: str | None) -> None:
+    def __init__(self, client: Cronwatch, definition: JobDefinition, fn: Callable[..., Any], own: str | None, given_none: bool = False) -> None:
         self._client = client
         self._definition = definition
         self._fn = fn
         self.secret: str | None = None if own is None else (own or client.cron_secret)
         self._opted_out = own is None or (not own and client._secret_opt_out)
+        if not self.secret and self._opted_out:
+            # Open because of a None (not cronwatch.OPEN): perhaps an unset variable read with os.environ.get().
+            if own is None and given_none:
+                _env.warn_open(None, "CronWatch job handlers are", "secret", "CRON_SECRET")
+            elif own is not None and client._secret_none:
+                _env.warn_open(None, "CronWatch job handlers are", "cron_secret", "CRON_SECRET")
 
     @property
     def job(self) -> str:

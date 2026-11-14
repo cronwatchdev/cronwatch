@@ -406,12 +406,26 @@ def test_an_evaluated_import_whose_state_write_fails_and_is_not_retried_is_close
     assert shared.get_run("lost-import").status == "running"
     c.advance(SEND_LEASE_MS + MIN)
     cw.check()
+    # The placeholder holds the run's own error, so it is closed as the failure it was, with its own times.
     closed = shared.get_run("lost-import")
-    assert closed.status == "timeout"
+    assert closed.status == "failed"
     assert closed.duration_ms == MIN
-    assert closed.error == "Imported, but its finish was never written; marked as timed out\nboom"
-    assert sent.types() == ["stuck"]
-    assert cw.job_summary("imported").health != "healthy"
+    assert closed.finished_at == run["finishedAt"]
+    assert closed.error == "boom"
+    assert sent.types() == ["failed"]
+    assert cw.job_summary("imported").health == "failing"
+    # The importer comes back and records the same run again: nothing changes, and nothing is counted twice.
+    assert cw.record_run(run) == []
+    cw.check()
+    assert sent.types() == ["failed"]
+    state = shared.get_state("imported")
+    assert state.consecutive_failures == 1
+    assert list(state.open) == ["failed"]
+    assert state.pending_runs is None
+    # The next imported success recovers it.
+    c.advance(MIN)
+    cw.record_run({**run, "id": "next-import", "status": "ok", "startedAt": c.now() - 1000, "finishedAt": c.now(), "durationMs": 1000, "error": None})
+    assert sent.types() == ["failed", "recovered"]
 
 
 def test_an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_by_a_check_and_a_late_success_recovers_it() -> None:

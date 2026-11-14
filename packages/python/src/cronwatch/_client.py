@@ -61,8 +61,8 @@ from ._evaluate import (
     without_owed,
 )
 from ._format import compose_alert
-from ._job import AbortSignal, JobContext, RunRecorder, _current
-from ._output import cap_output, describe_error, redact_and_cap, redact_secrets
+from ._job import AbortSignal, JobContext, RunRecorder, _current, metric_number
+from ._output import OUTPUT_CAP, cap_output, describe_error, redact_and_cap, redact_secrets, strip_nul
 from ._run_handle import RunHandle, _Retry
 from ._schedule import parse_schedule
 from ._serialize import check_expectation, is_readable, read_stored_job, to_stored
@@ -96,6 +96,7 @@ __all__ = [
     "PRUNE_INTERVAL_MS",
     "RESERVED_RUN_ID_PREFIX",
     "RETRY_BUDGET_MS",
+    "START_DEADLINE_MS",
     "STATE_ATTEMPTS",
     "TRIAGE_TIMEOUT_MS",
     "TriageContext",
@@ -113,6 +114,10 @@ CHANNEL_TIMEOUT_MS = 15_000
 PRUNE_INTERVAL_MS = 60 * 60_000
 #: Wall-clock time one check spends retrying undelivered alerts, across every job.
 RETRY_BUDGET_MS = 20_000
+#: How long a run (run(), a block, monitor, a handler) waits for the store to
+#: record its start (the job's declaration and the run's row) before running
+#: the job without it. A store that fails does so sooner; this is for one that hangs.
+START_DEADLINE_MS = 5_000
 #: Reads and writes of one job's state before an update gives up on a store that keeps changing under it.
 STATE_ATTEMPTS = 10
 #: Runs read for a baseline, and the most read when failures crowd out the successes.
@@ -175,12 +180,6 @@ def _join_lines(before: str | None, after: str | None) -> str | None:
     return f"{before}\n{after}"
 
 
-def _join_output(before: str | None, after: str | None) -> str | None:
-    """Output appended to stored output, capped like any run's."""
-    joined = _join_lines(before, after)
-    return None if joined is None else cap_output(joined)
-
-
 def _clamp_limit(limit: Any, fallback: int, minimum: int) -> int:
     """A whole number in range, or the fallback for anything that is not a number."""
     n = int(limit) if _js.is_finite(limit) else fallback
@@ -207,6 +206,29 @@ def _check_run_id(job: str, run_id: Any, method: str) -> None:
         raise ValueError(
             f'job "{job}": {method}() cannot take a run id starting with "{RESERVED_RUN_ID_PREFIX}", which the pg_cron source uses for its runs'
         )
+
+
+#: A generator function only makes a generator when called: its body runs
+#: later, as the caller iterates, outside any run.
+_GENERATOR = (
+    "job {}: a generator function cannot be a run, since calling it only makes the generator and its body runs later, "
+    "unrecorded; wrap the code that iterates it, or use a job.run() block inside it"
+)
+
+
+def _thread_bound(error: BaseException) -> bool:
+    """Whether a store refused a call because another thread made its
+    connection: sqlite3's check_same_thread, on by default."""
+    return type(error).__name__ == "ProgrammingError" and "same thread" in str(error)
+
+
+def _refuse_generator(name: str, result: Any) -> None:
+    """Raises for a function that handed back a generator: none of its body has run."""
+    if inspect.isgenerator(result):
+        result.close()
+        raise TypeError(_GENERATOR.format(name))
+    if inspect.isasyncgen(result):
+        raise TypeError(_GENERATOR.format(name))
 
 
 class _Flight:
@@ -340,6 +362,8 @@ class JobHandle:
         An async function stays async: each await of it is a run."""
 
         def decorate(target: Callable[..., Any]) -> Callable[..., Any]:
+            if inspect.isgeneratorfunction(target) or inspect.isasyncgenfunction(target):
+                raise TypeError(_GENERATOR.format(self.name))
             client = self._client
             definition = self.definition
             if is_async_callable(target):
@@ -463,20 +487,107 @@ class _Execution:
             trigger=self.trigger,
         )
         self.recorded = False
-        try:
-            client._sync(self.definition, confirm=True)
-            client.store.insert_run(self.run.copy())
-            self.recorded = True
-        except Exception as error:
-            client._report(error, f"recording {name}")
-        # The SDK closes missed and stuck beside the running job; here it is
-        # done just before the job runs. The result is the same.
+        # The start write was given up on (the start deadline), and has landed since.
+        self._landed_late = False
+        # The finish has been recorded, or has failed to be: a start that lands after this has no finish coming.
+        self._concluded = False
+        self._late = threading.Lock()
+        self._write_start()
+        # The SDK closes missed beside the running job; here it is done just
+        # before the job runs. The result is the same.
         if self.recorded:
             try:
                 begun = self.run.copy()
                 client._update_state(name, lambda before: (hold_run(on_run_start(self.definition, begun, before, client.now()), begun.id), None))
             except Exception as error:
                 client._report(error, f"starting {name}")
+
+    def _write_start(self) -> None:
+        """The two writes before the job (its declaration, the running row),
+        given START_DEADLINE_MS between them. Python cannot abandon a store
+        call under way in this thread, so they are made in a thread of their
+        own, as a channel's send is, and waited for that long. A store that
+        fails is reported as before. One that hangs is reported and the job
+        runs as one whose start was never written; the write, still under
+        way, may land later, leaving a running row. One that lands before the
+        finish is finished over as usual (record_end); one that lands after
+        the finish was recorded is refused as a duplicate; one that lands
+        after the finish failed to be recorded is finished then, there, so no
+        row is left running to be called stuck. While a write given up on is
+        still under way, later runs do not wait behind it: each runs
+        unrecorded at once, so a hung store holds one thread, not one per run."""
+        client = self.client
+        name = self.definition.name
+        # The run as it starts: what the start write holds, however late it lands.
+        begun = self.run.copy()
+        outcome: list[BaseException | None] = []
+        gave_up = [False]
+
+        def write() -> None:
+            failure: BaseException | None = None
+            try:
+                client._sync(self.definition, confirm=True)
+                client.store.insert_run(begun)
+            except Exception as error:
+                failure = error
+            with self._late:
+                outcome.append(failure)
+                # Waited for, or failed in the end (nothing was left behind): nothing more to do.
+                if not gave_up[0] or failure is not None:
+                    return
+                self._landed_late = True
+                concluded = self._concluded
+            if concluded:
+                self._finish_late()
+
+        with client._sending_lock:
+            hung = client._abandoned.get("start")
+            busy = hung is not None and hung.is_alive()
+        if busy:
+            client._report(ChannelTimeout(f"the store has not answered an earlier start write yet; running {name} unrecorded"), f"recording {name}")
+            return
+        thread = threading.Thread(target=write, name="cronwatch-start", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError:
+            # No thread to be had (the interpreter is shutting down): written here, unbounded, as it always was.
+            write()
+        else:
+            thread.join(client._start_deadline_ms / 1000)
+        with self._late:
+            if not outcome:
+                gave_up[0] = True
+        if gave_up[0]:
+            with client._sending_lock:
+                client._abandoned["start"] = thread
+            client._report(
+                RuntimeError(f"the store took longer than {format_duration(client._start_deadline_ms)} to record the start of {name}; running it unrecorded"),
+                f"recording {name}",
+            )
+        elif outcome[0] is None:
+            self.recorded = True
+        elif _thread_bound(outcome[0]):
+            # A store that only the thread that made it may use (a sqlite3
+            # connection handed in as sqlite3 opens one by default): written
+            # here instead, unbounded, as it always was.
+            try:
+                client._sync(self.definition, confirm=True)
+                client.store.insert_run(begun)
+                self.recorded = True
+            except Exception as error:
+                client._report(error, f"recording {name}")
+        else:
+            client._report(outcome[0], f"recording {name}")
+
+    def _finish_late(self) -> None:
+        """Finishes the row a late start write left running, once the finish
+        that should have covered it has come and gone without being recorded."""
+        client = self.client
+        name = self.definition.name
+        try:
+            client._record_finish(self.definition, self.run, True, self.finished_at)
+        except Exception as problem:
+            client._report(problem, f"recording {name}")
 
     def enter(self) -> JobContext:
         self.recorder = RunRecorder(self.run, timeout_ms(self.definition))
@@ -485,7 +596,13 @@ class _Execution:
 
     def leave(self, result: Any, error: BaseException | None, threw: bool) -> None:
         client = self.client
-        _current.reset(self._token)
+        try:
+            _current.reset(self._token)
+        except ValueError:
+            # Left in another context than the one it was entered in (a block
+            # around a generator's yield that a framework resumes in another
+            # thread or task): the token is of no use here, and the run still ends.
+            _current.set(None)
         self.recorder.signal.settle()
         run = self.run
         finished_at = client.now()
@@ -503,12 +620,24 @@ class _Execution:
         client = self.client
         name = self.definition.name
         run = self.run
+        with self._late:
+            recorded = self.recorded or self._landed_late
+        done = False
         try:
-            ignored = client._record_finish(self.definition, run, self.recorded, self.finished_at)
+            ignored = client._record_finish(self.definition, run, recorded, self.finished_at)
+            done = True
             if ignored:
                 client._report(RuntimeError(f"run {run.id} of {name} {ignored}; ignored"), f"finishing {name}")
         except Exception as problem:
             client._report(problem, f"recording {name}")
+        finally:
+            # Under the lock the late write takes: of a start landing now and
+            # this, exactly one sees the other, and finishes the row.
+            with self._late:
+                self._concluded = True
+                landed = self._landed_late and not recorded
+            if landed and not done:
+                self._finish_late()
 
 
 async def _arecord_start(execution: _Execution) -> None:
@@ -569,7 +698,8 @@ class Cronwatch:
               check(); one that raises is reported to on_error and the check carries on.
     cron_secret: the secret an outside cron must present to the check endpoint of the web dashboard
               (routes()). Defaults to $CRON_SECRET; "" or only whitespace, given or in the variable, counts as
-              unset; None for none. Anything else (False, a number) raises TypeError.
+              unset; cronwatch.OPEN for none, on purpose (None too, but a handler left open by it
+              warns once outside development). Anything else (False, a number) raises TypeError.
     retention: how long finished runs are kept. Default "30d".
     defaults: grace, timeout, timezone, and failures_before_alert applied to every job unless it sets its own.
     redact:   applied to every run's output and error before it is stored, shown, or sent. The default
@@ -611,7 +741,9 @@ class Cronwatch:
         secret = _env.read_secret_env("CRON_SECRET") if cron_secret is _UNSET else given
         self.cron_secret: str | None = secret if isinstance(secret, str) else None
         #: cron_secret was passed as None: handlers may run without a secret.
-        self._secret_opt_out = cron_secret is None
+        self._secret_opt_out = _env.is_open(cron_secret)
+        #: It was None rather than cronwatch.OPEN: a handler that runs open because of it warns.
+        self._secret_none = cron_secret is None
         self._warned_no_secret = False
         self.retention_ms = parse_duration(retention if retention is not None else "30d", "retention")
         self.defaults: dict[str, Any] = {}
@@ -651,6 +783,7 @@ class Cronwatch:
         self._channel_timeout_ms: float = CHANNEL_TIMEOUT_MS
         self._triage_timeout_ms: float = TRIAGE_TIMEOUT_MS
         self._retry_budget_ms: float = RETRY_BUDGET_MS
+        self._start_deadline_ms: float = START_DEADLINE_MS
         self._warned_deferred_start = False
         self._reset_process_state()
         _fork.track(self)
@@ -754,11 +887,11 @@ class Cronwatch:
             raise ValueError(f"record_run: trigger must be a string ({where})")
         # Refused as metric() refuses them: a store keeps NaN and Infinity as null.
         for metric, value in (given.metrics or {}).items():
-            if not _js.is_finite(value):
+            if metric_number(value) is None:
                 raise ValueError(f'record_run: metric "{metric}" must be a finite number (job "{given.job}", run "{given.id}")')
         self._sync(declared)
         run = given.copy()
-        run.metrics = {str(k): v for k, v in (run.metrics or {}).items()}
+        run.metrics = {str(k): metric_number(v) for k, v in (run.metrics or {}).items()}
         if run.status == RunStatus.OK:
             unmet = check_expectation(declared.expect, run.output)
             if unmet:
@@ -847,7 +980,7 @@ class Cronwatch:
         with self._registry:
             definition = self._definitions.get(name)
         if definition is not None:
-            self._sync(definition, confirm=True)
+            self._sync(definition, confirm=True, running=False)
         stored = self.store.get_job(name)
         if stored is None:
             return None
@@ -1112,11 +1245,11 @@ class Cronwatch:
             # Only once init has gone through: a failure is tried again on the next call.
             self._ready = True
 
-    def _sync(self, definition: JobDefinition, confirm: bool = False) -> None:
+    def _sync(self, definition: JobDefinition, confirm: bool = False, running: bool | None = None) -> None:
         """Writes the declaration of `definition`'s name as it stands, unless the
         store has it. A handle kept from an earlier declaration writes the one
-        that replaced it, never its own over it, and one forgotten since writes
-        its own. The writes of one name take turns, each reading what stands
+        that replaced it, never its own over it, and one forgotten since
+        declares the job again as it was last declared here. The writes of one name take turns, each reading what stands
         once its turn comes, so one still under way cannot land after a later
         one; and a name declared again while its write was under way is still
         to be written. A name is marked as written only while that same
@@ -1126,7 +1259,13 @@ class Cronwatch:
 
         With `confirm`, as a run starts, a name already written is read back:
         another process may have forgotten the job since, and a job still
-        declared here comes back on its next run."""
+        declared here comes back on its next run. `running` says the write is
+        for a run (by default, whenever `confirm` is): a name forgotten here
+        is then declared again, where a check or a dashboard read, whose loop
+        may have picked the name up just before the forget (in another
+        thread), leaves it forgotten."""
+        if running is None:
+            running = confirm
         self._ensure_ready()
         name = definition.name
         with self._registry:
@@ -1140,6 +1279,16 @@ class Cronwatch:
             with self._registry:
                 if name in self._synced:
                     return
+                if name not in self._definitions:
+                    # Forgotten here since this write was asked for. A check or a
+                    # dashboard read that was on its way to write it leaves it
+                    # forgotten: only a run brings a forgotten job back.
+                    if not running:
+                        return
+                    # A handle kept from before the forget: its run declares the
+                    # job again, as cw.run() by name does (_declared()), so the name
+                    # is marked as written once more and the checks keep it declared.
+                    self._declared(name)
                 standing = self._definitions.get(name, definition)
             self.store.upsert_job(to_stored(standing), self.now())
             with self._registry:
@@ -1275,6 +1424,7 @@ class Cronwatch:
                     f"job {definition.name}: the function returned a coroutine, which cannot be awaited here; "
                     "pass the async function itself and await job.run(fn)"
                 )
+            _refuse_generator(definition.name, result)
         except BaseException as error:
             execution.end(None, error, True)
             if not isinstance(error, Exception):
@@ -1301,6 +1451,7 @@ class Cronwatch:
             result = fn(context)
             if inspect.isawaitable(result):
                 result = await result
+            _refuse_generator(definition.name, result)
         except BaseException as error:
             # CancelledError too: the run is recorded as interrupted, then the cancellation goes on.
             execution.leave(None, error, True)
@@ -1347,7 +1498,7 @@ class Cronwatch:
         Raises when the store does, so a handle can be finished again."""
         if not recorded:
             # The start was never written; the store may be back by now.
-            self._sync(definition)
+            self._sync(definition, running=True)
             try:
                 self.store.insert_run(run)
                 self._finish_run(to_stored(definition), run, finished_at)
@@ -1426,7 +1577,7 @@ class Cronwatch:
 
     def _record_start(self, definition: JobDefinition, trigger: str, run_id: str | None) -> RunHandle:
         """The start of a run without the function: the run is inserted and missed
-        and stuck close (on_run_start). A store that fails is reported and the
+        closes (on_run_start). A store that fails is reported and the
         handle inserts the finished run instead."""
         name = definition.name
         if run_id is not None:
@@ -1525,7 +1676,7 @@ class Cronwatch:
         run.duration_ms = run_duration(source.started_at, finished_at)
         run.error = None
         # Capped by _conclude(), after it is redacted.
-        run.output = _join_lines(source.output, added)
+        run.output = source.output if added is None else self._append_redacted(handle, source.output, added)[0]
         run.metrics = {**(source.metrics or {}), **recorder.metrics()}
         seen = recorder.expect_text()
         expect_text = _join_lines(head, _join_lines(source.output, seen if seen is not None else (result if isinstance(result, str) else None)))
@@ -1555,13 +1706,52 @@ class Cronwatch:
                 self._report(RuntimeError(f'run {handle.id} of {name} belongs to job "{stored.job}"; ignored'), f"flushing {name}")
                 return False
             updated = stored.copy()
+            tail = None
             if lines is not None:
-                updated.output = _join_output(stored.output, redact_and_cap(lines, self._redact))
+                output, tail = self._append_redacted(handle, stored.output, lines)
+                updated.output = None if output is None else cap_output(output)
             updated.metrics = {**(stored.metrics or {}), **metrics}
-            return self._write_run_if(updated, [RunStatus.RUNNING])
+            if not self._write_run_if(updated, [RunStatus.RUNNING]):
+                return False
+            if lines is not None:
+                # Remembered only while the stored output still ends with it (the cap did not cut into it).
+                handle._flushed = tail if tail is not None and updated.output is not None and updated.output.endswith(tail[1]) else None
+            return True
         except Exception as error:
             self._report(error, f"flushing {name}")
             return False
+
+    def _append_redacted(self, handle: RunHandle, stored: str | None, lines: str) -> tuple[str | None, tuple[str, str] | None]:
+        """`lines` added to the stored output, redacted. While the output still
+        ends with what the handle flushed last (handle._flushed: those lines
+        as logged, and as they stand at the end of the stored output), that
+        tail is redacted again with the new lines after it and replaced, so a
+        secret that began in one flush and ends in the next (a private key
+        logged a line at a time, a label and then its value) is blanked
+        whole, where redacting each flush alone would store its second half.
+        Otherwise (the first flush, or another process has written since) the
+        lines are redacted alone and appended. Returns the output and what to
+        remember once the write lands: at most OUTPUT_CAP of the raw text,
+        from the start of a line, and only while its redaction is still the
+        end of what was written."""
+        added = strip_nul(lines)
+        flushed = handle._flushed
+        joins = flushed is not None and stored is not None and stored.endswith(flushed[1])
+        raw = f"{flushed[0]}\n{added}" if joins and flushed is not None else added
+        redacted = redact_and_cap(raw, self._redact)
+        if joins and flushed is not None and stored is not None:
+            output: str | None = stored[: len(stored) - len(flushed[1])] + redacted
+        else:
+            output = _join_lines(stored, redacted)
+        if _js.length16(raw) <= OUTPUT_CAP:
+            return output, (raw, redacted)
+        end = _js.tail16(raw, OUTPUT_CAP)
+        cut = end.find("\n")
+        if cut == -1:
+            return output, None
+        raw = end[cut + 1 :]
+        kept = redact_and_cap(raw, self._redact)
+        return output, ((raw, kept) if redacted.endswith(kept) else None)
 
     def _record_over(self, definition: JobDefinition, stored: Run, run: Run, evaluate: bool) -> list[Alert]:
         """record_run() for a run already stored."""
@@ -1684,12 +1874,24 @@ class Cronwatch:
                 if run is None or run.status != RunStatus.RUNNING or run.job != listed.job:
                     continue
                 run.status = RunStatus.TIMEOUT
-                if stranded and run.finished_at is not None:
-                    # Its own status was never written; a late finish of it is
-                    # judged as one after a timeout, so a success still recovers.
+                if stranded and run.finished_at is not None and run.error is not None:
+                    # The placeholder of a finished import keeps the run's own
+                    # error, and only a run that failed has one: it is closed as
+                    # the failure it was, with its own times, and alerts as
+                    # failed. A later import of the same run finds it finished
+                    # and changes nothing.
+                    run.status = RunStatus.FAILED
+                    if run.duration_ms is not None:
+                        run.finished_at = run.started_at + run.duration_ms
+                    else:
+                        run.duration_ms = run_duration(run.started_at, run.finished_at)
+                elif stranded and run.finished_at is not None:
+                    # Its own status was never written and nothing says it
+                    # failed; a late finish of it is judged as one after a
+                    # timeout, so a success still recovers.
                     if run.duration_ms is None:
                         run.duration_ms = run_duration(run.started_at, run.finished_at)
-                    run.error = _STRANDED_ERROR if run.error is None else f"{_STRANDED_ERROR}\n{run.error}"
+                    run.error = _STRANDED_ERROR
                 else:
                     run.finished_at = at
                     run.duration_ms = run_duration(run.started_at, at)

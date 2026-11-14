@@ -34,12 +34,12 @@ nightly = cw.job(
 with nightly.run() as ctx:
     path = build_report()
     ctx.log("Report written:", path)   # kept with the run, shown in alerts
-    ctx.metric("cost", 1.2)            # watched against budgets and baselines
+    ctx.metric("cost", 1.2)            # watched against budgets and baselines; any real number (a Decimal too)
 
 cw.start_checking()  # checks for missed and stuck runs every minute, in a daemon thread
 ```
 
-A run is recorded when the block ends; an exception inside it is recorded as the failure and raised again. A function works the same way, as a decorator (each call is a run, and `cronwatch.current()` is its context) or passed to `run()`, which returns what the function returns:
+A run is recorded when the block ends; an exception inside it is recorded as the failure and raised again. A store that fails never stops the job, and one that hangs holds it back five seconds at most: past that the job runs, the delay is reported to `on_error`, and the run is recorded when it finishes. A function works the same way, as a decorator (each call is a run, and `cronwatch.current()` is its context) or passed to `run()`, which returns what the function returns:
 
 ```python
 @nightly.monitor
@@ -61,7 +61,7 @@ run.log("sent 40 emails")
 run.finish()                        # or run.fail(error), or run.finish(result="text")
 ```
 
-A run that is never finished is marked stuck by the first check after the job's timeout.
+A run that is never finished is marked stuck by the first check after the job's timeout. Stuck stays open until a run finishes ok: a job that hangs every time alerts once, not at every timeout, and the first success sends the recovery.
 
 ### Options
 
@@ -69,7 +69,7 @@ A run that is never finished is marked stuck by the first check after the job's 
 
 An `expect` pattern is searched in your process by `re`, which backtracks and, like an `expect` function, has no time limit. A pattern with unbounded repeats that can match the same text (`\n*\n*x`, `(a+)+b`, even `.*x`) can take seconds or longer on a long output that does not match: anchor it, avoid a repeat next to or inside another over the same characters, or use a plain string. See [expect rules](https://cronwatch.dev/docs/conditions/#expect-rules).
 
-`Cronwatch(...)`: `store`, `alerts`, `triage` (a function returning a short diagnosis added to each alert), `sources`, `cron_secret` (the bearer `/api/check` and a job's handler accept; default `$CRON_SECRET`), `retention` (default `"30d"`), `defaults`, `redact` (secrets are blanked from output and errors by default; pass your own function, or `False`), `deliver` (`"check"` queues alerts for another process's check to send), `on_error` (store and channel failures; default the `cronwatch` logger), `now`.
+`Cronwatch(...)`: `store`, `alerts`, `triage` (a function returning a short diagnosis added to each alert), `sources`, `cron_secret` (the bearer `/api/check` and a job's handler accept; default `$CRON_SECRET`; `cronwatch.OPEN` for none on purpose), `retention` (default `"30d"`), `defaults`, `redact` (secrets are blanked from output and errors by default; pass your own function, or `False`), `deliver` (`"check"` queues alerts for another process's check to send), `on_error` (store and channel failures; default the `cronwatch` logger), `now`.
 
 The client's methods: `job(name, ...)`, `run(name, fn=None, ...)` (a run without keeping a handle), `check()`, `jobs()`, `jobs_with_runs()`, `job_summary(name)`, `runs(name)`, `get_run(id)`, `silence(name, "2h")`, `unsilence(name)`, `forget(name)`, `resume_run(name, run_id)`, `record_run(run)`, `defined_jobs()` (the jobs declared in this process), `routes()` (the dashboard, below), `start_checking()`, `stop()`, `close()`.
 
@@ -77,7 +77,7 @@ The client's methods: `job(name, ...)`, `run(name, fn=None, ...)` (a run without
 
 - `cronwatch.stores.MemoryStore()`, the default: forgets on restart.
 - `cronwatch.stores.SqliteStore(path, prefix="cronwatch_")`: one file, WAL mode. The tables, statements, and JSON are the SDK's SQLite store's, byte for byte, so a Node process using `@cronwatch/sdk/sqlite` on the same file sees the same jobs, runs, and state.
-- `cronwatch.stores.postgres.PostgresStore(url, prefix="cronwatch_")` (`pip install "cronwatch-sdk[postgres]"`, psycopg 3.2 or newer): the SDK's Postgres tables and statements. It reads `DATABASE_URL` when given no URL, and writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback. `pool=` takes a psycopg_pool pool instead.
+- `cronwatch.stores.postgres.PostgresStore(url, prefix="cronwatch_")` (`pip install "cronwatch-sdk[postgres]"`, psycopg 3.2 or newer): the SDK's Postgres tables and statements. It reads `DATABASE_URL` when given no URL, and writes through a connection of its own, so a run recorded inside the app's transaction survives a rollback. That connection gets timeouts where the URL sets none, so a database that is unreachable or has gone silent fails a write within about a minute (reported to `on_error`) and does not hold the job waiting on it: `connect_timeout=10`, TCP keepalive (`keepalives_idle=30`, `keepalives_interval=10`, `keepalives_count=3`), and `tcp_user_timeout=30000`; set any of them in the URL to choose your own. `statement_timeout="30s"` also bounds each statement on the server (off by default: it is sent as a startup option, which PgBouncer refuses unless `ignore_startup_parameters` lists `options`). `pool=` takes a psycopg_pool pool instead, left as you made it.
 
 A `prefix` is lowercase letters, digits, and underscores, not starting with a digit, at most 47 characters; any other raises `ValueError`.
 
@@ -102,7 +102,7 @@ alerts = [
 
 ### Triage and pg_cron
 
-`cronwatch.triage.anthropic.Anthropic(context="A Django app on Fly.io.")` (`pip install "cronwatch-sdk[anthropic]"`), passed as `triage=`, adds Claude's short diagnosis to each alert. Recoveries are sent without one.
+`cronwatch.triage.anthropic.Anthropic(context="A Django app on Fly.io.")` (`pip install "cronwatch-sdk[anthropic]"`), passed as `triage=`, adds Claude's short diagnosis to each alert. Recoveries are sent without one. `max_tokens` defaults to 4096, since the model's thinking counts toward it; an answer that reaches the limit before any text is reported to `on_error` and the alert goes out without a diagnosis.
 
 `cronwatch.sources.pgcron.PgCron(url_or_connection, prefix="db:")`, passed in `sources=[...]`, watches pg_cron's jobs: each is declared with its schedule, and the rows of `cron.job_run_details` are copied in as runs on every check, so missed, failed, stuck, and slow pg_cron jobs alert like any other.
 
@@ -116,7 +116,7 @@ app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/cronwatch": cw.routes()})  
 app.mount("/cronwatch", cw.routes().asgi)                                         # FastAPI, Starlette
 ```
 
-Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps you signed in. It defaults to `$CRONWATCH_TOKEN`, and `token=None` serves the routes open, behind your own auth.
+Send the token as `Authorization: Bearer <token>`, or open the dashboard once with `?token=<token>` and a cookie keeps you signed in. It defaults to `$CRONWATCH_TOKEN`, and `token=cronwatch.OPEN` serves the routes open, behind your own auth. `token=None` does the same, but outside development it logs a warning once, because `None` is also what `os.environ.get("CRONWATCH_TOKEN")` returns when the variable is not set: a line written to read the token would serve the dashboard to anyone. Leave `token` out (the variable is read for you, and without it the routes answer 503), or read it with `os.environ["CRONWATCH_TOKEN"]` or `os.environ.get("CRONWATCH_TOKEN", "")`, never `os.environ.get(...)` without a default. The same holds for `cron_secret` and a handler's `secret`.
 
 Tokens and secrets, from the environment or given in code, are trimmed, so one read from a file with a trailing newline still matches; a blank one counts as unset. With no token set the routes answer 503, except in development, where they make one and print a sign-in link. The environment is the first of `CRONWATCH_ENV`, `APP_ENV`, and `ENVIRONMENT` that holds more than whitespace, trimmed and lowercased; `development`, `dev`, and `local` count as development, and `production` and `prod` as production. `test` and `testing` are not development, so a test run or CI needs a token, as production does. The link names the host only when `origin` is set or the request's host is loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`; a Host such as `localhost:1@evil.example` does not count), since a client chooses it. `/api/check` also takes the client's `cron_secret` as a bearer, so a platform cron can run checks. Behind a proxy, pass `origin="https://app.example.com"` (or `trust_proxy=True` when the proxy sets `X-Forwarded-Proto` and `X-Forwarded-Host`).
 
@@ -137,7 +137,7 @@ CRONWATCH = {
 urlpatterns = [..., path("cronwatch/", include("cronwatch.django.urls"))]
 ```
 
-`CRONWATCH` takes the client's options in upper case (`STORE`, `ALERTS`, `TRIAGE`, `SOURCES`, `CRON_SECRET`, `RETENTION`, `DEFAULTS`, `REDACT`, `DELIVER`, `ON_ERROR`), or `CLIENT` for a client you made yourself, and the dashboard's (`TOKEN`, `BASE_PATH`, `ORIGIN`, `TRUST_PROXY`). `cronwatch.django.client()` is the client made from them, and `cronwatch.client()` hands out the same one. `python manage.py cronwatch_check` runs one check, for cron to call every few minutes. `DEBUG` is the environment unless `CRONWATCH_ENV`, `APP_ENV`, or `ENVIRONMENT` says otherwise: with it on and no token set, the dashboard makes one and prints its sign-in link to the runserver log.
+`CRONWATCH` takes the client's options in upper case (`STORE`, `ALERTS`, `TRIAGE`, `SOURCES`, `CRON_SECRET`, `RETENTION`, `DEFAULTS`, `REDACT`, `DELIVER`, `ON_ERROR`), or `CLIENT` for a client you made yourself, and the dashboard's (`TOKEN`, `BASE_PATH`, `ORIGIN`, `TRUST_PROXY`). `cronwatch.django.client()` is the client made from them, and `cronwatch.client()` hands out the same one. `python manage.py cronwatch_check` runs one check, for cron to call every few minutes. `TOKEN` and `CRON_SECRET` may be left out (the variables are read, and without them the dashboard answers 503 and handlers refuse), and take `cronwatch.OPEN` to serve the dashboard or run handlers without one; write `os.environ.get("CRONWATCH_TOKEN", "")` as above, never without the default, since the `None` an unset variable gives opens them (with a warning, once, outside development). `DEBUG` is the environment unless `CRONWATCH_ENV`, `APP_ENV`, or `ENVIRONMENT` says otherwise: with it on and no token set, the dashboard makes one and prints its sign-in link to the runserver log.
 
 Declare jobs in a `cronwatch_jobs.py` module in any installed app: it is imported at startup, so `cronwatch_check` knows every job before it first runs and reports one that never does.
 
@@ -207,7 +207,7 @@ app = cron.wsgi   # or cron.asgi: the handler as the whole app
 lambda_handler = cron.aws_lambda                                       # AWS Lambda: API Gateway or a function URL
 ```
 
-It answers `{"ok", "job", "run", "status", "durationMs"}` with 200 or 500, 401 without the secret, and 503 when no secret is set outside development (`secret=None` lets anyone run it). A function that returns a response is answered with it, and, as for any run, a response of 400 or more fails the run. An `async def` makes an async handler. On Lambda, `cron.aws_lambda(event, context)` reads the bearer from a REST API's, an HTTP API's, or a function URL's event, hands `fn` the event, and answers with the proxy result (`{"statusCode", "headers", "body", "isBase64Encoded"}`); a function may return a proxy result of its own. A function invoked directly (EventBridge Scheduler) gets an event with no headers, and IAM already decides who may invoke it, so give that handler `secret=None`.
+It answers `{"ok", "job", "run", "status", "durationMs"}` with 200 or 500, 401 without the secret, and 503 when no secret is set outside development (`secret=cronwatch.OPEN` lets anyone run it; `secret=None` does too, and warns once outside development). A function that returns a response is answered with it, and, as for any run, a response of 400 or more fails the run. An `async def` makes an async handler. On Lambda, `cron.aws_lambda(event, context)` reads the bearer from a REST API's, an HTTP API's, or a function URL's event, hands `fn` the event, and answers with the proxy result (`{"statusCode", "headers", "body", "isBase64Encoded"}`); a function may return a proxy result of its own. A function invoked directly (EventBridge Scheduler) gets an event with no headers, and IAM already decides who may invoke it, so give that handler `secret=cronwatch.OPEN`.
 
 ### Deprecated
 

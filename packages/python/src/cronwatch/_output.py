@@ -111,7 +111,10 @@ def is_interruption(error: BaseException) -> bool:
 def describe_error(error: Any) -> str:
     if isinstance(error, BaseException):
         name = type(error).__name__
-        message = str(error)
+        try:
+            message = str(error)
+        except Exception:  # noqa: BLE001, an error whose own __str__ raises is still recorded
+            message = "<exception str() failed>"
         if is_interruption(error):
             header = f"Interrupted: {name}" if message in ("", name) else f"Interrupted: {name}: {message}"
         else:

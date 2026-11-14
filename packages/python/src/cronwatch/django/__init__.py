@@ -9,6 +9,13 @@ command for cron. Needs Django 5.2 or newer (`pip install "cronwatch-sdk[django]
         "TOKEN": os.environ["CRONWATCH_TOKEN"],
     }
 
+TOKEN and CRON_SECRET may be left out: CRONWATCH_TOKEN and CRON_SECRET are
+read, and without them the dashboard answers 503 and handlers refuse. Never
+write os.environ.get("CRONWATCH_TOKEN") without a default: for a variable
+that is not set it gives None, which opens the dashboard to anyone (with a
+warning, once, when DEBUG is off). To serve it open on purpose, behind your
+own auth, say so by name: "TOKEN": cronwatch.OPEN.
+
     # urls.py
     urlpatterns = [..., path("cronwatch/", include("cronwatch.django.urls"))]
 

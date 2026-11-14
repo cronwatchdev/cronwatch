@@ -95,6 +95,10 @@ class RunHandle:
         # keeps only the tail, so without it an expect rule at finish would
         # miss a line logged early, which run() would have seen.
         self._head: str | None = None
+        # The lines this handle last flushed, as logged and as they stand at
+        # the end of the stored output, or None before the first flush: the
+        # next lines are redacted together with them (see _append_redacted).
+        self._flushed: tuple[str, str] | None = None
 
     def _fresh(self) -> RunRecorder:
         return RunRecorder(Run(id=self.id, job=self.job, status=RunStatus.RUNNING, started_at=self.started_at or 0), None)

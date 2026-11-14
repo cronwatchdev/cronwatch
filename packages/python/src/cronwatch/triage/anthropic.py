@@ -28,7 +28,8 @@ from .._duration import beyond_dates, format_duration, iso_time
 __all__ = ["Anthropic", "DEFAULT_EFFORT", "DEFAULT_MAX_TOKENS", "DEFAULT_MODEL"]
 
 DEFAULT_MODEL = "claude-opus-5"
-DEFAULT_MAX_TOKENS = 800
+#: Room for the model's thinking as well as the paragraph it writes after it.
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_EFFORT = "medium"
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 #: Under the client's 25 second wait, so the request ends on its own first.
@@ -103,7 +104,11 @@ class Anthropic:
     client:     bring a configured ``anthropic.Anthropic`` instead.
     model:      default "claude-opus-5".
     effort:     how hard the model thinks: "low", "medium" (the default) or "high".
-    max_tokens: default 800. A diagnosis is a paragraph.
+    max_tokens: default 4096. A diagnosis is a paragraph, but the model thinks first
+                (thinking is on by default on current models) and that thinking counts
+                toward this limit, so one sized for the paragraph alone can be used up
+                before any of it is written. An answer that reaches the limit with no
+                text raises, so the client reports it to on_error.
     fallbacks:  route a policy refusal to Anthropic's default fallback model inside
                 the same request, so a diagnosis still comes back. On by default;
                 turn off if your account or gateway rejects the beta.
@@ -160,6 +165,12 @@ class Anthropic:
             return None
         blocks = _field(response, "content") or []
         text = _js.trim("\n".join(str(_field(b, "text")) for b in blocks if str(_field(b, "type")) == "text"))
+        # The limit ran out before any of the diagnosis was written (on its
+        # thinking, say): raised, so the client reports it to on_error rather
+        # than the alert going out with no diagnosis and no word of why. The
+        # text is the SDK's, which names the option as it spells it.
+        if not text and str(_field(response, "stop_reason")) == "max_tokens":
+            raise RuntimeError(f"triage: the model reached max_tokens ({_js.number(self.max_tokens)}) before writing a diagnosis; raise maxTokens or lower effort")
         return text or None
 
 

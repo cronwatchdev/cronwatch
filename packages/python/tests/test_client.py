@@ -488,3 +488,301 @@ def test_record_run_refuses_fields_evaluation_cannot_read() -> None:
         with pytest.raises(ValueError, match=message):
             cw.record_run({**run, **patch})
     assert cw.store.get_run("r") is None
+
+
+def test_stuck_stays_open_through_later_starts_failures_and_timeouts_and_closes_with_a_recovery_on_the_next_success() -> None:
+    d = JobDefinition({"name": "j"})
+
+    def run(status: str, started_at: int) -> Run:
+        return Run(id=f"r{started_at}", job="j", status=status, started_at=started_at, finished_at=None if status == "running" else started_at + 1000, duration_ms=None if status == "running" else 1000)
+
+    def start_now(state: Any, at: int) -> Any:
+        return _evaluate.on_run_start(d, run("running", at), state, at)
+
+    stuck = _evaluate.on_run_finish(d, run("timeout", T0 - HOUR), _evaluate.empty_state("j"), [], T0)
+    assert [a.type for a in stuck.alerts] == ["stuck"]
+    # The next run starting closes nothing: it may hang as the last one did.
+    started = start_now(stuck.state, T0 + MIN)
+    assert started.open["stuck"] == T0
+    assert not started.pending_recovery
+    # It times out too: stuck is already open, so there is no second alert.
+    again = _evaluate.on_run_finish(d, run("timeout", T0 + MIN), started, [], T0 + HOUR)
+    assert again.alerts == []
+    assert again.state.open["stuck"] == T0, "open since the first time"
+    assert again.state.consecutive_failures == 2
+    # A run that fails opens failed by its own rule and leaves stuck open.
+    failed = _evaluate.on_run_finish(d, run("failed", T0 + HOUR), start_now(again.state, T0 + HOUR), [], T0 + HOUR + 1000)
+    assert [a.type for a in failed.alerts] == ["failed"]
+    assert failed.state.open["stuck"] == T0
+    # The first success closes both, with one recovery naming both.
+    ok = _evaluate.on_run_finish(d, run("ok", T0 + 2 * HOUR), start_now(failed.state, T0 + 2 * HOUR), [], T0 + 2 * HOUR + 1000)
+    assert [a.type for a in ok.alerts] == ["recovered"]
+    assert sorted(ok.alerts[0].details["after"]) == ["failed", "stuck"]
+    assert not ok.state.open and not ok.state.pending_recovery
+    # Stuck never closes on a start, whether or not the run catches the schedule up.
+    hourly = JobDefinition({"name": "j", "schedule": "0 * * * *", "timezone": "UTC", "grace": "10m"})
+    at = lambda h, m=0: date_utc(2026, 0, 5, h, m)  # noqa: E731
+    covering = Run(id="c", job="j", status="ok", started_at=at(3, 2), finished_at=at(3, 30), duration_ms=28 * MIN)
+    both = _evaluate.normalize_state({"job": "j", "open": {"stuck": at(3), "missed": at(3, 11)}}, "j")
+    assert dict(_evaluate.on_run_start(hourly, covering, both, at(3, 30)).open) == {"stuck": at(3)}
+
+
+def test_a_job_that_hangs_on_every_run_alerts_stuck_once_and_recovers_on_its_first_success() -> None:
+    cw, c, alerts = make()
+    job = cw.job("hangs", schedule="*/5 * * * *", timezone="UTC", timeout="10m")
+    # Twelve runs, five minutes apart, none of which ever finishes.
+    handles = []
+    for _ in range(12):
+        handles.append(job.start())
+        c.advance(5 * MIN)
+        cw.check()
+    assert alerts.types() == ["stuck"]
+    assert cw.job_summary("hangs").health == "stuck"
+    # A run that fails alerts as failed by its own rule; stuck stays open beside it.
+    with pytest.raises(RuntimeError):
+        job.run(boom("boom"))
+    assert alerts.types() == ["stuck", "failed"]
+    assert sorted(cw.job_summary("hangs").open) == ["failed", "stuck"]
+    # A hung run that reports failing late is not counted again and alerts nothing.
+    handles[0].fail(RuntimeError("late"))
+    assert alerts.types() == ["stuck", "failed"]
+    # The first success closes both with one recovery.
+    job.run(lambda ctx: None)
+    assert alerts.types() == ["stuck", "failed", "recovered"]
+    assert sorted(alerts.alerts[2].details["after"]) == ["failed", "stuck"]
+    assert cw.job_summary("hangs").open == []
+
+
+def test_a_stuck_run_that_finishes_ok_late_closes_stuck_with_a_recovery_though_other_runs_started_meanwhile() -> None:
+    cw, c, alerts = make()
+    job = cw.job("slow-queue", timeout="10m")
+    first = job.start()
+    c.advance(11 * MIN)
+    cw.check()
+    assert alerts.types() == ["stuck"]
+    second = job.start()
+    assert cw.job_summary("slow-queue").open == ["stuck"], "a start leaves stuck open"
+    first.finish()
+    assert alerts.types() == ["stuck", "recovered"]
+    second.finish()
+    assert alerts.types() == ["stuck", "recovered"]
+
+
+# ---------------------------------------------------------------- the start deadline
+
+
+class _Hanging:
+    """A store whose first insert_run (a run's start) hangs until released;
+    with `down`, every later insert finds the store down, not hanging."""
+
+    def __init__(self, down: bool = False) -> None:
+        import threading
+
+        from cronwatch.stores import MemoryStore
+
+        self.base = MemoryStore()
+        self.release = threading.Event()
+        self.down = down
+        self.inserts = 0
+        self._count = threading.Lock()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.base, name)
+
+    def insert_run(self, run: Run) -> None:
+        with self._count:
+            self.inserts += 1
+            first = self.inserts == 1
+        if first:
+            assert self.release.wait(10), "never released"
+        elif self.down:
+            raise RuntimeError("store down")
+        self.base.insert_run(run)
+
+
+def _until(condition: Callable[[], bool], what: str) -> None:
+    import time
+
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.005)
+
+
+def _hung(down: bool = False) -> tuple[Any, cronwatch.Cronwatch, Any, list[str]]:
+    store = _Hanging(down)
+    errors: list[str] = []
+    cw, _, alerts = make(store=store, on_error=lambda error, where: errors.append(f"{where}: {error}"))
+    cw._start_deadline_ms = 150
+    return store, cw, alerts, errors
+
+
+def test_a_store_that_hangs_while_recording_a_runs_start_does_not_hold_the_job_back_and_leaves_no_running_row() -> None:
+    import time
+
+    assert cronwatch._client.START_DEADLINE_MS == 5_000
+    store, cw, alerts, errors = _hung()
+    job = cw.job("nightly")
+    began = time.monotonic()
+    waited: list[float] = []
+
+    def work(ctx: Any) -> str:
+        waited.append(time.monotonic() - began)
+        ctx.log("did the work")
+        # The job is done; the late start lands first, and the finish is written over it.
+        store.release.set()
+        _until(lambda: len(store.base.running_runs()) == 1, "the start write never landed")
+        return "done"
+
+    assert job.run(work) == "done"
+    assert 0.14 <= waited[0] < 2, "the job ran once the deadline passed, not before"
+    assert errors == ["recording nightly: the store took longer than 150ms to record the start of nightly; running it unrecorded"]
+    runs = cw.runs("nightly")
+    assert [(run.status, run.output) for run in runs] == [("ok", "did the work")]
+    assert store.base.running_runs() == []
+    assert alerts.types() == []
+
+
+def test_a_start_write_that_lands_after_the_finish_was_recorded_is_refused_and_changes_nothing() -> None:
+    store, cw, alerts, errors = _hung()
+    assert cw.job("nightly").run(lambda ctx: "done") == "done"
+    # The finish inserted the run, finished, while the start write was still hung.
+    assert [run.status for run in cw.runs("nightly")] == ["ok"]
+    store.release.set()
+    _until(lambda: not cw._abandoned["start"].is_alive(), "the start write never ended")
+    assert [run.status for run in cw.runs("nightly")] == ["ok"]
+    assert store.base.running_runs() == []
+    assert len(errors) == 1 and alerts.types() == []
+
+
+def test_a_start_write_that_lands_after_the_finish_failed_is_finished_then_not_left_running() -> None:
+    store, cw, alerts, errors = _hung(down=True)
+    with pytest.raises(RuntimeError, match="boom"):
+        cw.job("nightly").run(boom("boom"))
+    assert [e.split(":")[0] for e in errors] == ["recording nightly", "recording nightly"]
+    assert cw.runs("nightly") == []
+    # The start write lands at last, after the finish gave up: the run is finished and judged now.
+    store.release.set()
+    _until(lambda: alerts.types() == ["failed"], "the late start was never finished")
+    runs = cw.runs("nightly")
+    assert len(runs) == 1 and runs[0].status == "failed" and "boom" in runs[0].error
+    assert store.base.running_runs() == []
+
+
+def test_while_a_start_write_is_hung_later_runs_do_not_wait_behind_it() -> None:
+    import time
+
+    store, cw, alerts, errors = _hung()
+    job = cw.job("nightly")
+    job.run(lambda ctx: None)
+    began = time.monotonic()
+    job.run(lambda ctx: None)
+    assert time.monotonic() - began < 0.1, "ran at once: one thread waits on the store, not one per run"
+    assert errors[1] == "recording nightly: the store has not answered an earlier start write yet; running nightly unrecorded"
+    assert [run.status for run in cw.runs("nightly")] == ["ok", "ok"], "each was recorded at its finish"
+    store.release.set()
+    _until(lambda: not cw._abandoned["start"].is_alive(), "the start write never ended")
+    job.run(lambda ctx: None)
+    assert len(errors) == 2, "and once the store answers, starts are written again"
+    assert store.base.running_runs() == []
+
+
+def test_an_async_run_and_a_handler_are_not_held_back_by_a_hung_store_either() -> None:
+    import asyncio
+
+    store, cw, _, errors = _hung()
+
+    async def work(ctx: Any) -> str:
+        return "done"
+
+    assert asyncio.run(cw.job("nightly").run(work)) == "done"
+    assert errors == ["recording nightly: the store took longer than 150ms to record the start of nightly; running it unrecorded"]
+    store.release.set()
+    _until(lambda: not cw._abandoned["start"].is_alive(), "the start write never ended")
+
+    store, cw, _, errors = _hung()
+    answer = cw.job("hook").handler(lambda ctx, request: "ran")({"headers": {}})
+    assert answer.status == 200 and len(errors) == 1
+    store.release.set()
+    _until(lambda: not cw._abandoned["start"].is_alive(), "the start write never ended")
+    assert store.base.running_runs() == []
+
+
+def test_a_store_that_fails_at_the_start_is_reported_as_before_and_the_run_recorded_at_its_finish() -> None:
+    from helpers import Flaky
+
+    from cronwatch.stores import MemoryStore
+
+    broken = {"upsert_job"}
+    errors = Errors()
+    cw, _, _ = make(store=Flaky(MemoryStore(), broken), on_error=errors)
+
+    def work(ctx: Any) -> int:
+        broken.clear()
+        return 1
+
+    assert cw.job("nightly").run(work) == 1
+    assert errors.wheres == ["recording nightly"] and errors.messages == ["store down: upsert_job"]
+    assert [run.status for run in cw.runs("nightly")] == ["ok"]
+
+
+def test_a_store_only_its_own_thread_may_use_has_its_start_written_in_the_callers_thread(tmp_path: Any) -> None:
+    import sqlite3
+
+    from cronwatch.stores import SqliteStore
+
+    # sqlite3's default: only the thread that opened the connection may use it.
+    connection = sqlite3.connect(tmp_path / "own.db", isolation_level=None)
+    errors = Errors()
+    cw, _, _ = make(store=SqliteStore(connection=connection), on_error=errors)
+    seen: list[str] = []
+    cw.job("nightly").run(lambda ctx: seen.append(cw.runs("nightly")[0].status))
+    assert seen == ["running"], "the start was recorded before the job ran"
+    assert [run.status for run in cw.runs("nightly")] == ["ok"]
+    assert errors.items == []
+
+
+def test_a_start_that_lands_while_a_failing_finish_is_mid_write_is_finished_by_that_finish() -> None:
+    import threading
+
+    from cronwatch.stores import MemoryStore
+
+    base = MemoryStore()
+    release = threading.Event()
+    landed = threading.Event()
+    inserts = [0]
+    reads_down = [False]
+
+    def insert_run(run: Run) -> None:
+        inserts[0] += 1
+        if inserts[0] == 1:
+            assert release.wait(10), "never released"
+            base.insert_run(run)
+            landed.set()
+            return
+        # The finish, written as a run of its own: the start lands while it is
+        # under way, and then both its insert and its read-back fail.
+        release.set()
+        assert landed.wait(10), "the start write never landed"
+        reads_down[0] = True
+        raise RuntimeError("store down")
+
+    def get_run(run_id: str) -> Any:
+        if reads_down[0]:
+            reads_down[0] = False
+            raise RuntimeError("store down")
+        return base.get_run(run_id)
+
+    from helpers import Wrapped
+
+    errors: list[str] = []
+    cw, _, alerts = make(store=Wrapped(base, insert_run=insert_run, get_run=get_run), on_error=lambda error, where: errors.append(f"{where}: {error}"))
+    cw._start_deadline_ms = 150
+    with pytest.raises(RuntimeError, match="boom"):
+        cw.job("nightly").run(boom("boom"))
+    # Nothing is left to another thread: by the time run() is back, the row the start left is finished.
+    assert base.running_runs() == []
+    runs = cw.runs("nightly")
+    assert len(runs) == 1 and runs[0].status == "failed" and "boom" in runs[0].error
+    assert alerts.types() == ["failed"]
+    assert [e.split(":")[0] for e in errors] == ["recording nightly", "recording nightly"]

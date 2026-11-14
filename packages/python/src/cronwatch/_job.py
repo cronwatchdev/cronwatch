@@ -4,6 +4,8 @@ metric(), and the recorder that keeps its output and metrics."""
 from __future__ import annotations
 
 import contextvars
+import decimal as _decimal
+import numbers
 import threading
 import time
 from collections import deque
@@ -14,10 +16,33 @@ from . import _js
 from ._output import OUTPUT_CAP, REDACT_EDGE, strip_nul
 from .types import Run
 
-__all__ = ["AbortError", "AbortSignal", "JobContext", "KEEP", "RunRecorder", "current", "stringify"]
+__all__ = ["AbortError", "AbortSignal", "JobContext", "KEEP", "RunRecorder", "current", "metric_number", "stringify"]
 
 #: Lines are dropped from the front once the output is well past the cap; redact_and_cap trims it exactly at the end.
 KEEP = OUTPUT_CAP + REDACT_EDGE + 2
+
+
+def metric_number(value: Any) -> Any:
+    """A metric's value as the number that is stored, or None for one that is
+    not a finite number. An int or a float is kept as it is; any other real
+    number Python has (decimal.Decimal, as a Django DecimalField or its sum
+    is, fractions.Fraction, NumPy's integers and floats) is read as the int
+    it is or the float nearest it, since a store holds JSON numbers. A bool
+    is not a number here, as it is not one in JavaScript."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value if _js.is_finite(value) else None
+    try:
+        if isinstance(value, numbers.Integral):
+            number: Any = int(value)
+        elif isinstance(value, (numbers.Real, _decimal.Decimal)):
+            number = float(value)
+        else:
+            return None
+    except Exception:  # noqa: BLE001, a NaN that will not convert, or a type whose conversion fails, is no number
+        return None
+    return number if _js.is_finite(number) else None
 
 
 class AbortError(Exception):
@@ -171,9 +196,10 @@ class JobContext:
 
     def metric(self, name: str, value: float) -> None:
         """Report a number for this run: tokens, cost, rows, anything. Watched against budgets and baselines."""
-        if not _js.is_finite(value):
+        number = metric_number(value)
+        if number is None:
             raise ValueError(f'metric "{name}" must be a finite number')
-        self._recorder.metric(str(name), value)
+        self._recorder.metric(str(name), number)
 
     def metrics(self, values: Mapping[str, float] | None = None, **more: float) -> None:
         for key, value in {**(values or {}), **more}.items():
