@@ -4,7 +4,7 @@ Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.14.3
+Stable tag: 0.15.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -141,7 +141,7 @@ On a single site, yes. The site sends alerts to the addresses set under CronWatc
 
 == Changelog ==
 
-= Unreleased =
+= 0.15.0 =
 * Tables missing on a site copied or restored without them are made again at the first statement that needs them.
 * The check forgets WP-Cron jobs whose event is gone and that nothing has touched for the whole retention. A job with a schedule, an open condition, or one declared in code is never forgotten.
 * Database errors are read by MySQL's error number, not its English text, and a conditional write WordPress resent after a dropped connection is no longer applied twice.

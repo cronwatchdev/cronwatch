@@ -2,7 +2,7 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
-## Unreleased
+## 0.15.0 - 2026-11-14
 
 ### Fixed
 - A `#[Cronwatch\Watch]` attribute PHP cannot make is reported once and the queue worker runs unwatched, instead of failing every queue.
