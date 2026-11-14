@@ -17,10 +17,16 @@ defmodule Cronwatch.Test.Repo do
   end
 
   @doc "Starts a repo over the SQLite file `path`, under the running test, and answers its pid."
+  #
+  # Its one connection is shared by every process a test starts, so requests
+  # queue for it. DBConnection's default queue target (50ms) drops a queued
+  # request on a slow CI runner; the generous target keeps them waiting.
   def start(path, opts \\ []) do
+    defaults = [name: nil, database: path, pool_size: 1, log: false, queue_target: 5_000, queue_interval: 10_000]
+
     spec = %{
       id: {__MODULE__, path, System.unique_integer()},
-      start: {__MODULE__, :start_link, [Keyword.merge([name: nil, database: path, pool_size: 1, log: false], opts)]}
+      start: {__MODULE__, :start_link, [Keyword.merge(defaults, opts)]}
     }
 
     ExUnit.Callbacks.start_supervised!(spec)

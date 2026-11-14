@@ -415,17 +415,25 @@ defmodule Cronwatch.BridgeTest do
     %{cw: cw} = make(store: Stores.option(hooked), alerts: [])
     Cronwatch.job!("first", schedule: "0 1 * * *", instance: cw)
     test = self()
+    caller = spawn(fn -> receive(do: (:go -> Watch.write(cw, "first"))) end)
 
-    Stores.hook(agent, :get_job, fn _args, _call ->
-      send(test, {:hung, self()})
-      Process.sleep(:infinity)
+    # Only the write this caller asks for hangs. The instance's own syncs
+    # and checks read the store too, and one caught here instead was taken
+    # for the writer.
+    Stores.hook(agent, :get_job, fn _args, call ->
+      if caller in Process.get(:"$callers", []) do
+        send(test, {:hung, self()})
+        Process.sleep(:infinity)
+      else
+        call.()
+      end
     end)
 
-    caller = spawn(fn -> Watch.write(cw, "first") end)
-    assert_receive {:hung, writer}, 1000
+    send(caller, :go)
+    assert_receive {:hung, writer}, 5000
     ref = Process.monitor(writer)
     Process.exit(caller, :kill)
-    assert_receive {:DOWN, ^ref, :process, _, :killed}, 1000
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 5000
   end
 
   # The Go audit: an entry declared while unschedule read the store was taken
