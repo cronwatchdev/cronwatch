@@ -94,6 +94,54 @@ public class KestrelTests
     }
 
     /// <summary>
+    /// Middleware ahead of the dashboard that rewrites the path (<c>UseRewriter</c>, a prefix rewrite
+    /// of the app's own): the request is routed by the rewritten path, so the routes are handed
+    /// that path, not the target as sent, under which they would find no base and answer 404. A
+    /// target that was not rewritten is still read as sent, escapes and all.
+    /// </summary>
+    [Fact]
+    public async Task A_path_rewritten_ahead_of_the_dashboard_is_served_as_the_path_it_was_routed_by()
+    {
+        await using var cw = new CronwatchClient(new CronwatchOptions { ProcessExitHook = false, Alerts = [] });
+        cw.Job("a.b");
+        await cw.SyncJobAsync("a.b");
+        WebApplicationBuilder b = WebApplication.CreateSlimBuilder();
+        b.Logging.ClearProviders();
+        b.Services.AddSingleton(cw);
+        b.WebHost.UseKestrel(k => k.Listen(IPAddress.Loopback, 0));
+        await using WebApplication app = b.Build();
+        app.Use((context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/ops/cron", out Microsoft.AspNetCore.Http.PathString rest))
+            {
+                context.Request.Path = "/cronwatch" + rest;
+            }
+            return next(context);
+        });
+        app.UseRouting();
+        app.MapCronwatch("/cronwatch", new RoutesOptions { Token = "tok" });
+        await app.StartAsync();
+        int port = GoldenTests.PortOf(app);
+
+        RawHttp.Answer rewritten = await RawHttp.SendAsync(port, "GET", "/ops/cron/api/jobs/a%2Eb?runs=1", Bearer, null);
+        Assert.Equal(200, rewritten.Status);
+        Assert.StartsWith("{\"ok\":true,\"job\":{\"name\":\"a.b\"", rewritten.Text, System.StringComparison.Ordinal);
+        // Its links and its cookie are the mount's, which is where the app really serves it.
+        RawHttp.Answer signIn = await RawHttp.SendAsync(port, "GET", "/ops/cron/?token=tok", [], null);
+        Assert.Equal(303, signIn.Status);
+        Assert.Equal("/cronwatch/", signIn.Header("location"));
+        Assert.Contains("; Path=/cronwatch;", signIn.Header("set-cookie"), System.StringComparison.Ordinal);
+
+        // Not rewritten: the target as sent, as before, escapes, dot segments, and all.
+        RawHttp.Answer direct = await RawHttp.SendAsync(port, "GET", "/x/../cronwatch/api/jobs/a%2Eb", Bearer, null);
+        Assert.Equal(200, direct.Status);
+        RawHttp.Answer escaped = await RawHttp.SendAsync(port, "GET", "/cronwatch/api/jobs/%zz", Bearer, null);
+        Assert.Equal(400, escaped.Status);
+        Assert.Equal("{\"ok\":false,\"error\":\"Bad path\"}", escaped.Text);
+        await app.StopAsync();
+    }
+
+    /// <summary>
     /// A mount whose path is percent-encoded on the wire, by a literal of the app's (<c>/ops tools</c>)
     /// or a route group's parameter: the routes find their base in the target as sent, so they
     /// serve under it, and the sign-in cookie's path is the one the browser sends.

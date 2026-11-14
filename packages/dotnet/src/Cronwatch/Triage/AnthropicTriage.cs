@@ -31,8 +31,13 @@ public sealed class AnthropicTriage : ITriage
     /// <summary>How hard the model thinks unless told otherwise.</summary>
     public const string DefaultEffort = "medium";
 
-    /// <summary>The most tokens a diagnosis may use unless told otherwise. A diagnosis is a paragraph.</summary>
-    public const long DefaultMaxTokens = 800;
+    /// <summary>
+    /// The most tokens a diagnosis may use unless told otherwise. A diagnosis is a paragraph, but
+    /// the model thinks first (thinking is on by default on current models) and that thinking
+    /// counts toward this limit, so one sized for the paragraph alone can be used up before any of
+    /// it is written.
+    /// </summary>
+    public const long DefaultMaxTokens = 4096;
 
     /// <summary>The beta that routes a policy refusal to the default fallback model in the same request.</summary>
     public const string FallbackBeta = "server-side-fallback-2026-07-01";
@@ -125,6 +130,13 @@ public sealed class AnthropicTriage : ITriage
                 + " with JSON that could not be read: " + e.Message);
         }
         string text = Diagnosis(message);
+        // The limit ran out before any of the diagnosis was written (on its thinking, say):
+        // thrown, so the client reports it to the error handler rather than the alert going out
+        // with no diagnosis and no word of why.
+        if (text.Length == 0 && message is JsObject answered && answered.Get("stop_reason") is "max_tokens")
+        {
+            throw Post.Fail(MaxTokensReached(_options.MaxTokens));
+        }
         return text.Length == 0 ? null : text;
     }
 
@@ -258,6 +270,10 @@ public sealed class AnthropicTriage : ITriage
         }
         return string.Join('\n', lines);
     }
+
+    /// <summary>The error for an answer that reached its limit before any text, the SDK's word for word.</summary>
+    internal static string MaxTokensReached(long limit) =>
+        "triage: the model reached max_tokens (" + limit.ToString(CultureInfo.InvariantCulture) + ") before writing a diagnosis; raise maxTokens or lower effort";
 
     /// <summary>The text blocks of a Messages API answer, joined and trimmed; <c>""</c> for a refusal.</summary>
     internal static string Diagnosis(object? message)

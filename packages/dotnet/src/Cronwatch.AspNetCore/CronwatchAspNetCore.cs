@@ -264,7 +264,11 @@ public static class CronwatchAspNetCoreExtensions
     internal static CronwatchRequest RequestOf(HttpContext context, string? mount)
     {
         HttpRequest http = context.Request;
+        // The target as sent, so an escape the client wrote stays as written, unless something
+        // ahead rewrote the path (UseRewriter, a prefix rewrite of the app's own): the mount was
+        // read from the path that was routed, so the routes are then handed that path too.
         string raw = context.Features.Get<IHttpRequestFeature>()?.RawTarget is { Length: > 0 } t
+            && !Rewritten(t, (http.PathBase.Value ?? "") + (http.Path.Value ?? ""))
             ? t
             : (http.PathBase + http.Path + http.QueryString).ToString();
         var headers = new List<KeyValuePair<string, string>>();
@@ -286,6 +290,83 @@ public static class CronwatchAspNetCoreExtensions
         };
         Contexts.AddOrUpdate(request, context);
         return request;
+    }
+
+    /// <summary>
+    /// Whether the path that was routed (<paramref name="routed"/>, the path base and the path as
+    /// the server decoded them) is no longer the one the target names: segment for segment, the
+    /// target's escapes decoded and its dot segments resolved as the server does, empty segments
+    /// aside. A target whose path the routes read their own way (a backslash, an escape that is
+    /// not one, bytes that are not UTF-8) is never taken for rewritten: it is handed over as sent.
+    /// </summary>
+    private static bool Rewritten(string rawTarget, string routed)
+    {
+        string path = rawTarget;
+        if (!path.StartsWith('/'))
+        {
+            // The absolute form a proxy is sent; anything else (OPTIONS *) has no path to compare.
+            int scheme = path.IndexOf("://", StringComparison.Ordinal);
+            if (scheme < 0)
+            {
+                return false;
+            }
+            int start = path.AsSpan(scheme + 3).IndexOfAny('/', '?');
+            path = start < 0 ? "/" : path[(scheme + 3 + start)..];
+        }
+        int end = path.AsSpan().IndexOfAny('?', '#');
+        if (end >= 0)
+        {
+            path = path[..end];
+        }
+        if (path.Contains('\\', StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var sent = new List<string>();
+        foreach (string segment in path.Split('/'))
+        {
+            // An escaped percent sign is decoded once by the server and once more by anything
+            // that reads the result again, so such a target is left as sent.
+            if (segment.Contains("%25", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            string decoded = Uri.UnescapeDataString(segment);
+            // What is left of an escape that is not one, or of bytes that are not UTF-8.
+            if (decoded.Contains('%', StringComparison.Ordinal))
+            {
+                return false;
+            }
+            if (decoded.Length == 0 || decoded == ".")
+            {
+                continue;
+            }
+            if (decoded == "..")
+            {
+                if (sent.Count > 0)
+                {
+                    sent.RemoveAt(sent.Count - 1);
+                }
+                continue;
+            }
+            sent.Add(decoded);
+        }
+        int i = 0;
+        foreach (string segment in routed.Split('/'))
+        {
+            if (segment.Length == 0)
+            {
+                continue;
+            }
+            // The server decodes every escape but a slash's, which stays one segment.
+            string seen = segment.Replace("%2F", "/", StringComparison.OrdinalIgnoreCase);
+            if (i >= sent.Count || !string.Equals(sent[i], seen, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            i++;
+        }
+        return i != sent.Count;
     }
 
     /// <summary>

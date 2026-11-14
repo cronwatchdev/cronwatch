@@ -77,10 +77,21 @@ public sealed class CronwatchQuartz : IAsyncDisposable
     /// <summary>The firings open now, by fire instance id, for a listener's error that names only the id.</summary>
     private readonly ConcurrentDictionary<string, Firing> _open = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The opens still going past <see cref="StoreWait"/>, by fire instance id: what Quartz says of
+    /// such a firing next (it was executed, it is refired, a listener stopped it) waits for its
+    /// open, in the background.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, Task> _late = new(StringComparer.Ordinal);
+
+    /// <summary>The opens and closes that went on in the background, for <see cref="RecordedAsync"/>.</summary>
+    private readonly ConcurrentDictionary<Task, byte> _background = new();
+
     private readonly SemaphoreSlim _wake = new(0, 1);
     private readonly CancellationTokenSource _stop = new();
     private readonly Lock _lock = new();
     private IScheduler? _scheduler;
+    private TaskCompletionSource? _attaching;
     private string _instancePart = "";
     private Task? _loop;
     private int _closed;
@@ -118,6 +129,13 @@ public sealed class CronwatchQuartz : IAsyncDisposable
 
     /// <summary>How long a sync the check job starts may take; the tests shorten it.</summary>
     internal TimeSpan SyncTimeout { get; set; } = SchedulerBridge.SyncTimeout;
+
+    /// <summary>
+    /// The longest the job listener holds a firing on the store, to open its run before the job
+    /// and to close it after: a store that does not answer costs each firing this wait at most,
+    /// and the work goes on in the background. Settable for the tests.
+    /// </summary>
+    internal TimeSpan StoreWait { get; set; } = TimeSpan.FromSeconds(5);
 
     private bool Closed => Volatile.Read(ref _closed) != 0;
 
@@ -189,32 +207,66 @@ public sealed class CronwatchQuartz : IAsyncDisposable
     /// </summary>
     internal async Task AttachAsync(IScheduler scheduler, CancellationToken cancellationToken)
     {
+        var mine = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource? first;
         lock (_lock)
         {
-            if (_scheduler != null || Closed)
+            if (Closed)
             {
                 return;
             }
-            _scheduler = scheduler;
+            first = _attaching;
+            _attaching ??= mine;
         }
-        bool clustered = false;
+        if (first != null)
+        {
+            // Attached, or being attached by another caller: a firing that comes meanwhile waits
+            // for the instance part its run id needs, rather than going on without it.
+            await first.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
         try
         {
-            clustered = (await scheduler.GetMetadata(cancellationToken).ConfigureAwait(false)).JobStoreClustered;
+            bool clustered = false;
+            try
+            {
+                clustered = (await scheduler.GetMetadata(cancellationToken).ConfigureAwait(false)).JobStoreClustered;
+            }
+            catch (Exception e)
+            {
+                _cw.ReportError(e, "quartz");
+            }
+            string id = scheduler.SchedulerInstanceId;
+            string part = clustered ? id : id + "." + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
+            // The instance part first, the scheduler after it: whoever sees the scheduler set
+            // reads a run id with its instance in it.
+            _instancePart = part.Length > 100 ? "h" + Sha256(part)[..32] : part;
+            lock (_lock)
+            {
+                if (Closed)
+                {
+                    return;
+                }
+                _scheduler = scheduler;
+            }
+            scheduler.Context[ContextKey] = this;
+            await ReadAsync(cancellationToken).ConfigureAwait(false);
+            lock (_lock)
+            {
+                if (Closed)
+                {
+                    return;
+                }
+                // Started without the caller's flow, so no scheduler callback's context lives on in it.
+                using (ExecutionContext.SuppressFlow())
+                {
+                    _loop = Task.Run(ReadLoopAsync, CancellationToken.None);
+                }
+            }
         }
-        catch (Exception e)
+        finally
         {
-            _cw.ReportError(e, "quartz");
-        }
-        string id = scheduler.SchedulerInstanceId;
-        string part = clustered ? id : id + "." + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
-        _instancePart = part.Length > 100 ? "h" + Sha256(part)[..32] : part;
-        scheduler.Context[ContextKey] = this;
-        await ReadAsync(cancellationToken).ConfigureAwait(false);
-        // Started without the caller's flow, so no scheduler callback's context lives on in it.
-        using (ExecutionContext.SuppressFlow())
-        {
-            _loop = Task.Run(ReadLoopAsync, CancellationToken.None);
+            mine.TrySetResult();
         }
     }
 
@@ -272,9 +324,11 @@ public sealed class CronwatchQuartz : IAsyncDisposable
         }
         await _stop.CancelAsync().ConfigureAwait(false);
         IScheduler? scheduler;
+        Task? reading;
         lock (_lock)
         {
             scheduler = _scheduler;
+            reading = _loop;
         }
         if (scheduler != null)
         {
@@ -298,7 +352,7 @@ public sealed class CronwatchQuartz : IAsyncDisposable
             }
             LetGo();
         }
-        if (_loop is { } loop)
+        if (reading is { } loop)
         {
             try
             {
@@ -615,14 +669,46 @@ public sealed class CronwatchQuartz : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens the firing's run. Counted while it opens, so a stop meanwhile keeps the job listener
-    /// until the run is in the open table and Quartz has said the job was executed.
+    /// Opens the firing's run, holding the job for it at most <see cref="StoreWait"/>: past the
+    /// wait, which is reported, the job runs and the open goes on in the background, where what
+    /// Quartz says of the firing next waits for it.
     /// </summary>
     private async Task ToBeExecutedAsync(IJobExecutionContext ctx)
+    {
+        Task opening = CountedOpenAsync(ctx);
+        if (await WithinAsync(opening).ConfigureAwait(false))
+        {
+            return;
+        }
+        string fire = ctx.FireInstanceId;
+        _late[fire] = opening;
+        _cw.ReportError(
+            new TimeoutException(
+                "cronwatch: the store did not answer within " + ((long)StoreWait.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)
+                + "ms while opening a run of " + NameOf(ctx.JobDetail.Key) + ", so the job went on and its run is opened in the background"),
+            "quartz");
+        Background(opening.ContinueWith(
+            t => _late.TryRemove(new KeyValuePair<string, Task>(fire, t)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default));
+        Background(opening);
+    }
+
+    /// <summary>
+    /// The open itself. Counted while it opens, so a stop meanwhile keeps the job listener
+    /// until the run is in the open table and Quartz has said the job was executed.
+    /// </summary>
+    private async Task CountedOpenAsync(IJobExecutionContext ctx)
     {
         Interlocked.Increment(ref _opening);
         try
         {
+            // A refire of a firing whose open is still going: after it, so the two keep their order.
+            if (_late.TryGetValue(ctx.FireInstanceId, out Task? earlier))
+            {
+                await Settled(earlier).ConfigureAwait(false);
+            }
             await OpenFiringAsync(ctx).ConfigureAwait(false);
         }
         finally
@@ -631,6 +717,57 @@ public sealed class CronwatchQuartz : IAsyncDisposable
             LetGo();
         }
     }
+
+    /// <summary>
+    /// Waits for <paramref name="work"/> at most <see cref="StoreWait"/>, throwing what it threw, and
+    /// says whether it ended in time. The clock is the system's, as the store's own is.
+    /// </summary>
+    private async Task<bool> WithinAsync(Task work)
+    {
+        try
+        {
+            await work.WaitAsync(StoreWait).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException) when (!work.IsCompleted)
+        {
+            return false;
+        }
+    }
+
+    /// <summary><paramref name="work"/> ended, whatever it threw: its own failure is reported where it is kept.</summary>
+    private static async Task Settled(Task work)
+    {
+        try
+        {
+            await work.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Reported by Background, which holds it.
+        }
+    }
+
+    /// <summary>Keeps work that went on past the wait, and reports what it throws.</summary>
+    private void Background(Task work)
+    {
+        _background.TryAdd(work, 0);
+        _ = work.ContinueWith(
+            t =>
+            {
+                _background.TryRemove(t, out _);
+                if (t.Exception is { } failed)
+                {
+                    _cw.ReportError(failed.GetBaseException(), "quartz");
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>Waits for the opens and closes that went on in the background, for tests and a clean exit.</summary>
+    internal Task RecordedAsync() => Task.WhenAll(_background.Keys);
 
     private async Task OpenFiringAsync(IJobExecutionContext ctx)
     {
@@ -679,7 +816,29 @@ public sealed class CronwatchQuartz : IAsyncDisposable
         Firings.AddOrUpdate(ctx, firing);
     }
 
+    /// <summary>
+    /// Closes the firing's run, holding Quartz for it at most <see cref="StoreWait"/>. A close
+    /// records the run and then sends the alerts it raised, triage and all, so one past the wait
+    /// is ordinary and goes on in the background unreported; what it throws there is reported.
+    /// </summary>
     private async Task WasExecutedAsync(IJobExecutionContext ctx, JobExecutionException? e)
+    {
+        Task closing = _late.TryGetValue(ctx.FireInstanceId, out Task? late) && !late.IsCompleted
+            ? AfterAsync(late, () => CloseFiringAsync(ctx, e))
+            : CloseFiringAsync(ctx, e);
+        if (!await WithinAsync(closing).ConfigureAwait(false))
+        {
+            Background(closing);
+        }
+    }
+
+    private static async Task AfterAsync(Task earlier, Func<Task> next)
+    {
+        await Settled(earlier).ConfigureAwait(false);
+        await next().ConfigureAwait(false);
+    }
+
+    private async Task CloseFiringAsync(IJobExecutionContext ctx, JobExecutionException? e)
     {
         if (!_open.TryRemove(ctx.FireInstanceId, out Firing? firing))
         {
@@ -701,13 +860,28 @@ public sealed class CronwatchQuartz : IAsyncDisposable
     {
         if (error.Exception is not JobExecutionProcessException
             || !error.Message.StartsWith("Unable to notify JobListener(s) of Job to be executed", StringComparison.Ordinal)
-            || error.FireInstanceId is not { } fire
-            || !_open.TryRemove(fire, out Firing? firing))
+            || error.FireInstanceId is not { } fire)
+        {
+            return;
+        }
+        Exception thrown = error.Exception;
+        Task giving = _late.TryGetValue(fire, out Task? late) && !late.IsCompleted
+            ? AfterAsync(late, () => GiveBackAsync(fire, thrown))
+            : GiveBackAsync(fire, thrown);
+        if (!await WithinAsync(giving).ConfigureAwait(false))
+        {
+            Background(giving);
+        }
+    }
+
+    private async Task GiveBackAsync(string fire, Exception thrown)
+    {
+        if (!_open.TryRemove(fire, out Firing? firing))
         {
             return;
         }
         LetGo();
-        await firing.Run.TakeBackAsync(error.Exception).ConfigureAwait(false);
+        await firing.Run.TakeBackAsync(thrown).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -737,9 +911,8 @@ public sealed class CronwatchQuartz : IAsyncDisposable
     }
 
     /// <summary>
-    /// A recovering firing finishes the earlier firing's run, if it is still running, as failed: a
-    /// run of this job and app from another scheduler instance, started within a minute of the
-    /// original firing.
+    /// A recovering firing finishes the earlier firing's run, if it is still running, as failed:
+    /// the run <see cref="RecoveredRun"/> picks.
     /// </summary>
     private async Task RecoverAsync(string name, IJobExecutionContext ctx)
     {
@@ -747,25 +920,48 @@ public sealed class CronwatchQuartz : IAsyncDisposable
         {
             return;
         }
-        string mine = Prefix + _instancePart + ":";
         try
         {
-            foreach (Run run in await _cw.RunsAsync(name, 50).ConfigureAwait(false))
+            if (RecoveredRun(await _cw.RunsAsync(name, 50).ConfigureAwait(false), Prefix, Prefix + _instancePart + ":", firedAt) is { } run)
             {
-                if (run.Status == RunStatus.Running
-                    && run.Id.StartsWith(Prefix, StringComparison.Ordinal)
-                    && !run.Id.StartsWith(mine, StringComparison.Ordinal)
-                    && Math.Abs(run.StartedAt - firedAt) <= RecoverySlackMs)
-                {
-                    RunHandle handle = await _cw.ResumeRunAsync(name, run.Id).ConfigureAwait(false);
-                    await handle.FailAsync(Recovered).ConfigureAwait(false);
-                }
+                RunHandle handle = await _cw.ResumeRunAsync(name, run.Id).ConfigureAwait(false);
+                await handle.FailAsync(Recovered).ConfigureAwait(false);
             }
         }
         catch (Exception e)
         {
             _cw.ReportError(e, "recovering " + name);
         }
+    }
+
+    /// <summary>
+    /// The run a recovering firing finishes: of this app's runs of the job from another scheduler
+    /// instance (ids under <paramref name="prefix"/> and not under <paramref name="mine"/>) that
+    /// started within a minute of the original firing, the one that started nearest it, and only
+    /// while it is still running. Quartz names the firing by its time alone, so the nearest start
+    /// is the stopped node's run: a run another live node started for a later firing (a job every
+    /// thirty seconds, say) is further from it and is left alone, and when the nearest has
+    /// finished there is nothing to recover. Null when there is none.
+    /// </summary>
+    internal static Run? RecoveredRun(IReadOnlyList<Run> runs, string prefix, string mine, long firedAt)
+    {
+        ArgumentNullException.ThrowIfNull(runs);
+        Run? nearest = null;
+        long least = long.MaxValue;
+        foreach (Run run in runs)
+        {
+            if (!run.Id.StartsWith(prefix, StringComparison.Ordinal) || run.Id.StartsWith(mine, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            long away = Math.Abs(run.StartedAt - firedAt);
+            if (away <= RecoverySlackMs && away < least)
+            {
+                nearest = run;
+                least = away;
+            }
+        }
+        return nearest is { } found && found.Status == RunStatus.Running ? found : null;
     }
 
     /// <summary>The original fire time Quartz keeps for a recovering firing: epoch milliseconds as text, or a date.</summary>

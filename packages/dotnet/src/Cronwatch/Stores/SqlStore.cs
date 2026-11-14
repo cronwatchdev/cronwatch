@@ -573,6 +573,14 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
         Text(NulText.StripNulOrNull(r.Output)), JsonParam(NulText.StripJsonNul(r.Metrics.ToJson())), Text(r.Id),
     ];
 
+    /// <summary>
+    /// Whether no row of this store can be under <paramref name="id"/>: on Postgres a job's name or
+    /// a run's id holding U+0000, which TEXT refuses, so no row has one and a statement binding it
+    /// would fail rather than find nothing. A read of one answers none, as SQLite, MySQL, and the
+    /// memory store answer (a dashboard URL of <c>%00</c> is then a 404 there too, not a 500).
+    /// </summary>
+    private bool Unstorable(string id) => _dialect == SqlDialect.Postgres && id.Contains('\0', StringComparison.Ordinal);
+
     // ---- the store
 
     /// <summary>
@@ -609,6 +617,10 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
     /// <inheritdoc/>
     public async Task<StoredJob?> GetJobAsync(string name, CancellationToken cancellationToken = default)
     {
+        if (Unstorable(name))
+        {
+            return null;
+        }
         var rows = await QueryAsync(_sql.GetJob, [Text(name)], cancellationToken).ConfigureAwait(false);
         return rows.Count == 0 ? null : JobOf(rows[0]);
     }
@@ -626,7 +638,9 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
 
     /// <summary>Removes the job, its runs, and its state in one transaction.</summary>
     public Task DeleteJobAsync(string name, CancellationToken cancellationToken = default) =>
-        TransactionAsync([_sql.DeleteRuns, _sql.DeleteState, _sql.DeleteJob], [Text(name)], null, cancellationToken);
+        Unstorable(name)
+            ? Task.CompletedTask
+            : TransactionAsync([_sql.DeleteRuns, _sql.DeleteState, _sql.DeleteJob], [Text(name)], null, cancellationToken);
 
     /// <inheritdoc/>
     public Task InsertRunAsync(Run run, CancellationToken cancellationToken = default)
@@ -739,18 +753,22 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
 
     /// <summary>Deletes a run only while it is of <paramref name="job"/> and in <paramref name="status"/>, in one statement.</summary>
     public async Task<bool> DeleteRunIfAsync(string id, string job, RunStatus status, CancellationToken cancellationToken = default) =>
-        await RunAsync(_sql.DeleteRunIf, [Text(id), Text(job), Text(status.Value)], cancellationToken).ConfigureAwait(false) > 0;
+        !Unstorable(id) && !Unstorable(job) && await RunAsync(_sql.DeleteRunIf, [Text(id), Text(job), Text(status.Value)], cancellationToken).ConfigureAwait(false) > 0;
 
     /// <inheritdoc/>
     public async Task<Run?> GetRunAsync(string id, CancellationToken cancellationToken = default)
     {
+        if (Unstorable(id))
+        {
+            return null;
+        }
         var output = await RunsAsync(_sql.GetRun, [Text(id)], cancellationToken).ConfigureAwait(false);
         return output.Count == 0 ? null : output[0];
     }
 
     /// <inheritdoc/>
     public Task<IReadOnlyList<Run>> ListRunsAsync(string job, int limit, CancellationToken cancellationToken = default) =>
-        RunsAsync(_sql.ListRuns, [Text(job), Int(limit)], cancellationToken);
+        Unstorable(job) ? Task.FromResult<IReadOnlyList<Run>>([]) : RunsAsync(_sql.ListRuns, [Text(job), Int(limit)], cancellationToken);
 
     /// <inheritdoc/>
     public async Task<Run?> LastRunAsync(string job, CancellationToken cancellationToken = default)
@@ -770,6 +788,10 @@ public sealed class SqlStore : IStore, IUpdateRunIfStore, ICompareAndSetStateSto
     /// </summary>
     public async Task<JobState?> GetStateAsync(string job, CancellationToken cancellationToken = default)
     {
+        if (Unstorable(job))
+        {
+            return null;
+        }
         var rows = await QueryAsync(_sql.GetState, [Text(job)], cancellationToken).ConfigureAwait(false);
         return rows.Count == 0 || JsonOf(rows[0], "state") is not JsObject state ? null : JobState.FromValue(state);
     }

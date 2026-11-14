@@ -120,7 +120,7 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
                     : run => run.CloseAsync(thrown);
             if (found is ObservedRun opened)
             {
-                Waited(close(opened), "closing run " + opened.Id);
+                Waited(close(opened), "closing run " + opened.Id, closing: true);
                 return;
             }
             // Opened too late to wait for: closed as it ended, once it is open.
@@ -154,9 +154,11 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
     /// <summary>
     /// Waits for <paramref name="work"/> at most <see cref="CronwatchHangfire.StoreWait"/>, throwing
     /// what it threw. Past the wait it goes on in the background, which is reported, and false is
-    /// answered; a failure it meets later is reported then.
+    /// answered; a failure it meets later is reported then. Closing a run
+    /// (<paramref name="closing"/>) records it and then sends the alerts it raised, triage and
+    /// all, so a close past the wait is reported as that, not as a store that did not answer.
     /// </summary>
-    private bool Waited(Task work, string what)
+    private bool Waited(Task work, string what, bool closing = false)
     {
         TimeSpan wait = _integration.StoreWait;
         try
@@ -166,10 +168,13 @@ public sealed class CronwatchHangfireFilter : JobFilterAttribute, IServerFilter,
         }
         catch (TimeoutException) when (!work.IsCompleted)
         {
+            string ms = ((long)wait.TotalMilliseconds).ToString(CultureInfo.InvariantCulture);
             _integration.Client.ReportError(
-                new TimeoutException(
-                    "cronwatch: the store did not answer within " + ((long)wait.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)
-                    + "ms while " + what + ", so the worker went on and it finishes in the background"),
+                new TimeoutException(closing
+                    ? "cronwatch: " + what + " (recording it and sending its alerts) took longer than " + ms
+                        + "ms, so the worker went on and it finishes in the background"
+                    : "cronwatch: the store did not answer within " + ms + "ms while " + what
+                        + ", so the worker went on and it finishes in the background"),
                 "hangfire");
             _integration.Track(work.ContinueWith(
                 t =>

@@ -87,8 +87,20 @@ public class TriageConformanceTests
         }
         foreach (JsObject c in Fixtures.Objects(f, "responses"))
         {
-            string got = AnthropicTriage.Diagnosis(c.Get("response"));
-            failures.Same(Json.Stringify(c.Get("response")), got.Length == 0 ? null : got, c.Get("result"));
+            // Through the client, as an answer arrives: a case with an error is thrown, never a result.
+            string answer = Json.Stringify(c.Get("response"));
+            var triage = new AnthropicTriage(Options(new JsObject(), "test-key", "https://api.anthropic.com", new Recorder(200, answer)), NoEnvironment);
+            Task<string?> asked = triage.TriageAsync(byName.Values.First(), TestContext.Current.CancellationToken);
+            if (c.Has("error"))
+            {
+                Assert.False(c.Has("result"), answer + ": an error and a result");
+                var thrown = await Assert.ThrowsAsync<CronwatchException>(() => asked);
+                failures.Same(answer + ": error", thrown.Message, c.Get("error"));
+            }
+            else
+            {
+                failures.Same(answer, await asked, c.Get("result"));
+            }
             count++;
         }
         string[] kept = ["accept", "anthropic-beta", "anthropic-version", "content-type", "x-api-key"];

@@ -26,13 +26,25 @@ internal sealed class Capture : IChannel
     public List<string> Types() => Alerts.Select(a => a.Type.Value).ToList();
 }
 
+/// <summary>A channel that takes no alert until it is released.</summary>
+internal sealed class Slow : IChannel
+{
+    private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public string Name => "slow";
+
+    public void Release() => _gate.TrySetResult();
+
+    public Task SendAsync(Alert alert, ChannelContext context, CancellationToken cancellationToken) => _gate.Task;
+}
+
 /// <summary>
 /// A real Hangfire server on in-memory storage, a client on a memory store, and the integration
 /// watching them, with what the client reported.
 /// </summary>
 internal sealed class Harness : IAsyncDisposable
 {
-    public Harness(string app = "billing", IStore? store = null, int workers = 2, bool start = true, CronwatchHangfireOptions? options = null)
+    public Harness(string app = "billing", IStore? store = null, int workers = 2, bool start = true, CronwatchHangfireOptions? options = null, IChannel? also = null)
     {
         Storage = new InMemoryStorage();
         JobStorage.Current = Storage;
@@ -40,7 +52,7 @@ internal sealed class Harness : IAsyncDisposable
         Cw = new CronwatchClient(new CronwatchOptions
         {
             Store = Store,
-            Alerts = [Alerts],
+            Alerts = also == null ? [Alerts] : [Alerts, also],
             ProcessExitHook = false,
             OnError = (e, where) => Errors.Enqueue(where + ": " + e.Message),
             OnWarning = _ => { },

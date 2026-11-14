@@ -264,14 +264,18 @@ public sealed partial class CronwatchClient : IAsyncDisposable, IDisposable
     /// <exception cref="CronwatchException">When the job is not declared, or the store fails.</exception>
     public Task<bool> SyncJobAsync(string name, CancellationToken cancellationToken = default)
     {
-        JobDef declared = Declared(name) ?? throw CronwatchException.Invalid("job " + JsonText.Quote(name) + " is not declared in this process");
+        _ = Declared(name) ?? throw CronwatchException.Invalid("job " + JsonText.Quote(name) + " is not declared in this process");
         return Spawn(async () =>
         {
             await EnsureReadyAsync().ConfigureAwait(false);
             return await InTurnAsync(name, async () =>
             {
-                // The declaration as it stands once its turn comes: one made since is the one written.
-                JobDef def = Declared(name) ?? declared;
+                // The declaration as it stands once its turn comes: one made since is the one
+                // written, and one forgotten since is left forgotten, as a check leaves it.
+                if (Declared(name) is not { } def)
+                {
+                    return false;
+                }
                 StoredJob? stored = await CallAsync(() => _store.GetJobAsync(name)).ConfigureAwait(false);
                 bool write = stored == null || !SameJson(stored.Definition.ToObject(), def.Stored.ToObject());
                 if (write)

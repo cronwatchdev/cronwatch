@@ -52,7 +52,7 @@ cw.StartChecking(TimeSpan.FromMinutes(1)); // a check every minute, for a long-r
 await cw.SilenceAsync("nightly-report", "2h");
 ```
 
-Any exception is a failed run, and is thrown again as it came, its type and stack intact, once the run is recorded. The function's token is cancelled at the job's timeout and when the token given to `RunAsync` is; a function that ignores it runs on and is marked stuck by a check, as in the SDK. The store failing never stops a job: store errors go to `OnError`, and the job's own outcome is returned.
+Any exception is a failed run, and is thrown again as it came, its type and stack intact, once the run is recorded. The function's token is cancelled at the job's timeout and when the token given to `RunAsync` is; a function that ignores it runs on and is marked stuck by a check, as in the SDK. The store failing never stops a job: store errors go to `OnError`, and the job's own outcome is returned. A store that hangs does not hold one back either: after five seconds without the run's start recorded, the job runs unrecorded, `OnError` is told (`recording <job>`), and the run is still written and judged once the store answers.
 
 Durations are the SDK's text (`"15m"`, `"1h30m"`), a `TimeSpan`, or milliseconds. The definition keeps its fields in the order they were set, as the SDK's object literal does. `Expect` takes text to contain, `Expect.Matches(source, flags)` for a JavaScript pattern, or `Expect.That(output => ...)`.
 
@@ -106,7 +106,7 @@ await using var cw = new CronwatchClient(new CronwatchOptions
 });
 ```
 
-A bad option is refused when the channel is made, and no refusal or error quotes a key, token, or webhook URL; an options class's `ToString` says only what is set. Every request goes through one hardened POST: a redirect is an answer and never followed, no proxy is used, TLS is always verified, the whole request has ten seconds, at most 1 MiB of an answer (64 KiB of an error's) is read, and an error names only the URL's origin. An app that wants its own `HttpClient` (a proxy, a trust store, `IHttpClientFactory`) implements `ITransport` and gives it to the client (`CronwatchOptions.Transport`) or to one channel's options.
+A bad option is refused when the channel is made, and no refusal or error quotes a key, token, or webhook URL; an options class's `ToString` says only what is set. Every request goes through one hardened POST: a redirect is an answer and never followed, no proxy is used, TLS is always verified, the whole request has ten seconds, at most 1 MiB of an answer (64 KiB of an error's) is read, and an error names only the URL's origin. An app that wants its own `HttpClient` (a proxy, a trust store, `IHttpClientFactory`) implements `ITransport` and gives it to the client (`CronwatchOptions.Transport`) or to one channel's options. Triage allows 4096 tokens by default (`MaxTokens`), which the model's thinking shares; an answer that uses them up before writing anything is reported to `OnError`, and the alert goes out without a diagnosis.
 
 ### A plain crontab
 

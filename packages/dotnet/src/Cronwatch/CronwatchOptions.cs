@@ -206,6 +206,13 @@ internal sealed class Timings
 
     public TimeSpan RetryBudget { get; set; } = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// How long a run waits for the store to record its start (the job's declaration and the
+    /// run's row) before running the job without it. A store that fails does so sooner; this is
+    /// for one that hangs.
+    /// </summary>
+    public TimeSpan StartDeadline { get; set; } = TimeSpan.FromSeconds(5);
+
     public TimeSpan CloseWait { get; set; } = TimeSpan.FromSeconds(5);
 
     public TimeSpan Shutdown { get; set; } = TimeSpan.FromSeconds(5);

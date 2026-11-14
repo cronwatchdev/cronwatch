@@ -224,13 +224,18 @@ internal static class Post
         }
         catch (Exception e)
         {
-            // An answer that arrives after it was given up on is let go of.
+            // An answer that arrives after it was given up on is let go of, and a failure that
+            // arrives then is observed, so it never reaches the app's UnobservedTaskException.
             _ = sent.ContinueWith(
                 static t =>
                 {
                     if (t.Status == TaskStatus.RanToCompletion)
                     {
                         t.Result?.Dispose();
+                    }
+                    else
+                    {
+                        _ = t.Exception;
                     }
                 },
                 CancellationToken.None,

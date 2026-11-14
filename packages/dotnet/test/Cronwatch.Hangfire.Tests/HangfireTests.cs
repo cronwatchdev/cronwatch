@@ -305,6 +305,29 @@ public class HangfireTests
     }
 
     [Fact]
+    public async Task A_close_held_up_by_a_slow_channel_is_not_reported_as_a_store_that_did_not_answer()
+    {
+        TestJobs.Seen.Clear();
+        var slow = new Slow();
+        await using var h = new Harness(workers: 1, start: false, also: slow);
+        h.Integration.StoreWait = TimeSpan.FromMilliseconds(200);
+        h.StartServer();
+        string id = h.Client.Enqueue(() => TestJobs.Fails());
+        h.Client.Enqueue(() => TestJobs.Look("after"));
+        // The one worker went on past the alert still being sent to the next job.
+        await Eventually("the next job", () => Task.FromResult(TestJobs.Seen.ContainsKey("after")));
+        // The run was recorded at once: only its alert is still on its way.
+        Assert.Equal(RunStatus.Failed, Assert.Single(await h.RunsAsync("fails")).Status);
+        Assert.Equal(
+            "hangfire: cronwatch: closing run hangfire:billing:" + id + ":0 (recording it and sending its alerts) took longer than 200ms, so the worker went on and it finishes in the background",
+            Assert.Single(h.Errors));
+        slow.Release();
+        await h.Integration.RecordedAsync();
+        Assert.Single(h.Errors);
+        Assert.Equal(["failed"], h.Alerts.Types());
+    }
+
+    [Fact]
     public async Task Watching_again_does_not_wait_for_the_earlier_integrations_reading()
     {
         await using var h = new Harness(start: false);

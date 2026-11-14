@@ -424,12 +424,27 @@ public class OutboxTests
         Assert.Equal(RunStatus.Running, (await store.Inner.GetRunAsync(run.Id))!.Status);
         m.Clock.Advance(TimeSpan.FromMilliseconds(Evaluate.SendLeaseMs + Min));
         await m.Cw.CheckAsync();
+        // The placeholder holds the run's own error, so it is closed as the failure it was, with its own times.
         Run closed = (await store.Inner.GetRunAsync(run.Id))!;
-        Assert.Equal(RunStatus.Timeout, closed.Status);
+        Assert.Equal(RunStatus.Failed, closed.Status);
         Assert.Equal(Min, closed.DurationMs);
-        Assert.Equal("Imported, but its finish was never written; marked as timed out\nboom", closed.Error);
-        Assert.Equal(["stuck"], m.Alerts.Types());
-        Assert.NotEqual(JobHealth.Healthy, (await m.Cw.JobSummaryAsync("imported"))!.Health);
+        Assert.Equal(run.FinishedAt, closed.FinishedAt);
+        Assert.Equal("boom", closed.Error);
+        Assert.Equal(["failed"], m.Alerts.Types());
+        Assert.Equal(JobHealth.Failing, (await m.Cw.JobSummaryAsync("imported"))!.Health);
+        // The importer comes back and records the same run again: nothing changes, and nothing is counted twice.
+        Assert.Empty(await m.Cw.RecordRunAsync(run));
+        await m.Cw.CheckAsync();
+        Assert.Equal(["failed"], m.Alerts.Types());
+        JobState state = (await store.Inner.GetStateAsync("imported"))!;
+        Assert.Equal(1, state.ConsecutiveFailures);
+        Assert.Equal(["failed"], state.Open.Keys.Select(k => k.Value));
+        Assert.True(state.PendingRuns is not { Count: > 0 });
+        // The next imported success recovers it.
+        m.Clock.Advance(TimeSpan.FromMilliseconds(Min));
+        long later = m.Clock.Ms();
+        await m.Cw.RecordRunAsync(run with { Id = "next-import", Status = RunStatus.Ok, StartedAt = later - 1000, FinishedAt = later, DurationMs = 1000, Error = null });
+        Assert.Equal(["failed", "recovered"], m.Alerts.Types());
     }
 
     [Fact]

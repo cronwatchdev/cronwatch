@@ -23,7 +23,7 @@ public sealed class AnthropicTriageOptions
     /// <summary>How hard the model thinks: <c>low</c>, <c>medium</c>, or <c>high</c>. Default <c>medium</c>; a stack trace rarely needs more.</summary>
     public string Effort { get; init; } = AnthropicTriage.DefaultEffort;
 
-    /// <summary>The most tokens a diagnosis may use. Default 800; any other value (0 included) is sent as given.</summary>
+    /// <summary>The most tokens a diagnosis may use. Default 4096 (room for the model's thinking as well as the paragraph it writes after it); any other value (0 included) is sent as given.</summary>
     public long MaxTokens { get; init; } = AnthropicTriage.DefaultMaxTokens;
 
     /// <summary>

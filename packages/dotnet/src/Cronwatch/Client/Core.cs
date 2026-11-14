@@ -320,12 +320,18 @@ public sealed partial class CronwatchClient
     /// <summary>
     /// Writes the declaration of <paramref name="def"/>'s name as it stands, unless the store has
     /// it: a handle kept from an earlier declaration writes the one that replaced it, never its
-    /// own over it, and one forgotten since writes its own. With <paramref name="confirm"/>, as a
+    /// own over it, and one forgotten since declares the job again as it was last declared here.
+    /// With <paramref name="confirm"/>, as a
     /// run starts, a name already written is read back: another process may have forgotten the
     /// job since, and a job still declared here comes back on its next run.
+    /// <paramref name="running"/> says the write is for a run (by default, whenever
+    /// <paramref name="confirm"/> is): a name forgotten here is then declared again, where a check
+    /// or a dashboard read, whose loop may have picked the name up just before the forget, leaves
+    /// it forgotten.
     /// </summary>
-    internal async Task SyncAsync(JobDef def, bool confirm = false)
+    internal async Task SyncAsync(JobDef def, bool confirm = false, bool? running = null)
     {
+        bool forRun = running ?? confirm;
         await EnsureReadyAsync().ConfigureAwait(false);
         bool written;
         lock (_declaredLock)
@@ -345,15 +351,23 @@ public sealed partial class CronwatchClient
         }
         await InTurnAsync(def.Name, async () =>
         {
-            JobDef standing;
             lock (_declaredLock)
             {
                 if (_synced.Contains(def.Name))
                 {
                     return false;
                 }
-                standing = _definitions.TryGetValue(def.Name, out var current) ? current : def;
             }
+            // Forgotten here since this write was asked for. A check or a dashboard read that was
+            // on its way to write it leaves it forgotten: only a run brings a forgotten job back.
+            if (!forRun && Declared(def.Name) == null)
+            {
+                return false;
+            }
+            // A handle kept from before a forget here: its run declares the job again, as it was
+            // last declared here (as RunAsync by name does), so the name is marked as written once
+            // more and the checks keep it declared.
+            JobDef standing = DeclaredOrForgotten(def.Name) ?? def;
             await CallAsync(() => _store.UpsertJobAsync(standing.Stored, Now())).ConfigureAwait(false);
             MarkSynced(standing);
             return true;

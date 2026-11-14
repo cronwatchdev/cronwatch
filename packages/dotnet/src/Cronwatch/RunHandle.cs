@@ -35,6 +35,15 @@ public sealed class RunHandle
     // What earlier flushes wrote, kept (up to the cap) for the expect check.
     private string? _head;
 
+    /// <summary>
+    /// The lines this handle last flushed, as logged (<c>Raw</c>) and as they stand at the end of
+    /// the stored output (<c>Redacted</c>), or null before the first flush. The next lines are
+    /// redacted together with them, so a secret that began in one flush and ends in the next (a
+    /// private key logged a line at a time, a label and then its value) is blanked whole, where
+    /// redacting each flush alone would store its second half. Read and written only in a turn.
+    /// </summary>
+    private (string Raw, string Redacted)? _flushed;
+
     internal RunHandle(CronwatchClient client, JobDef def, string id, Run? baseRun, bool recorded, string? inactive)
     {
         _client = client;
@@ -100,10 +109,38 @@ public sealed class RunHandle
         return before + "\n" + after;
     }
 
-    private static string? JoinOutput(string? before, string? after)
+    /// <summary>
+    /// <paramref name="lines"/> added to the stored output, redacted (the SDK's
+    /// <c>appendRedacted</c>). While the output still ends with what this handle flushed last,
+    /// that tail is redacted again with the new lines after it and replaced; otherwise (the first
+    /// flush, or another process has written since) the lines are redacted alone and appended.
+    /// <c>Tail</c> is what to remember once the write lands: at most the cap of the raw text, from
+    /// the start of a line, and only while its redaction is still the end of what was written.
+    /// </summary>
+    private (string? Output, (string Raw, string Redacted)? Tail) AppendRedacted(string? stored, string lines)
     {
-        string? joined = JoinLines(before, after);
-        return joined == null ? null : OutputText.Cap(joined);
+        string added = NulText.StripNul(lines);
+        string raw = added;
+        string? before = null;
+        if (_flushed is { } last && stored != null && stored.EndsWith(last.Redacted, StringComparison.Ordinal))
+        {
+            raw = last.Raw + "\n" + added;
+            before = stored[..^last.Redacted.Length];
+        }
+        string redacted = OutputText.RedactAndCap(raw, _client.Redact);
+        string? output = before != null ? before + redacted : JoinLines(stored, redacted);
+        if (raw.Length <= OutputText.OutputCap)
+        {
+            return (output, (raw, redacted));
+        }
+        int cut = raw.IndexOf('\n', raw.Length - OutputText.OutputCap);
+        if (cut == -1)
+        {
+            return (output, null);
+        }
+        raw = raw[(cut + 1)..];
+        string kept = OutputText.RedactAndCap(raw, _client.Redact);
+        return (output, redacted.EndsWith(kept, StringComparison.Ordinal) ? (raw, kept) : null);
     }
 
     /// <summary>
@@ -161,7 +198,8 @@ public sealed class RunHandle
                 _client.Report("run " + Id + " of " + name + " belongs to job " + JsonText.Quote(stored.Job) + "; ignored", "flushing " + name);
                 return;
             }
-            string? output = lines == null ? stored.Output : JoinOutput(stored.Output, OutputText.RedactAndCap(lines, _client.Redact));
+            (string? Output, (string Raw, string Redacted)? Tail)? joined = lines == null ? null : AppendRedacted(stored.Output, lines);
+            string? output = joined is not { } appended ? stored.Output : appended.Output == null ? null : OutputText.Cap(appended.Output);
             Run next = stored with { Output = output, Metrics = stored.Metrics.Merged(metrics) };
             bool wrote;
             try
@@ -178,6 +216,11 @@ public sealed class RunHandle
             {
                 PutBack(taken);
                 return;
+            }
+            // Remembered only while the stored output still ends with it (the cap did not cut into it).
+            if (joined is { } landed)
+            {
+                _flushed = landed.Tail is { } tail && output != null && output.EndsWith(tail.Redacted, StringComparison.Ordinal) ? tail : null;
             }
             string? text = taken.ExpectText();
             if (text != null)
@@ -329,7 +372,7 @@ public sealed class RunHandle
                 DurationMs = Evaluate.RunDuration(prior.StartedAt, finishedAt),
                 Error = null,
                 // Capped by Conclude, after it is redacted.
-                Output = JoinLines(prior.Output, added),
+                Output = added == null ? prior.Output : AppendRedacted(prior.Output, added).Output,
                 Metrics = prior.Metrics.Merged(rec.Metrics()),
             };
             string? expected = rec.ExpectText() ?? resultText;

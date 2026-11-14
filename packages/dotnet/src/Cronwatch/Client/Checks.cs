@@ -204,14 +204,24 @@ public sealed partial class CronwatchClient
         {
             return [];
         }
-        // A stranded import's own status was never written; a late finish of it is judged as one
-        // after a timeout, so a success still recovers.
-        Run marked = stranded
+        Run marked = stranded && run.Error != null
+            // The placeholder of a finished import keeps the run's own error, and only a run that
+            // failed has one: it is closed as the failure it was, with its own times, and alerts
+            // as failed. A later import of the same run finds it finished and changes nothing.
+            ? run with
+            {
+                Status = RunStatus.Failed,
+                FinishedAt = run.DurationMs is long took ? Evaluate.SaturatingAdd(run.StartedAt, took) : run.FinishedAt,
+                DurationMs = run.DurationMs ?? Evaluate.RunDuration(run.StartedAt, run.FinishedAt ?? now),
+            }
+            : stranded
+            // Its own status was never written and nothing says it failed; a late finish of it is
+            // judged as one after a timeout, so a success still recovers.
             ? run with
             {
                 Status = RunStatus.Timeout,
                 DurationMs = run.DurationMs ?? Evaluate.RunDuration(run.StartedAt, run.FinishedAt ?? now),
-                Error = StrandedError + (run.Error == null ? "" : "\n" + run.Error),
+                Error = StrandedError,
             }
             : run with
             {
@@ -374,7 +384,7 @@ public sealed partial class CronwatchClient
         if (def != null)
         {
             // One declared here and forgotten elsewhere is written again, as StoredJobsAsync does.
-            await SyncAsync(def, confirm: true).ConfigureAwait(false);
+            await SyncAsync(def, confirm: true, running: false).ConfigureAwait(false);
         }
         StoredJob? stored = await CallAsync(() => _store.GetJobAsync(name)).ConfigureAwait(false);
         return stored == null ? null : (await SnapshotAsync(ReadStoredJob(stored), Now(), 0).ConfigureAwait(false)).Job;

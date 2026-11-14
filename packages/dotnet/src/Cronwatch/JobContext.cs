@@ -79,7 +79,7 @@ public sealed class RunOptions
     /// </summary>
     public Func<Exception, bool>? DiscardWhen { get; init; }
 
-    /// <summary>Leaves missed and stuck open until the run is known not to be given back.</summary>
+    /// <summary>Leaves missed open until the run is known not to be given back.</summary>
     public bool MayTakeBack { get; init; }
 
     internal bool TakesBack => MayTakeBack || DiscardWhen != null;

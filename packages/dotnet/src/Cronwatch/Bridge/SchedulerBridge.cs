@@ -363,6 +363,8 @@ public static class SchedulerBridge
         }
         catch (TimeoutException)
         {
+            // Given up on: what it throws later is observed, never an unobserved task's exception.
+            CronwatchClient.Abandon(work);
             cw.ReportError(new CronwatchException("the sync took longer than " + Js.FormatLong((long)limit.TotalSeconds) + " seconds; gave up"), where);
         }
         catch (Exception e)

@@ -253,7 +253,10 @@ public sealed partial class CronwatchClient
         Task? send = null;
         try
         {
-            send = channel.SendAsync(alert, context, cts.Token);
+            // As a task of the client's own, as triage is: a channel that blocks its caller before
+            // it first awaits (a synchronous client inside SendAsync) is still held to the deadline.
+            CancellationToken token = cts.Token;
+            send = Spawn(() => channel.SendAsync(alert, context, token));
             await send.WaitAsync(Timings.Channel, _time).ConfigureAwait(false);
             Count(alert, "sent", channel.Name);
             return true;
@@ -261,8 +264,8 @@ public sealed partial class CronwatchClient
         catch (TimeoutException) when (send is { IsCompleted: false })
         {
             // The client's deadline. A channel's own TimeoutException, thrown or faulting its
-            // task, is its failure, reported as any other.
-            Abandon(send);
+            // task, is its failure, reported as any other. The send given up on is observed by
+            // Spawn, so a failure it meets later is never an unobserved one.
             await CancelQuietlyAsync(cts, where).ConfigureAwait(false);
             Report("timed out after " + (long)Timings.Channel.TotalMilliseconds + "ms", where);
         }

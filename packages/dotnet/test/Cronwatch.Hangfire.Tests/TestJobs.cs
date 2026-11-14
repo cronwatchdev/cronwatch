@@ -50,6 +50,11 @@ public static class TestJobs
     [CronwatchJob("import")]
     public static void Import() => CronwatchClient.Current?.Log("imported");
 
+    /// <summary>A job that fails once, with no retry, so it alerts.</summary>
+    [CronwatchJob("fails")]
+    [AutomaticRetry(Attempts = 0)]
+    public static void Fails() => throw new InvalidOperationException("it failed");
+
     /// <summary>A job that does nothing, for recurring jobs whose runs the tests do not need.</summary>
     public static void Nothing()
     {

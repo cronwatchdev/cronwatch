@@ -40,6 +40,12 @@ public sealed partial class CronwatchClient
         public Task<bool> Begun { get; } = begun;
 
         public Task<Run>? Recording { get; set; }
+
+        /// <summary>
+        /// The write of the run's row was given up on at the deadline, which was reported: what it
+        /// throws in the end is not reported again, since nothing was left behind.
+        /// </summary>
+        public volatile bool GivenUp;
     }
 
     /// <summary>A run opened by <see cref="OpenAsync"/>: its function running until it is closed.</summary>
@@ -68,6 +74,60 @@ public sealed partial class CronwatchClient
         public required CancellationTokenSource Linked { get; init; }
 
         public required OpenRun Open { get; init; }
+
+        // A start write given up on at the deadline (Timings.StartDeadline): whether it has landed
+        // since, and how the run ended, so the two meet whichever comes first.
+        private bool _landedLate;
+        private Ending _ending;
+        private Run? _finished;
+        private long _finishedAt;
+
+        /// <summary>How a run whose start write was given up on has ended, for the write that lands after it.</summary>
+        internal enum Ending
+        {
+            /// <summary>Its function is still running, or its finish is still being recorded.</summary>
+            None,
+
+            /// <summary>Its finish was recorded, or failed to be: <c>Run</c> is the run as it finished.</summary>
+            Finished,
+
+            /// <summary>It was given back: a row that lands is deleted.</summary>
+            GivenBack,
+        }
+
+        /// <summary>Whether the start is in the store: written in time, or given up on and landed since.</summary>
+        public bool StartWritten
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return Recorded || _landedLate;
+                }
+            }
+        }
+
+        /// <summary>The start write landed after it was given up on; answers how the run has ended by now.</summary>
+        public (Ending Ending, Run? Run, long FinishedAt) Landed()
+        {
+            lock (_lock)
+            {
+                _landedLate = true;
+                return (_ending, _finished, _finishedAt);
+            }
+        }
+
+        /// <summary>The run has ended; answers whether its start is in the store by now.</summary>
+        public bool Ended(Ending ending, Run? finished, long finishedAt)
+        {
+            lock (_lock)
+            {
+                _ending = ending;
+                _finished = finished;
+                _finishedAt = finishedAt;
+                return Recorded || _landedLate;
+            }
+        }
 
         public bool Claim()
         {
@@ -219,15 +279,33 @@ public sealed partial class CronwatchClient
         var open = new OpenRun(def, run, recorder, begun);
         // A run id already open in this process keeps its place: this run's insert is refused.
         bool listed = _open.TryAdd(run.Id, open);
-        begin.SetResult(Spawn(() => BeginRunAsync(def, run)));
-        bool recorded = await begun.ConfigureAwait(false);
-        if (!recorded && listed)
+        begin.SetResult(Spawn(() => BeginRunAsync(def, run, open)));
+        bool recorded;
+        bool givenUp = false;
+        try
+        {
+            recorded = await begun.WaitAsync(Timings.StartDeadline, _time, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (TimeoutException) when (!begun.IsCompleted)
+        {
+            // A store that hangs must not hold the job back: it runs now, as one whose start was
+            // never written. The write is still under way and may land later, leaving a running
+            // row. One that lands before the finish is finished over as usual; one that lands
+            // after it is finished then (LandedLate), so no row is left running to be called stuck.
+            recorded = false;
+            givenUp = true;
+            open.GivenUp = true;
+            Report(
+                "the store took longer than " + Durations.Format(Timings.StartDeadline.TotalMilliseconds) + " to record the start of " + def.Name + "; running it unrecorded",
+                "recording " + def.Name);
+        }
+        if (!recorded && listed && !givenUp)
         {
             // Nothing was written, so the hook has nothing to record.
             _open.TryRemove(new KeyValuePair<string, OpenRun>(run.Id, open));
         }
-        // Closing missed and stuck happens beside the job, which never waits on it. A run that may
-        // be given back closes them only once it is known not to be.
+        // Closing missed happens beside the job, which never waits on it. A run that may
+        // be given back closes it only once it is known not to be.
         Task? closing = recorded && !options.TakesBack ? Spawn(() => CloseOnStartAsync(def, run)) : null;
 
         double timeout = TimeoutOrDefault(def.Stored);
@@ -239,7 +317,7 @@ public sealed partial class CronwatchClient
             : new CancellationTokenSource();
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
         var context = new JobContext(def.Name, run.Id, startedAt, recorder, linked.Token);
-        return new Opened
+        var opened = new Opened
         {
             Def = def,
             Options = options,
@@ -252,6 +330,52 @@ public sealed partial class CronwatchClient
             Linked = linked,
             Open = open,
         };
+        if (givenUp)
+        {
+            // The write is the client's own task, observed by Spawn; it never throws.
+            _ = begun.ContinueWith(
+                t =>
+                {
+                    if (t.Status == TaskStatus.RanToCompletion && t.Result)
+                    {
+                        LandedLate(opened);
+                    }
+                    else
+                    {
+                        // The write failed in the end: nothing was left behind.
+                        _open.TryRemove(new KeyValuePair<string, OpenRun>(run.Id, open));
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+        return opened;
+    }
+
+    /// <summary>
+    /// A start write given up on at the deadline has landed. While the run's function is still
+    /// going, its finish is written over the row as usual. Once the run has ended, there is no
+    /// finish coming for the row: a run whose finish was recorded cannot get here (its row is
+    /// there, so this insert was refused), so the finish failed to be recorded, and the run is
+    /// finished and judged now; a run given back has its row deleted.
+    /// </summary>
+    private void LandedLate(Opened o)
+    {
+        var (ending, finished, finishedAt) = o.Landed();
+        string where = "recording " + o.Def.Name;
+        switch (ending)
+        {
+            case Opened.Ending.Finished when finished != null:
+                SpawnReported(() => RecordFinishAsync(o.Def, finished, true, finishedAt), where);
+                break;
+            case Opened.Ending.GivenBack:
+                SpawnReported(() => DiscardRunAsync(o.Run), where);
+                break;
+            default:
+                // Still running: its finish finds the row.
+                break;
+        }
     }
 
     /// <summary>Closes a run as its function ended, answering the run as recorded.</summary>
@@ -287,7 +411,7 @@ public sealed partial class CronwatchClient
             failure = HttpFailure.Of(value);
             resultText = value as string;
         }
-        Task<Run> recording = Spawn(() => FinishExecutedAsync(def, run, o.Recorder, resultText, failure, o.Recorded, closing));
+        Task<Run> recording = Spawn(() => FinishExecutedAsync(o, resultText, failure, closing));
         o.Open.Recording = recording;
         _ = recording.ContinueWith(
             _ => _open.TryRemove(new KeyValuePair<string, OpenRun>(run.Id, o.Open)),
@@ -333,8 +457,14 @@ public sealed partial class CronwatchClient
     private async Task<bool> TakeBackNowAsync(Opened o)
     {
         bool back = true;
-        if (o.Recorded)
+        bool written = o.StartWritten;
+        if (written)
         {
+            back = await Spawn(() => DiscardRunAsync(o.Run)).ConfigureAwait(false);
+        }
+        if (back && !written && o.Ended(Opened.Ending.GivenBack, null, 0))
+        {
+            // A start write given up on landed just now: its row goes with the run.
             back = await Spawn(() => DiscardRunAsync(o.Run)).ConfigureAwait(false);
         }
         if (back)
@@ -382,7 +512,7 @@ public sealed partial class CronwatchClient
         return true;
     }
 
-    private async Task<bool> BeginRunAsync(JobDef def, Run run)
+    private async Task<bool> BeginRunAsync(JobDef def, Run run, OpenRun open)
     {
         try
         {
@@ -392,15 +522,18 @@ public sealed partial class CronwatchClient
         }
         catch (Exception e)
         {
-            Report(e, "recording " + def.Name);
+            if (!open.GivenUp)
+            {
+                Report(e, "recording " + def.Name);
+            }
             return false;
         }
     }
 
     /// <summary>
-    /// A run's start as the job's state takes it: missed (when the run catches the schedule up,
-    /// <see cref="Evaluate.CatchesUp"/>) and stuck close, and the run is held in
-    /// <c>pendingRuns</c> (<see cref="Evaluate.HoldRun"/>) until its finish is evaluated.
+    /// A run's start as the job's state takes it: missed closes (when the run catches the schedule
+    /// up, <see cref="Evaluate.CatchesUp"/>; stuck stays open until a run finishes ok), and the
+    /// run is held in <c>pendingRuns</c> (<see cref="Evaluate.HoldRun"/>) until its finish is evaluated.
     /// <paramref name="run"/> is the run as it started.
     /// </summary>
     internal async Task CloseOnStartAsync(JobDef def, Run run)
@@ -415,8 +548,11 @@ public sealed partial class CronwatchClient
         }
     }
 
-    private async Task<Run> FinishExecutedAsync(JobDef def, Run run, Recorder recorder, string? resultText, string? failure, bool recorded, Task? closing)
+    private async Task<Run> FinishExecutedAsync(Opened o, string? resultText, string? failure, Task? closing)
     {
+        JobDef def = o.Def;
+        Run run = o.Run;
+        Recorder recorder = o.Recorder;
         string name = def.Name;
         long finishedAt = Now();
         string? output = recorder.Output();
@@ -449,9 +585,12 @@ public sealed partial class CronwatchClient
                 Report(e, "starting " + name);
             }
         }
+        // In the store when written in time, or when given up on at the deadline and landed since.
+        bool written = o.StartWritten;
+        bool lost = false;
         try
         {
-            string? why = await RecordFinishAsync(def, finished, recorded, finishedAt).ConfigureAwait(false);
+            string? why = await RecordFinishAsync(def, finished, written, finishedAt).ConfigureAwait(false);
             if (why != null)
             {
                 Report("run " + finished.Id + " of " + name + " " + why + "; ignored", "finishing " + name);
@@ -459,7 +598,21 @@ public sealed partial class CronwatchClient
         }
         catch (Exception e)
         {
+            lost = true;
             Report(e, "recording " + name);
+        }
+        // From here a start write that lands late finishes the run itself (LandedLate). One that
+        // landed while this finish was failing is finished now, so its row is not left running.
+        if (o.Ended(Opened.Ending.Finished, finished, finishedAt) && !written && lost)
+        {
+            try
+            {
+                await RecordFinishAsync(def, finished, true, finishedAt).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                Report(e, "recording " + name);
+            }
         }
         return finished;
     }
@@ -529,7 +682,7 @@ public sealed partial class CronwatchClient
         if (!recorded)
         {
             // The start was never written; the store may be back by now.
-            await SyncAsync(def).ConfigureAwait(false);
+            await SyncAsync(def, confirm: false, running: true).ConfigureAwait(false);
             try
             {
                 await CallAsync(() => _store.InsertRunAsync(run)).ConfigureAwait(false);
