@@ -109,8 +109,10 @@ func (c *Client) ResumeRun(ctx context.Context, name, runID string) (*RunHandle,
 }
 
 // recordStart is the start of execute without the function: the run is
-// inserted and missed and stuck close. A store that fails is reported and
-// the handle inserts the finished run instead, as execute does.
+// inserted and missed closes (stuck stays open until a run finishes ok). A
+// store that fails is reported and the handle inserts the finished run
+// instead, as execute does. The start is not given up on after
+// startDeadline as execute's is: Start returns the handle of a run recorded.
 func (c *Client) recordStart(ctx context.Context, def *jobDef, trigger, id string, hasID bool) (*RunHandle, error) {
 	name := def.name
 	sctx, cancel := boundedStoreCtx(ctx)
@@ -133,7 +135,7 @@ func (c *Client) recordStart(ctx context.Context, def *jobDef, trigger, id strin
 	}
 	run := Run{ID: id, Job: name, Status: StatusRunning, StartedAt: c.now(), Metrics: Metrics{}, Trigger: trigger}
 	recorded := false
-	err := c.sync(sctx, def, true)
+	err := c.sync(sctx, def, true, true)
 	if err == nil {
 		err = c.store.InsertRun(sctx, run.clone())
 	}
@@ -219,6 +221,56 @@ type RunHandle struct {
 	// only the tail, so without it an expect rule at Finish would miss a
 	// line logged early, which Run would have seen.
 	head *string
+	// flushed is the lines this handle last flushed, as logged and as they
+	// stand at the end of the stored output, or nil before the first flush
+	// (see appendRedacted). Flush and Finish read and set it in their turn.
+	flushed *flushedTail
+}
+
+// flushedTail is the lines a handle last flushed: as logged (raw), and as
+// they stand at the end of the stored output (redacted).
+type flushedTail struct{ raw, redacted string }
+
+// appendRedacted is lines added to the stored output, redacted, and what
+// to remember once the write lands. While the output still ends with what
+// this handle flushed last, that tail is redacted again with the new lines
+// after it and replaced, so a secret that began in one flush and ends in
+// the next (a private key logged a line at a time, a label and then its
+// value) is blanked whole, where redacting each flush alone stored its
+// second half. Otherwise (the first flush, or another process has written
+// since) the lines are redacted alone and appended. The tail to remember
+// is at most OutputCap of the raw text, from the start of a line, and only
+// while its redaction is still the end of what was written; nil for none.
+func (h *RunHandle) appendRedacted(stored *string, lines string) (*string, *flushedTail) {
+	added := output.StripNul(lines)
+	joins := h.flushed != nil && stored != nil && strings.HasSuffix(*stored, h.flushed.redacted)
+	raw := added
+	if joins {
+		raw = h.flushed.raw + "\n" + added
+	}
+	redacted := output.RedactAndCap(raw, h.c.redact)
+	var out *string
+	if joins {
+		out = ptr((*stored)[:len(*stored)-len(h.flushed.redacted)] + redacted)
+	} else {
+		out = joinLines(stored, &redacted)
+	}
+	n := js.Length16(raw)
+	if n <= output.OutputCap {
+		return out, &flushedTail{raw, redacted}
+	}
+	// From the first line that starts inside the last OutputCap units.
+	tail := js.Slice16(raw, n-output.OutputCap, n)
+	cut := strings.IndexByte(tail, '\n')
+	if cut < 0 {
+		return out, nil
+	}
+	raw = tail[cut+1:]
+	kept := output.RedactAndCap(raw, h.c.redact)
+	if !strings.HasSuffix(redacted, kept) {
+		return out, nil
+	}
+	return out, &flushedTail{raw, kept}
 }
 
 func (c *Client) newHandle(def *jobDef, id string, base *Run, recorded bool, inactive string) *RunHandle {
@@ -327,8 +379,14 @@ func (h *RunHandle) Flush(ctx context.Context) {
 		return
 	}
 	next := stored.clone()
+	var tail *flushedTail
 	if lines != nil {
-		next.Output = joinOutput(stored.Output, ptr(output.RedactAndCap(*lines, c.redact)))
+		var joined *string
+		joined, tail = h.appendRedacted(stored.Output, *lines)
+		next.Output = nil
+		if joined != nil {
+			next.Output = ptr(output.CapOutput(*joined))
+		}
 	}
 	next.Metrics = stored.Metrics.merged(metrics)
 	// Only over a row still running, so a flush never undoes a finish written meanwhile.
@@ -341,6 +399,14 @@ func (h *RunHandle) Flush(ctx context.Context) {
 	if !ok {
 		putBack()
 		return
+	}
+	if lines != nil {
+		// Remembered only while the stored output still ends with it (the
+		// cap did not cut into it).
+		h.flushed = nil
+		if tail != nil && next.Output != nil && strings.HasSuffix(*next.Output, tail.redacted) {
+			h.flushed = tail
+		}
 	}
 	if text := taken.ExpectText(); text != nil {
 		h.mu.Lock()
@@ -444,7 +510,10 @@ func (h *RunHandle) finish(ctx context.Context, result any, failure error) *Run 
 	run.DurationMs = ptr(runDuration(from.StartedAt, finishedAt))
 	run.Error = nil
 	// Capped by conclude, after it is redacted.
-	run.Output = joinLines(from.Output, added)
+	run.Output = from.Output
+	if added != nil {
+		run.Output, _ = h.appendRedacted(from.Output, *added)
+	}
 	run.Metrics = from.Metrics.merged(recorderMetrics(rec))
 	expectText := rec.ExpectText()
 	if expectText == nil && isText {
@@ -476,13 +545,4 @@ func joinLines(before, after *string) *string {
 		return before
 	}
 	return ptr(*before + "\n" + *after)
-}
-
-// joinOutput is output appended to stored output, capped like any run's.
-func joinOutput(before, after *string) *string {
-	joined := joinLines(before, after)
-	if joined == nil {
-		return nil
-	}
-	return ptr(output.CapOutput(*joined))
 }

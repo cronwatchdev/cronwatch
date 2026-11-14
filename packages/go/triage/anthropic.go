@@ -32,7 +32,7 @@ import (
 const (
 	DefaultModel     = "claude-opus-5"
 	DefaultEffort    = "medium"
-	DefaultMaxTokens = 800
+	DefaultMaxTokens = 4096
 	// FallbackBeta routes a policy refusal to Anthropic's default fallback
 	// model inside the same request.
 	FallbackBeta = "server-side-fallback-2026-07-01"
@@ -65,10 +65,15 @@ type AnthropicOptions struct {
 	// Effort is how hard the model thinks: "low", "medium" (the default)
 	// or "high". A stack trace rarely needs more.
 	Effort string
-	// MaxTokens defaults to 800. A diagnosis is a paragraph. Zero is
-	// unset, as Go's zero values are, where the SDK's `maxTokens ?? 800`
-	// sends an explicit 0 that the API refuses; any other value is sent as
-	// given, as the SDK sends it, for the API to judge.
+	// MaxTokens defaults to 4096. A diagnosis is a paragraph, but the
+	// model thinks first (thinking is on by default on current models) and
+	// that thinking counts toward this limit, so one sized for the
+	// paragraph alone can be used up before any of it is written; the
+	// function then answers an error saying so, which the client reports
+	// as "triage for <job>". Zero is unset, as Go's zero values are, where
+	// the SDK's `maxTokens ?? 4096` sends an explicit 0 that the API
+	// refuses; any other value is sent as given, as the SDK sends it, for
+	// the API to judge.
 	MaxTokens int
 	// NoFallbacks turns off routing a policy refusal to Anthropic's default
 	// fallback model inside the same request (on by default), for an
@@ -134,8 +139,35 @@ func Anthropic(o AnthropicOptions) (cronwatch.TriageFunc, error) {
 		if err != nil {
 			return "", fmt.Errorf("Anthropic %s answered %d with JSON that could not be read: %w", post.Origin(url), resp.Status, err)
 		}
-		return diagnosis(message), nil
+		text := diagnosis(message)
+		// The limit ran out before any of the diagnosis was written (on
+		// its thinking, say): an error, so the client reports it rather
+		// than the alert going out with no diagnosis and no word of why.
+		// The words are the SDK's, its option's name included.
+		if err := outOfTokens(message, text, o.maxTokens()); err != nil {
+			return "", err
+		}
+		return text, nil
 	}, nil
+}
+
+// maxTokens is the limit sent: MaxTokens, or the default when it is zero.
+func (o AnthropicOptions) maxTokens() int {
+	if o.MaxTokens == 0 {
+		return DefaultMaxTokens
+	}
+	return o.MaxTokens
+}
+
+// outOfTokens is the error for an answer that holds no text because the
+// model reached max_tokens, or nil: text cut short is still a diagnosis,
+// and a refusal or an empty end_turn is none without an error.
+func outOfTokens(message any, text string, limit int) error {
+	o, _ := message.(*js.Object)
+	if reason, _ := o.Get("stop_reason"); text != "" || reason != "max_tokens" {
+		return nil
+	}
+	return fmt.Errorf("triage: the model reached max_tokens (%d) before writing a diagnosis; raise maxTokens or lower effort", limit)
 }
 
 // params are the request's parameters as the SDK passes them to the
@@ -146,15 +178,12 @@ func (o AnthropicOptions) params(tc cronwatch.TriageContext) *js.Object {
 	if o.Context != "" {
 		about = "About this app: " + js.WellFormed(o.Context) + "\n\n"
 	}
-	model, effort, maxTokens := o.Model, o.Effort, o.MaxTokens
+	model, effort, maxTokens := o.Model, o.Effort, o.maxTokens()
 	if model == "" {
 		model = DefaultModel
 	}
 	if effort == "" {
 		effort = DefaultEffort
-	}
-	if maxTokens == 0 {
-		maxTokens = DefaultMaxTokens
 	}
 	p := js.NewObject(
 		"model", model,

@@ -57,6 +57,20 @@
 // The middleware records each attempt of a job that carries the metadata,
 // and of the kinds Options.Kinds names, as a run (trigger "river"), with
 // the job's context carrying the run's JobContext (cronwatch.Current).
+// River ends a job, not CronWatch: the context keeps the deadline River
+// gave it (the worker's Timeout, else the client's JobTimeout) whenever
+// that is later than the job's timeout (cronwatch.Timeout, an hour unless
+// set), so the middleware never cuts a job River allows longer
+// (cronwatch.KeepDeadline); the job's timeout is then only when a check
+// reports the run stuck, and the run recovers when the job finishes. A
+// job River gives no deadline (a Timeout of -1) is bounded by the job's
+// timeout, as job.Run bounds any run. The store is never read with the
+// job's own context before the work runs: a worker that finds a job's
+// definition in the store reads it with a deadline of its own (five
+// seconds, or half of what the job has left when that is less;
+// bridge.LookupContext), so a store that does not answer costs an attempt
+// a moment and its run goes unrecorded, and the work always gets the
+// context River made.
 // Retries follow the gem's Sidekiq rules: every attempt is a run, an
 // attempt that returns an error (or panics, which River recovers) is a
 // failed run with it, so failing attempts open one failed alert and the one
@@ -352,7 +366,7 @@ func (m *middleware) Work(ctx context.Context, row *rivertype.JobRow, doInner fu
 	}
 	return job.Run(ctx, func(ctx context.Context, _ *cronwatch.JobContext) error {
 		return doInner(ctx)
-	}, cronwatch.WithTrigger(Trigger), cronwatch.DiscardWhen(givenBack))
+	}, cronwatch.WithTrigger(Trigger), cronwatch.KeepDeadline(), cronwatch.DiscardWhen(givenBack))
 }
 
 // jobFor is the CronWatch job a River job's attempt is a run of, or nil.
@@ -379,11 +393,15 @@ func (w *Watcher) jobFor(ctx context.Context, row *rivertype.JobRow) *cronwatch.
 	// A job this process did not declare (a worker that makes no periodic
 	// jobs, a kind watched by Kinds): declared from what the store holds
 	// when it is this app's, so the schedule another process stored stays.
-	// The store is read with the job's own context on purpose: River
-	// bounds it by the worker's timeout, and a read cut short declares
+	// The store is read with a context of its own that ends soon
+	// (bridge.LookupContext), never the job's: a read cut short declares
 	// nothing (this attempt goes unrecorded and the next asks again)
-	// rather than write over the stored schedule.
-	return w.watch.Fallback(ctx, name, options)
+	// rather than write over the stored schedule, and the work still gets
+	// its own context with time left on it, where a store that never
+	// answered once used up the job's whole timeout before the work began.
+	lookup, cancel := bridge.LookupContext(ctx)
+	defer cancel()
+	return w.watch.Fallback(lookup, name, options)
 }
 
 // CheckKind is the kind of CheckArgs.

@@ -6,6 +6,7 @@ package cronwatch
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"cronwatch.dev/go/internal/schedule"
@@ -100,7 +101,7 @@ func (c *Client) runCheck(ctx context.Context) (*CheckResult, error) {
 		alerts = append(alerts, found...)
 	}
 	for _, def := range c.declaredAll() {
-		if err := c.sync(ctx, def, false); err != nil {
+		if err := c.sync(ctx, def, false, false); err != nil {
 			return nil, err
 		}
 	}
@@ -146,17 +147,32 @@ func (c *Client) runCheck(ctx context.Context) (*CheckResult, error) {
 			}
 			run := *fresh
 			run.Status = StatusTimeout
-			if stranded {
-				// Its own status was never written; a late finish of it is
-				// judged as one after a timeout, so a success still recovers.
+			// The row as read again may have lost the finish that made it
+			// a placeholder (another writer's): then it is one more
+			// running run, left to its timeout.
+			if stranded && run.FinishedAt == nil {
+				return nil
+			}
+			if stranded && run.Error != nil {
+				// The placeholder of a finished import keeps the run's own
+				// error, and only a run that failed has one: it is closed as
+				// the failure it was, with its own times, and alerts as
+				// failed. A later import of the same run finds it finished
+				// and changes nothing.
+				run.Status = StatusFailed
+				if run.DurationMs != nil {
+					run.FinishedAt = ptr(endOf(run.StartedAt, *run.DurationMs))
+				} else {
+					run.DurationMs = ptr(runDuration(run.StartedAt, *run.FinishedAt))
+				}
+			} else if stranded {
+				// Its own status was never written and nothing says it
+				// failed; a late finish of it is judged as one after a
+				// timeout, so a success still recovers.
 				if run.DurationMs == nil {
 					run.DurationMs = ptr(runDuration(run.StartedAt, *run.FinishedAt))
 				}
-				message := strandedError
-				if run.Error != nil {
-					message += "\n" + *run.Error
-				}
-				run.Error = ptr(message)
+				run.Error = ptr(strandedError)
 			} else {
 				timeout, _ := timeoutMs(def)
 				run.FinishedAt = ptr(now)
@@ -382,7 +398,7 @@ func (c *Client) JobSummary(ctx context.Context, name string) (*JobSummary, erro
 		return nil, err
 	}
 	if def, ok := c.declared(name); ok {
-		if err := c.sync(ctx, def, true); err != nil {
+		if err := c.sync(ctx, def, true, false); err != nil {
 			return nil, err
 		}
 	}
@@ -585,3 +601,16 @@ func (c *Client) Close() error {
 
 // closeGrace is how long past the check's own deadline Close waits for it.
 var closeGrace = 30 * time.Second
+
+// endOf is a start plus a duration, held at the ends of an int64 where a
+// foreign row's sum would wrap.
+func endOf(startedAt, durationMs int64) int64 {
+	end := startedAt + durationMs
+	if durationMs > 0 && end < startedAt {
+		return math.MaxInt64
+	}
+	if durationMs < 0 && end > startedAt {
+		return math.MinInt64
+	}
+	return end
+}

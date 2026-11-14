@@ -115,7 +115,7 @@ func HandlerValue[T any](job *Job, fn func(ctx context.Context, job *JobContext,
 				return &http.Response{StatusCode: w.status, Status: strconv.Itoa(w.status) + " " + http.StatusText(w.status)}, err
 			}
 			return v, err
-		}, "handler", nil)
+		}, "handler", nil, false)
 	}
 	return h
 }

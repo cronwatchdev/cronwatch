@@ -103,6 +103,10 @@ type Watcher struct {
 	pending bool
 	again   bool
 	idle    *sync.Cond
+	// synced is the signature of the entries last synced to the end
+	// (bridge.Signature), and whether there is one.
+	synced    string
+	hasSynced bool
 }
 
 // New makes a Watcher; give its Option to cron.New.
@@ -210,7 +214,7 @@ func (w *Watcher) syncRecovered(ctx context.Context) (err error) {
 			err = fmt.Errorf("panicked: %v", p)
 		}
 	}()
-	return w.Sync(ctx)
+	return w.sync(ctx, false)
 }
 
 // Wait waits for the syncs the cron's events started to finish, and for
@@ -230,7 +234,11 @@ func (w *Watcher) Wait() {
 // gone (this process's, and those an earlier process declared). It runs by
 // itself when the cron starts and when an entry is added or removed; call
 // it to declare the entries of a cron that is not started.
-func (w *Watcher) Sync(ctx context.Context) error {
+func (w *Watcher) Sync(ctx context.Context) error { return w.sync(ctx, true) }
+
+// sync is Sync. One the cron's own events start (not whole) declares the
+// entries and leaves the store alone when they are what the last sync saw.
+func (w *Watcher) sync(ctx context.Context, whole bool) error {
 	w.mu.Lock()
 	c, wrapped := w.cron, w.wrapped
 	w.mu.Unlock()
@@ -246,7 +254,10 @@ func (w *Watcher) Sync(ctx context.Context) error {
 		name, own, err := nameOf(entry.Job)
 		where := fmt.Sprintf("robfig/cron entry %d", entry.ID)
 		if err != nil {
-			w.watch.ReportOnce(fmt.Errorf("cronwatch: %s %v", where, err), "declaring "+where)
+			// Remembered without the entry's id, which robfig/cron makes
+			// anew for each entry: once for the function, however many
+			// entries run it.
+			w.watch.ReportOnceAs("declaring robfig/cron entry\x00"+err.Error(), fmt.Errorf("cronwatch: %s %v", where, err), "declaring "+where)
 			continue
 		}
 		if slices.Contains(w.options.Exclude, name) {
@@ -254,7 +265,7 @@ func (w *Watcher) Sync(ctx context.Context) error {
 		}
 		where += " (" + name + ")"
 		options := slices.Concat(w.options.Jobs[name], own)
-		e := bridge.Entry{Name: name, Where: where, Defaults: w.options.Defaults, Options: options}
+		e := bridge.Entry{Name: name, Where: where, Key: "robfig/cron entry (" + name + ")", Defaults: w.options.Defaults, Options: options}
 		if converted, err := Convert(entry.Schedule, c.Location(), "cronwatch: "+where); err != nil {
 			e.Problem = err
 		} else {
@@ -263,7 +274,17 @@ func (w *Watcher) Sync(ctx context.Context) error {
 		found = append(found, e)
 	}
 	w.watch.Declare(found)
+	signature := bridge.Signature(found)
+	w.mu.Lock()
+	same := w.hasSynced && w.synced == signature
+	w.mu.Unlock()
+	if same && !whole {
+		return nil
+	}
 	_, err := w.watch.Unschedule(ctx)
+	w.mu.Lock()
+	w.synced, w.hasSynced = signature, err == nil
+	w.mu.Unlock()
 	return err
 }
 

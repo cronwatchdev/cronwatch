@@ -142,11 +142,24 @@ func TestConformanceTriage(t *testing.T) {
 		}
 		count++
 	}
+	errored := 0
 	for _, c := range objects(field(f, "responses")) {
-		if got, want := diagnosis(field(c, "response")), field(c, "result"); (want == nil && got != "") || (want != nil && got != want) {
-			t.Errorf("%s: %q, want %v", js.Stringify(field(c, "response")), got, want)
+		got := diagnosis(field(c, "response"))
+		err := outOfTokens(field(c, "response"), got, DefaultMaxTokens)
+		if want, isError := field(c, "error").(string); isError {
+			// An answer with no text because the limit ran out: the SDK's
+			// error, word for word, and no result.
+			if err == nil || err.Error() != want {
+				t.Errorf("%s: error %v, want %s", js.Stringify(field(c, "response")), err, want)
+			}
+			errored++
+		} else if want := field(c, "result"); err != nil || (want == nil && got != "") || (want != nil && got != want) {
+			t.Errorf("%s: %q (%v), want %v", js.Stringify(field(c, "response")), got, err, want)
 		}
 		count++
+	}
+	if errored != 1 {
+		t.Errorf("%d answers the fixture expects an error for, want 1", errored)
 	}
 	for _, c := range objects(field(f, "wire")) {
 		o, _ := field(c, "options").(*js.Object)

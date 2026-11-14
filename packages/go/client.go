@@ -427,16 +427,19 @@ func missingCapabilities(store Store) error {
 
 // sync writes the declaration of def's name as it stands to the store, once
 // per declaration. A handle kept from an earlier declaration writes the one
-// that replaced it, never its own over it, and one forgotten since writes
-// its own. A name declared again while its write was under way is still to
+// that replaced it, never its own over it, and one forgotten since declares
+// the job again as it was last declared here. A name declared again while its write was under way is still to
 // be written. A name is marked as written only while that same declaration
 // stands, so a forget that lands during the write (deleting the row after
 // it) leaves the name to be written again, as does one forgotten before it.
 //
 // With confirm, as a run starts, a name already written is read back:
 // another process may have forgotten the job since, and a job still
-// declared here comes back on its next run.
-func (c *Client) sync(ctx context.Context, def *jobDef, confirm bool) error {
+// declared here comes back on its next run. running says the write is for
+// a run: a name forgotten here is then declared again, where a check or a
+// dashboard read, whose loop may have picked the name up just before the
+// forget, leaves it forgotten.
+func (c *Client) sync(ctx context.Context, def *jobDef, confirm, running bool) error {
 	if err := c.ensureReady(ctx); err != nil {
 		return err
 	}
@@ -459,6 +462,20 @@ func (c *Client) sync(ctx context.Context, def *jobDef, confirm bool) error {
 		return err
 	}
 	defer end()
+	if _, declared := c.declared(name); !declared {
+		// Forgotten here since this write was asked for. A check or a
+		// dashboard read that was on its way to write it leaves it
+		// forgotten: only a run brings a forgotten job back.
+		if !running {
+			return nil
+		}
+		// A handle kept from before the forget: its run declares the job
+		// again as it was last declared, as Run by name does
+		// (declaredAgain), so the name is marked as written once more and
+		// the checks keep it declared, where it once wrote its own
+		// definition at every run.
+		c.declaredAgain(name)
+	}
 	standing, written := c.standing(name, def)
 	if written {
 		return nil
@@ -506,7 +523,7 @@ func (c *Client) unmarkSynced(name string) {
 func (c *Client) storedJobs(ctx context.Context) ([]StoredJob, error) {
 	declared := c.declaredAll()
 	for _, def := range declared {
-		if err := c.sync(ctx, def, false); err != nil {
+		if err := c.sync(ctx, def, false, false); err != nil {
 			return nil, err
 		}
 	}
@@ -529,7 +546,7 @@ func (c *Client) storedJobs(ctx context.Context) ([]StoredJob, error) {
 			continue
 		}
 		c.unmarkSynced(def.name)
-		if err := c.sync(ctx, def, false); err != nil {
+		if err := c.sync(ctx, def, false, false); err != nil {
 			return nil, err
 		}
 	}

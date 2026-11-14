@@ -42,6 +42,34 @@ func NewObject(pairs ...any) *Object {
 	return o
 }
 
+// ordered is the object holding vals under keys, each key once and in the
+// order it was first set: what setting them in turn gives, the index keys
+// sorted once rather than each put in its place.
+func ordered(keys []string, vals map[string]any) *Object {
+	type index struct {
+		n   uint32
+		key string
+	}
+	var indexes []index
+	rest := keys[:0:0]
+	for _, k := range keys {
+		if n, ok := ArrayIndex(k); ok {
+			indexes = append(indexes, index{n, k})
+		} else {
+			rest = append(rest, k)
+		}
+	}
+	if len(indexes) == 0 {
+		return &Object{keys: rest, vals: vals}
+	}
+	sort.Slice(indexes, func(a, b int) bool { return indexes[a].n < indexes[b].n })
+	out := make([]string, 0, len(keys))
+	for _, i := range indexes {
+		out = append(out, i.key)
+	}
+	return &Object{keys: append(out, rest...), vals: vals}
+}
+
 // ArrayIndex reports whether a key is an array index, which JavaScript
 // orders before every other key.
 func ArrayIndex(key string) (uint32, bool) {
@@ -355,12 +383,16 @@ func (p *parser) value(depth int) (any, error) {
 	switch c := p.s[p.i]; {
 	case c == '{':
 		p.i++
-		o := &Object{}
 		p.space()
 		if p.i < len(p.s) && p.s[p.i] == '}' {
 			p.i++
-			return o, nil
+			return &Object{}, nil
 		}
+		// The keys as they come, put in JavaScript's order once at the end
+		// (ordered): setting each in its place as it is read shifts every
+		// index key after it, which a body of descending ones makes quadratic.
+		var keys []string
+		vals := map[string]any{}
 		for {
 			p.space()
 			if p.i >= len(p.s) || p.s[p.i] != '"' {
@@ -380,7 +412,10 @@ func (p *parser) value(depth int) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			o.Set(k, v)
+			if _, ok := vals[k]; !ok {
+				keys = append(keys, k)
+			}
+			vals[k] = v
 			p.space()
 			if p.i < len(p.s) && p.s[p.i] == ',' {
 				p.i++
@@ -388,7 +423,7 @@ func (p *parser) value(depth int) (any, error) {
 			}
 			if p.i < len(p.s) && p.s[p.i] == '}' {
 				p.i++
-				return o, nil
+				return ordered(keys, vals), nil
 			}
 			return nil, p.fail("Expected ',' or '}' after property value")
 		}

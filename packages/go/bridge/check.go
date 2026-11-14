@@ -22,6 +22,7 @@ package bridge
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"cronwatch.dev/go/internal/js"
@@ -183,17 +184,21 @@ func (c *checker) check(daily bool, now int64) error {
 	return nil
 }
 
-// fires are CronWatch's fires after start, up to and including end.
+// fires are CronWatch's fires after start, up to and including end: the
+// fires FireAfter gives one after another, asked for in batches
+// (schedule.FiresBetween, which answers with some thousands at a time and
+// with none only when there are none left), which costs a cron that fires
+// every second a small part of what asking for each alone did.
 func (c *checker) fires(start, end int64) []int64 {
 	var out []int64
 	at := start
 	for {
-		fire, ok := schedule.FireAfter(c.parsed, at)
-		if !ok || fire > end {
+		batch, ok := schedule.FiresBetween(c.parsed, at, end, math.MaxInt32)
+		if !ok || len(batch) == 0 {
 			return out
 		}
-		out = append(out, fire)
-		at = fire
+		out = append(out, batch...)
+		at = batch[len(batch)-1]
 	}
 }
 

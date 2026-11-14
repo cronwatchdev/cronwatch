@@ -117,6 +117,10 @@ type Watcher struct {
 	pending   bool
 	again     bool
 	idle      *sync.Cond
+	// synced is the signature of the entries last synced to the end
+	// (bridge.Signature), and whether there is one.
+	synced    string
+	hasSynced bool
 }
 
 // New makes a Watcher; give its Option to gocron.NewScheduler.
@@ -225,7 +229,7 @@ func (w *Watcher) syncRecovered(ctx context.Context) (err error) {
 			err = fmt.Errorf("panicked: %v", p)
 		}
 	}()
-	return w.Sync(ctx)
+	return w.sync(ctx, false)
 }
 
 // Wait waits for the syncs the scheduler's events started to finish, and
@@ -243,7 +247,13 @@ func (w *Watcher) Wait() {
 // Sync declares the scheduler's jobs now: each with its schedule, and again
 // without its schedule each job of this app's that is gone (this
 // process's, and those an earlier process declared).
-func (w *Watcher) Sync(ctx context.Context) error {
+func (w *Watcher) Sync(ctx context.Context) error { return w.sync(ctx, true) }
+
+// sync is Sync. One the scheduler's own events start (not whole) declares
+// the jobs and leaves the store alone when they are what the last sync
+// saw: an app that adds a one-time job per reminder, say, would otherwise
+// read every job in the store at each one.
+func (w *Watcher) sync(ctx context.Context, whole bool) error {
 	w.mu.Lock()
 	s := w.scheduler
 	w.mu.Unlock()
@@ -263,14 +273,16 @@ func (w *Watcher) Sync(ctx context.Context) error {
 		name, err := bridge.FuncName(job.Name())
 		where := fmt.Sprintf("gocron job %s", job.ID())
 		if err != nil {
-			w.watch.ReportOnce(fmt.Errorf("cronwatch: %s %v; give it a name with gocron.WithName", where, err), "declaring "+where)
+			// Remembered without the job's id, which gocron makes anew for
+			// each job: once for the function, however many jobs run it.
+			w.watch.ReportOnceAs("declaring gocron job\x00"+err.Error(), fmt.Errorf("cronwatch: %s %v; give it a name with gocron.WithName", where, err), "declaring "+where)
 			continue
 		}
 		if slices.Contains(w.options.Exclude, name) {
 			continue
 		}
 		where += " (" + name + ")"
-		e := bridge.Entry{Name: name, Where: where, Defaults: w.options.Defaults, Options: w.options.Jobs[name]}
+		e := bridge.Entry{Name: name, Where: where, Key: "gocron job (" + name + ")", Defaults: w.options.Defaults, Options: w.options.Jobs[name]}
 		if converted, err := Convert(job.Schedule(), loc, "cronwatch: "+where); err != nil {
 			e.Problem = err
 		} else {
@@ -279,7 +291,17 @@ func (w *Watcher) Sync(ctx context.Context) error {
 		found = append(found, e)
 	}
 	w.watch.Declare(found)
+	signature := bridge.Signature(found)
+	w.mu.Lock()
+	same := w.hasSynced && w.synced == signature
+	w.mu.Unlock()
+	if same && !whole {
+		return nil
+	}
 	_, err := w.watch.Unschedule(ctx)
+	w.mu.Lock()
+	w.synced, w.hasSynced = signature, err == nil
+	w.mu.Unlock()
 	return err
 }
 
@@ -324,7 +346,9 @@ func (w *Watcher) job(name string) (*cronwatch.Job, bool) {
 		return job, true
 	}
 	w.later()
-	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	// Before the job runs, so it ends soon: a store that never answers
+	// holds the run a moment, not half a minute.
+	ctx, cancel := bridge.LookupContext(context.Background())
 	defer cancel()
 	return w.watch.Fallback(ctx, clean, slices.Concat(w.options.Defaults, w.options.Jobs[clean])), true
 }

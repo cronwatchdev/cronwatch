@@ -7,6 +7,7 @@ package cronwatch
 import (
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -91,16 +92,53 @@ func TestMissedClosedByARunStartStillRecovers(t *testing.T) {
 	}
 }
 
-func TestStuckClosedByTheNextStartIsRecoveredByALaterSuccess(t *testing.T) {
+func TestStuckStaysOpenThroughLaterStartsFailuresAndTimeoutsAndClosesOnTheNextSuccess(t *testing.T) {
 	d := def(t, `{"name":"j"}`)
+	openSince := func(s JobState, c Condition) (int64, bool) {
+		for _, o := range s.Open {
+			if o.Condition == c {
+				return o.Since, true
+			}
+		}
+		return 0, false
+	}
 	stuck, _ := onRunFinish(d, testRun("j", StatusTimeout, t0-tHour, 1000), emptyState("j"), nil, t0)
 	if strings.Join(types(stuck.alerts), ",") != "stuck" {
 		t.Fatal(types(stuck.alerts))
 	}
-	// The next run starts in another process, so its finish sees stuck already closed.
-	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+tMin, 1000), onRunStart(d, startingRun("j", t0+tMin), stuck.state, t0+tMin), nil, t0+2*tMin)
-	if js.Stringify(good.alerts[0].Details.jsValue()) != `{"after":["stuck"]}` {
-		t.Error(js.Stringify(good.alerts[0].Details.jsValue()))
+	// The next run starting closes nothing: it may hang as the last one did.
+	started := onRunStart(d, startingRun("j", t0+tMin), stuck.state, t0+tMin)
+	if since, open := openSince(started, ConditionStuck); !open || since != t0 {
+		t.Errorf("stuck after a start: %v %v", since, open)
+	}
+	// It times out too: stuck is already open, so there is no second alert.
+	again, _ := onRunFinish(d, testRun("j", StatusTimeout, t0+tMin, -1), started, nil, t0+tHour)
+	if len(again.alerts) != 0 {
+		t.Errorf("a second timeout alerted: %v", types(again.alerts))
+	}
+	if since, open := openSince(again.state, ConditionStuck); !open || since != t0 {
+		t.Errorf("open since the first time: %v %v", since, open)
+	}
+	// A run that fails opens failed by its own rule and leaves stuck open.
+	failed, _ := onRunFinish(d, testRun("j", StatusFailed, t0+tHour, 1000), again.state, nil, t0+tHour+1000)
+	if strings.Join(types(failed.alerts), ",") != "failed" {
+		t.Errorf("a failure beside it: %v", types(failed.alerts))
+	}
+	if since, open := openSince(failed.state, ConditionStuck); !open || since != t0 {
+		t.Errorf("stuck beside failed: %v %v", since, open)
+	}
+	// One ok run closes both, with one recovery naming both.
+	good, _ := onRunFinish(d, testRun("j", StatusOK, t0+2*tHour, 1000), onRunStart(d, startingRun("j", t0+2*tHour), failed.state, t0+2*tHour), nil, t0+2*tHour+1000)
+	if strings.Join(types(good.alerts), ",") != "recovered" {
+		t.Fatal(types(good.alerts))
+	}
+	after := append([]Condition(nil), good.alerts[0].Details.(RecoveredDetails).After...)
+	slices.Sort(after)
+	if len(after) != 2 || after[0] != ConditionFailed || after[1] != ConditionStuck {
+		t.Errorf("recovered after %v", after)
+	}
+	if len(good.state.Open) != 0 {
+		t.Errorf("still open: %v", good.state.Open)
 	}
 }
 

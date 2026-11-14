@@ -46,6 +46,8 @@ type runConfig struct {
 	id      string
 	hasID   bool
 	discard func(error) bool
+	// keepDeadline leaves a caller's later deadline in place (KeepDeadline).
+	keepDeadline bool
 }
 
 // WithTrigger names what started the run. The default is "run" for Run
@@ -73,6 +75,18 @@ func DiscardWhen(discard func(err error) bool) RunOption {
 	return func(r *runConfig) { r.discard = discard }
 }
 
+// KeepDeadline leaves the job's context to the caller's deadline when ctx
+// already carries one later than the job's timeout: the timeout then ends
+// nothing, and the caller's deadline ends the work as it would without
+// CronWatch. A queue's worker middleware gives it, since the queue already
+// bounds each attempt (River's job timeout, an Asynq task's timeout or
+// deadline) and a job's timeout, an hour unless it is set, must not cut an
+// attempt the queue allows longer. A run still going at the job's timeout
+// is marked stuck by the next check all the same, and recovers when it
+// finishes. A ctx with no deadline, or an earlier one, gets the job's
+// timeout as always. Run and RunValue only.
+func KeepDeadline() RunOption { return func(r *runConfig) { r.keepDeadline = true } }
+
 func runOptions(options []RunOption, trigger string) runConfig {
 	cfg := runConfig{trigger: trigger}
 	for _, o := range options {
@@ -83,7 +97,11 @@ func runOptions(options []RunOption, trigger string) runConfig {
 
 // Run runs fn now as a recorded run and returns its error. The run is
 // recorded however the store is doing: store errors go to the error
-// handler, never to the caller. A panic in fn is recorded as a failed run
+// handler, never to the caller. A store that hangs holds the job five
+// seconds at most: when the run's start (the job's declaration and the
+// run's row) is not written by then, that is reported as "recording
+// <job>" and fn runs unrecorded; should the write land later, the run is
+// finished over it, so no row is left running. A panic in fn is recorded as a failed run
 // and then carries on up the stack.
 func (j *Job) Run(ctx context.Context, fn JobFunc, options ...RunOption) error {
 	cfg := runOptions(options, "run")
@@ -111,7 +129,7 @@ func RunValue[T any](ctx context.Context, job *Job, fn func(ctx context.Context,
 		v, err := fn(ctx, jc)
 		result = v
 		return v, err
-	}, cfg.trigger, cfg.discard)
+	}, cfg.trigger, cfg.discard, cfg.keepDeadline)
 	if out.panicked {
 		panic(out.panicValue)
 	}
@@ -217,30 +235,79 @@ func recorderMetrics(rec *output.Recorder) Metrics {
 // execute runs fn as a recorded run. The function always runs, whatever the
 // store is doing: store errors go to the error handler, and the result is
 // the function's own outcome. discard, when not nil, says which returned
-// errors take the run back rather than finish it (DiscardWhen).
-func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Context, *JobContext) (any, error), trigger string, discard func(error) bool) executed {
+// errors take the run back rather than finish it (DiscardWhen), and
+// keepDeadline leaves a later deadline of ctx's own to end the job
+// (KeepDeadline).
+func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Context, *JobContext) (any, error), trigger string, discard func(error) bool, keepDeadline bool) executed {
 	name := def.name
 	sctx, cancelStart := boundedStoreCtx(ctx)
-	defer cancelStart()
 	startedAt := c.now()
 	run := Run{ID: newID(), Job: name, Status: StatusRunning, StartedAt: startedAt, Metrics: Metrics{}, Trigger: trigger}
-	recorded := false
-	if err := c.sync(sctx, def, true); err != nil {
-		c.report(err, "recording "+name)
-	} else if err := c.store.InsertRun(sctx, run.clone()); err != nil {
-		c.report(err, "recording "+name)
-	} else {
-		recorded = true
-	}
-	// Closing missed and stuck happens beside the job, which never waits on
-	// it. A run that may be given back (DiscardWhen) closes them only once
-	// it is known not to be, as the PHP port's released job does: one
-	// taken back must leave the state as it was, or a job overdue would
-	// have missed closed by each attempt given back and opened again by the
-	// next check, an alert each time.
-	var started sync.WaitGroup
-	// The run as it started, which the job's finish does not touch.
+	// The run as it starts: what the start write holds, however late it
+	// lands, and what the job's finish does not touch.
 	begun := run.clone()
+	// The two writes before the job (its declaration, the run's row) have
+	// startDeadline between them, in a goroutine of their own, since Go
+	// cannot give up on a call under way. A store that fails does so
+	// sooner, and is reported as it always was; one that hangs must not
+	// hold the job back.
+	recorded := false
+	late := &lateStart{}
+	written := make(chan startWrite, 1)
+	go func() {
+		var w startWrite
+		defer func() {
+			if p := recover(); p != nil {
+				w = startWrite{panicked: true, panicValue: p}
+			}
+			written <- w
+		}()
+		if w.err = c.sync(sctx, def, true, true); w.err == nil {
+			w.err = c.store.InsertRun(sctx, begun.clone())
+		}
+	}()
+	deadline := time.NewTimer(startDeadline)
+	select {
+	case w := <-written:
+		deadline.Stop()
+		defer cancelStart()
+		switch {
+		case w.panicked:
+			// A store's panic, carried on up the caller's stack as it was
+			// when the write ran there.
+			panic(w.panicValue)
+		case w.err != nil:
+			c.report(w.err, "recording "+name)
+		default:
+			recorded = true
+		}
+	case <-deadline.C:
+		// The job runs now, as one whose start was never written. The write
+		// is still under way and may land later, leaving a running row. One
+		// that lands before the finish is finished over as usual; one that
+		// lands after it is finished then, here, so no row is left running
+		// to be called stuck (lateStart.land).
+		c.report(fmt.Errorf("the store took longer than %s to record the start of %s; running it unrecorded", schedule.FormatDuration(float64(startDeadline.Milliseconds())), name), "recording "+name)
+		go func() {
+			w := <-written
+			cancelStart()
+			if w.panicked {
+				c.report(fmt.Errorf("panicked: %v", w.panicValue), "recording "+name)
+				return
+			}
+			if w.err != nil {
+				return // the write failed in the end: nothing was left behind
+			}
+			late.land(ctx, c, def)
+		}()
+	}
+	// Closing missed happens beside the job, which never waits on it. A
+	// run that may be given back (DiscardWhen) closes it only once it is
+	// known not to be, as the PHP port's released job does: one taken back
+	// must leave the state as it was, or a job overdue would have missed
+	// closed by each attempt given back and opened again by the next
+	// check, an alert each time.
+	var started sync.WaitGroup
 	closeOnStart := func(sctx context.Context) {
 		if _, _, err := updateState(sctx, c, name, func(s JobState) (JobState, struct{}, error) {
 			return holdRun(onRunStart(def.stored, begun, s, c.now()), begun.ID), struct{}{}, nil
@@ -266,8 +333,16 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	rec := output.NewRecorder()
 	jc := &JobContext{name: name, runID: run.ID, startedAt: startedAt, rec: rec}
 	timeout, _ := timeoutMs(def.stored)
-	jobCtx, cancel := context.WithTimeoutCause(context.WithValue(ctx, contextKey{}, jc), msDuration(timeout),
-		timeoutCause{fmt.Sprintf("job %s passed its timeout of %s", js.Quote(name), schedule.FormatDuration(timeout))})
+	base := context.WithValue(ctx, contextKey{}, jc)
+	var jobCtx context.Context
+	var cancel context.CancelFunc
+	if deadline, has := ctx.Deadline(); keepDeadline && has && time.Until(deadline) > msDuration(timeout) {
+		// The caller's own deadline is the later one, and ends the job.
+		jobCtx, cancel = context.WithCancel(base)
+	} else {
+		jobCtx, cancel = context.WithTimeoutCause(base, msDuration(timeout),
+			timeoutCause{fmt.Sprintf("job %s passed its timeout of %s", js.Quote(name), schedule.FormatDuration(timeout))})
+	}
 	out := executed{}
 	var panicText string
 	func() {
@@ -284,8 +359,16 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	fctx, cancelFinish := boundedStoreCtx(ctx)
 	defer cancelFinish()
 
+	// A start given up on that has landed since is a row to finish over,
+	// or to take back, like one written in time.
+	landed := late.landedBy()
 	if discard != nil && !out.panicked && out.err != nil && c.givenBack(name, discard, out.err) {
-		if !recorded || c.discardRun(fctx, run) {
+		if !(recorded || landed) || c.discardRun(fctx, run) {
+			// One that lands from here on is taken back as it lands; one
+			// that landed just now, here.
+			if late.conclude(run, 0, true) && !landed {
+				c.discardRun(fctx, run)
+			}
 			out.discarded = true
 			out.run = run
 			return out
@@ -319,7 +402,13 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	out.run = run
 
 	started.Wait()
-	ignored, err := c.recordFinish(fctx, def, &run, recorded, finishedAt)
+	ignored, err := c.recordFinish(fctx, def, &run, recorded || landed, finishedAt)
+	// From here a start that lands has no finish coming, and finishes the
+	// run itself. One that landed while this finish was being written, and
+	// failed, missed both: finished here, over its row.
+	if late.conclude(run, finishedAt, false) && !landed && err != nil {
+		ignored, err = c.recordFinish(fctx, def, &run, true, finishedAt)
+	}
 	if err != nil {
 		c.report(err, "recording "+name)
 	} else if ignored != "" {
@@ -327,6 +416,78 @@ func (c *Client) execute(ctx context.Context, def *jobDef, fn func(context.Conte
 	}
 	out.run = run
 	return out
+}
+
+// startDeadline is how long Run and a job's handler wait for the store to
+// record a run's start (the job's declaration and the run's row) before
+// running the job without it, the SDK's START_DEADLINE_MS. A store that
+// fails does so sooner; this is for one that hangs. A variable only so the
+// package's own tests can shorten it.
+var startDeadline = 5 * time.Second
+
+// startWrite is how the write of a run's start ended.
+type startWrite struct {
+	err        error
+	panicked   bool
+	panicValue any
+}
+
+// lateStart is a run whose start write was given up on (startDeadline):
+// whether that write has landed since, and whether the run has been
+// concluded (its finish recorded, or failed to be, or the run given back),
+// so that whichever comes second leaves no row running.
+type lateStart struct {
+	mu         sync.Mutex
+	landed     bool
+	concluded  bool
+	discarded  bool
+	run        Run
+	finishedAt int64
+}
+
+// landedBy is whether the start write has landed by now.
+func (l *lateStart) landedBy() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.landed
+}
+
+// conclude notes that the run is done with, as it ended (or given back),
+// and says whether its start write has landed by now.
+func (l *lateStart) conclude(run Run, finishedAt int64, discarded bool) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.concluded, l.discarded, l.run, l.finishedAt = true, discarded, run.clone(), finishedAt
+	return l.landed
+}
+
+// land is the start write landing after it was given up on. Before the
+// run is concluded it is only noted, and the finish is written over the
+// row as usual. After, the row has no finish coming: the run is finished
+// and judged now (or taken back, when it was given back), so a process
+// still alive never leaves a row running to be called stuck.
+func (l *lateStart) land(ctx context.Context, c *Client, def *jobDef) {
+	l.mu.Lock()
+	l.landed = true
+	concluded, discarded, run, finishedAt := l.concluded, l.discarded, l.run, l.finishedAt
+	l.mu.Unlock()
+	if !concluded {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			c.report(fmt.Errorf("panicked: %v", p), "recording "+def.name)
+		}
+	}()
+	fctx, cancel := boundedStoreCtx(ctx)
+	defer cancel()
+	if discarded {
+		c.discardRun(fctx, run)
+		return
+	}
+	if _, err := c.recordFinish(fctx, def, &run, true, finishedAt); err != nil {
+		c.report(err, "recording "+def.name)
+	}
 }
 
 // timeoutCause is why a job's context ended at its timeout. It is a
@@ -430,7 +591,7 @@ func (c *Client) conclude(def *jobDef, run *Run, result any, failure *string, ex
 func (c *Client) recordFinish(ctx context.Context, def *jobDef, run *Run, recorded bool, finishedAt int64) (string, error) {
 	if !recorded {
 		// The start was never written; the store may be back by now.
-		if err := c.sync(ctx, def, false); err != nil {
+		if err := c.sync(ctx, def, false, true); err != nil {
 			return "", err
 		}
 		err := c.store.InsertRun(ctx, run.clone())
@@ -625,7 +786,7 @@ func (c *Client) RecordRun(ctx context.Context, input Run, options ...RecordOpti
 			return nil, fmt.Errorf("recordRun: metric %s must be a finite number (job %s, run %s)", js.Quote(m.Name), js.Quote(input.Job), js.Quote(input.ID))
 		}
 	}
-	if err := c.sync(ctx, def, false); err != nil {
+	if err := c.sync(ctx, def, false, false); err != nil {
 		return nil, err
 	}
 	run := input.clone()

@@ -726,16 +726,19 @@ func catchesUp(def Definition, run Run, now int64) bool {
 }
 
 // onRunStart is called when a run starts, or when a run a source reports is
-// recorded. Missed and stuck are about the absence of a run, so a run
-// starting closes them without an alert; the recovered message waits for a
-// successful finish. Missed closes only when the run catches the schedule
-// up (catchesUp), which a run starting now always does.
+// recorded. Missed is about the absence of a run, so a run starting closes
+// it without an alert; the recovered message waits for a successful
+// finish. It closes only when the run catches the schedule up (catchesUp),
+// which a run starting now always does. Nothing else closes here. Stuck in
+// particular stays open: a run that has only started may hang as the last
+// one did, and closing stuck for it would open it, and alert, again at
+// every timeout of a job that hangs every time. Only a run that finishes
+// ok closes stuck.
 func onRunStart(def Definition, run Run, state JobState, now int64) JobState {
 	next := cloneState(state)
 	if catchesUp(def, run, now) {
 		closeCondition(&next, ConditionMissed)
 	}
-	closeCondition(&next, ConditionStuck)
 	return next
 }
 
@@ -980,7 +983,9 @@ func isStuck(def Definition, run Run, now int64) (bool, error) {
 // RecordRun writes one as running, with FinishedAt set to when it was
 // written, and the finish that follows never landed (the importer stopped,
 // or a store write failed and it was not retried). A check closes one
-// sendLeaseMs after it was written, as it closes a stuck run.
+// sendLeaseMs after it was written: as the failed run it was when the
+// placeholder holds an error (only a run that failed has one), else as it
+// closes a stuck run.
 func isStranded(run Run, now int64) bool {
 	return run.Status == StatusRunning && run.FinishedAt != nil && elapsedMs(*run.FinishedAt, now) > sendLeaseMs
 }

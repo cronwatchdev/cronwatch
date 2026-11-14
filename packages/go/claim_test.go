@@ -217,14 +217,32 @@ func TestAnEvaluatedImportWhoseStateWriteFailsAndIsNotRetriedIsClosedByACheck(t 
 	eq(t, "left at first", must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID)).Status, cronwatch.StatusRunning)
 	clock.Advance(sendLease + MIN)
 	checkNow(t, cw)
+	// The placeholder holds the run's own error, so it is closed as the
+	// failure it was, with its own times.
 	closed := must[*cronwatch.Run](t)(shared.GetRun(bg, run.ID))
-	eq(t, "closed", closed.Status, cronwatch.StatusTimeout)
+	eq(t, "closed", closed.Status, cronwatch.StatusFailed)
 	eq(t, "duration kept", *closed.DurationMs, MIN)
-	eq(t, "error", *closed.Error, "Imported, but its finish was never written; marked as timed out\nboom")
-	sameList(t, "alerted", alertTypes(sent.List()), []string{"stuck"})
-	if summary := must[*cronwatch.JobSummary](t)(cw.JobSummary(bg, "imported")); summary.Health == cronwatch.HealthHealthy {
-		t.Errorf("health: %s", summary.Health)
+	eq(t, "its own finish", *closed.FinishedAt, *run.FinishedAt)
+	eq(t, "error", *closed.Error, "boom")
+	sameList(t, "alerted", alertTypes(sent.List()), []string{"failed"})
+	eq(t, "health", must[*cronwatch.JobSummary](t)(cw.JobSummary(bg, "imported")).Health, cronwatch.HealthFailing)
+	// The importer comes back and records the same run again: nothing
+	// changes, and nothing is counted twice.
+	eq(t, "recorded again", len(must[[]cronwatch.Alert](t)(cw.RecordRun(bg, run))), 0)
+	checkNow(t, cw)
+	sameList(t, "no second alert", alertTypes(sent.List()), []string{"failed"})
+	st := must[*cronwatch.JobState](t)(shared.GetState(bg, "imported"))
+	eq(t, "failures in a row", st.ConsecutiveFailures, 1)
+	if len(st.Open) != 1 || st.Open[0].Condition != cronwatch.ConditionFailed {
+		t.Errorf("open: %v", st.Open)
 	}
+	eq(t, "nothing pending", len(st.PendingRuns), 0)
+	// The next imported success recovers it.
+	clock.Advance(MIN)
+	next := run
+	next.ID, next.Status, next.StartedAt, next.FinishedAt, next.DurationMs, next.Error = "next-import", cronwatch.StatusOK, clock.Now()-1000, ptr(clock.Now()), ptr(int64(1000)), nil
+	must[[]cronwatch.Alert](t)(cw.RecordRun(bg, next))
+	sameList(t, "recovered", alertTypes(sent.List()), []string{"failed", "recovered"})
 }
 
 func TestAnEvaluatedImportWhoseFinishWriteFailsIsClosedByACheckAndALateSuccessRecoversIt(t *testing.T) {

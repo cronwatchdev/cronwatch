@@ -248,10 +248,19 @@ func readLimited(r *http.Request) ([]byte, error) {
 	return data, nil
 }
 
+// bodyFields are the fields the routes read from a body: the sign-in
+// form's token and a silence's duration.
+var bodyFields = []string{"token", "for"}
+
 // readBody is the form fields or JSON object of a request, each value as
-// String(value) gives it in JavaScript; empty for anything else, or a body
-// that cannot be read as its type says.
+// String(value) gives it in JavaScript (of a JSON object, the fields the
+// routes read, bodyFields); empty for anything else, or a body that cannot
+// be read as its type says.
 func readBody(r *http.Request, data []byte) map[string]string {
+	return readBodyFields(r, data, bodyFields)
+}
+
+func readBodyFields(r *http.Request, data []byte, fields []string) map[string]string {
 	kind, _ := header(r, "content-type")
 	out := map[string]string{}
 	switch {
@@ -264,9 +273,12 @@ func readBody(r *http.Request, data []byte) map[string]string {
 		}
 		switch t := v.(type) {
 		case *js.Object:
-			for _, k := range t.Keys() {
-				value, _ := t.Get(k)
-				out[k] = jsText(value, true)
+			// Only the fields a route reads are written out as text: a
+			// body may hold a megabyte of others.
+			for _, k := range fields {
+				if value, ok := t.Get(k); ok {
+					out[k] = jsText(value, true)
+				}
 			}
 		default:
 			return nil

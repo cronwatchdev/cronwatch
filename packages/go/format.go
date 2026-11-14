@@ -183,15 +183,31 @@ func jsText(v any, present bool) string {
 	case float64:
 		return js.FormatNumber(t)
 	case []any:
-		parts := make([]string, len(t))
-		for i, e := range t {
-			if e != nil {
-				parts[i] = jsText(e, true)
-			}
-		}
-		return strings.Join(parts, ",")
+		// Written into one builder: joining each level's parts copies a
+		// nested list's text once per level, which a body of lists inside
+		// lists makes quadratic.
+		var b strings.Builder
+		writeListText(&b, t)
+		return b.String()
 	}
 	return "[object Object]"
+}
+
+// writeListText writes a list as Array.prototype.join(",") does: each
+// element as jsText writes it, null as nothing.
+func writeListText(b *strings.Builder, list []any) {
+	for i, e := range list {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		switch t := e.(type) {
+		case nil:
+		case []any:
+			writeListText(b, t)
+		default:
+			b.WriteString(jsText(t, true))
+		}
+	}
 }
 
 func (d Definition) text(key string) string {

@@ -19,6 +19,12 @@ type Entry struct {
 	Name string
 	// Where names the entry in messages: `robfig/cron entry 3 (jobs.Nightly)`.
 	Where string
+	// Key stands for Where in what is remembered as reported, for a Where
+	// that holds an id the scheduler gives each entry
+	// (`robfig/cron entry (jobs.Nightly)`): a problem is then reported once
+	// for the job, not once for each entry of it the scheduler ever makes,
+	// and remembered once. "" for Where itself.
+	Key string
 	// Schedule and Timezone are the scheduler's schedule as CronWatch reads
 	// it, "" for none.
 	Schedule, Timezone string
@@ -49,8 +55,12 @@ type Watch struct {
 	mu   sync.Mutex
 	jobs map[string]*declared
 	// fallback are jobs declared for runs of jobs this watch did not declare.
-	fallback map[string]*cronwatch.Job
-	reported map[string]bool
+	fallback map[string]*fallbackJob
+	// lookups are the reads of the store under way, by name, and
+	// lookupsFrom when the next may be made after one ran out of time.
+	lookups     map[string]*lookup
+	lookupsFrom time.Time
+	reported    map[string]bool
 	// seen is whether this process ever declared an entry: until it has, it
 	// takes no job for one the scheduler dropped (a process that runs a
 	// check and no scheduler must not unschedule the app's jobs).
@@ -81,7 +91,7 @@ func NewWatch(cw *cronwatch.Client, tag, app, scheduler string) *Watch {
 	if app == "" {
 		app = AppName()
 	}
-	w := &Watch{cw: cw, tag: tag, appTag: AppTag(tag, app), scheduler: scheduler, jobs: map[string]*declared{}, fallback: map[string]*cronwatch.Job{}, reported: map[string]bool{}, pending: map[string]bool{}}
+	w := &Watch{cw: cw, tag: tag, appTag: AppTag(tag, app), scheduler: scheduler, jobs: map[string]*declared{}, fallback: map[string]*fallbackJob{}, lookups: map[string]*lookup{}, reported: map[string]bool{}, pending: map[string]bool{}}
 	w.settled = sync.NewCond(&w.mu)
 	return w
 }
@@ -173,7 +183,15 @@ func (w *Watch) AppTag() string { return w.appTag }
 // ReportOnce hands err to the client's error handler the first time this
 // process sees its message for that where.
 func (w *Watch) ReportOnce(err error, where string) {
-	key := where + "\x00" + err.Error()
+	w.ReportOnceAs(where+"\x00"+err.Error(), err, where)
+}
+
+// ReportOnceAs is ReportOnce remembered under key in place of the message
+// and where, for a message that holds an id the scheduler gives each
+// entry (a gocron job's UUID): keyed without it, a problem every such
+// entry has is reported once, and remembered once, however many entries
+// the scheduler makes over its life.
+func (w *Watch) ReportOnceAs(key string, err error, where string) {
 	w.mu.Lock()
 	seen := w.reported[key]
 	w.reported[key] = true
@@ -227,7 +245,7 @@ func (w *Watch) Declare(entries []Entry) {
 		var times []string
 		for _, e := range group {
 			if e.Problem != nil {
-				w.ReportOnce(e.Problem, "declaring "+e.Where)
+				w.reportEntry(e, e.Problem)
 			}
 			text := e.Schedule
 			if e.Timezone != "" {
@@ -242,8 +260,8 @@ func (w *Watch) Declare(entries []Entry) {
 		}
 		if len(times) > 1 {
 			sched, zone = "", ""
-			w.ReportOnce(fmt.Errorf("cronwatch: %s is run by %d %s entries on different schedules (%s), so it is watched without a schedule; give each a name of its own",
-				js.Quote(name), len(group), w.scheduler, strings.Join(times, "; ")), "declaring "+first.Where)
+			w.reportEntry(first, fmt.Errorf("cronwatch: %s is run by %d %s entries on different schedules (%s), so it is watched without a schedule; give each a name of its own",
+				js.Quote(name), len(group), w.scheduler, strings.Join(times, "; ")))
 		}
 		options := slices.Clone(first.Defaults)
 		if sched != "" {
@@ -272,6 +290,36 @@ func (w *Watch) Declare(entries []Entry) {
 		w.mu.Unlock()
 		w.declare(name, js.Quote(name), Unscheduled(def), false)
 	}
+}
+
+// reportEntry reports a problem with an entry once, as "declaring
+// <where>", remembered with the entry's Key in place of its Where.
+func (w *Watch) reportEntry(e Entry, err error) {
+	where := "declaring " + e.Where
+	if e.Key == "" || e.Key == e.Where {
+		w.ReportOnce(err, where)
+		return
+	}
+	w.ReportOnceAs("declaring "+e.Key+"\x00"+strings.ReplaceAll(err.Error(), e.Where, e.Key), err, where)
+}
+
+// Signature is what Declare would declare for these entries, as text: each
+// name with its schedules, zones, and whether it has a problem, in name
+// order, whatever order or number the entries come in. An integration that
+// syncs at each of its scheduler's events compares it with the last one it
+// synced, and leaves the store alone when nothing an event changed shows
+// in it (one more one-time job of a name already declared, say).
+func Signature(entries []Entry) string {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		problem := ""
+		if e.Problem != nil {
+			problem = "!"
+		}
+		lines = append(lines, js.Stringify([]any{e.Name, e.Schedule, e.Timezone, problem, js.Stringify(cronwatch.DescribeJob(e.Name, slices.Concat(e.Defaults, e.Options)...))}))
+	}
+	slices.Sort(lines)
+	return strings.Join(slices.Compact(lines), "\n")
 }
 
 // tagged is options with the integration's and the app's tags added to

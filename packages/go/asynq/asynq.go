@@ -55,6 +55,27 @@
 // asynq.RevokeTask gives the task back without failing: its run is taken
 // back (cronwatch.DiscardWhen), nothing is judged, and no alert is sent.
 //
+// # Timeouts
+//
+// Asynq ends a task, not CronWatch. A task's context keeps the deadline
+// Asynq gave it (asynq.Timeout, asynq.Deadline, or Asynq's default of 30
+// minutes) whenever that is later than the job's timeout
+// (cronwatch.Timeout, an hour unless set): the middleware never cuts a
+// task Asynq allows longer (cronwatch.KeepDeadline). The job's timeout is
+// then only when a check reports the run stuck; the run recovers when the
+// task finishes. Only a task whose context has no deadline, or one that
+// ends sooner than the job's timeout, is bounded by the job's timeout as
+// job.Run bounds any run, which for a deadline that ends sooner changes
+// nothing.
+//
+// The store is never read with the task's own context before the handler
+// runs: finding the job a task type belongs to has a deadline of its own
+// (five seconds, or half of what the task has left when that is less;
+// bridge.LookupContext), tasks of one type share one read, and after a
+// read that ran out of time none is made for fifteen seconds. So a store
+// that does not answer costs a task a moment and its run goes unrecorded;
+// the handler always gets the task's context as Asynq made it.
+//
 // # The check
 //
 // CheckTask is a task of type "cronwatch:check" and CheckHandler its
@@ -329,7 +350,7 @@ func (w *Watcher) Middleware() asynq.MiddlewareFunc {
 			}
 			return job.Run(ctx, func(ctx context.Context, _ *cronwatch.JobContext) error {
 				return next.ProcessTask(ctx, task)
-			}, cronwatch.WithTrigger(Trigger), cronwatch.DiscardWhen(func(err error) bool { return errors.Is(err, asynq.RevokeTask) }))
+			}, cronwatch.WithTrigger(Trigger), cronwatch.KeepDeadline(), cronwatch.DiscardWhen(func(err error) bool { return errors.Is(err, asynq.RevokeTask) }))
 		})
 	}
 }
@@ -342,23 +363,30 @@ func (w *Watcher) jobFor(ctx context.Context, taskType string) *cronwatch.Job {
 	if job := w.watch.Job(taskType); job != nil {
 		return job
 	}
-	options, listed := w.options.Tasks[taskType]
-	if !listed {
-		// A type the store holds as this app's job: a scheduler in another
-		// process declared it. Looked up once a minute per type.
-		w.mu.Lock()
-		checked, seen := w.unknown[taskType]
-		w.mu.Unlock()
-		if seen && time.Since(checked) < lookupEvery {
-			return nil
-		}
-		summary, err := w.cw.JobSummary(ctx, taskType)
-		if err != nil || summary == nil || !slices.Contains(summary.Definition.Tags(), w.watch.AppTag()) {
-			w.noteUnknown(taskType, time.Now())
-			return nil
-		}
+	// The store is read before the handler runs, with a context of its own
+	// that ends soon (bridge.LookupContext), never the task's: a store that
+	// does not answer then costs the task a moment, where the task's own
+	// context had it wait out its whole deadline and run with none left,
+	// a task CronWatch does not watch included.
+	lookup, cancel := bridge.LookupContext(ctx)
+	defer cancel()
+	if options, listed := w.options.Tasks[taskType]; listed {
+		return w.watch.Fallback(lookup, taskType, options)
 	}
-	return w.watch.Fallback(ctx, taskType, options)
+	// A type the store holds as this app's job: a scheduler in another
+	// process declared it. A type that is not one is looked up once a
+	// minute; tasks of one type arriving at once share one read.
+	w.mu.Lock()
+	checked, seen := w.unknown[taskType]
+	w.mu.Unlock()
+	if seen && time.Since(checked) < lookupEvery {
+		return nil
+	}
+	job := w.watch.Stored(lookup, taskType)
+	if job == nil {
+		w.noteUnknown(taskType, time.Now())
+	}
+	return job
 }
 
 // maxUnknown bounds the task types remembered as not jobs: past it the
