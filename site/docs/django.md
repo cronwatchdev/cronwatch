@@ -49,7 +49,7 @@ The client is made from these settings the first time something asks for it, thr
 
 A job handle keeps the client it was declared on, and the new client does not rebind it: a handle made at import, such as `nightly_report` below, still records to the old client's store under `override_settings`. In a test that swaps the store, declare the job again on the current client (`client().job("nightly-report", ...)`) and run it through that handle.
 
-`DEBUG` stands in for the environment when none of `CRONWATCH_ENV`, `APP_ENV`, and `ENVIRONMENT` is set: on is development, off is production. In development the dashboard makes a token of its own when there is none and prints its sign-in link to the console. In production, without a token, it answers 503 rather than serve your jobs to anyone.
+`DEBUG` stands in for the environment when none of `CRONWATCH_ENV`, `APP_ENV`, and `ENVIRONMENT` is set: on is development, off is production. In development the dashboard makes a token of its own when there is none and prints its sign-in link to the console. In production, without a token, it answers 503 rather than serve your jobs to anyone. `TOKEN` and `CRON_SECRET` can be left out, since `CRONWATCH_TOKEN` and `CRON_SECRET` are read for you. Never write `os.environ.get("CRONWATCH_TOKEN")` without a default, as above: for a variable that is not set it gives `None`, which opens the dashboard (with a warning, once, when `DEBUG` is off). To serve it open on purpose, behind your own auth, say so by name with `"TOKEN": cronwatch.OPEN`.
 
 The link names the host only when `ORIGIN` is set or the request's host is loopback, such as `localhost` or `127.0.0.1` (a Host header such as `localhost:1@evil.example` does not count); otherwise it is a path to open on this server.
 

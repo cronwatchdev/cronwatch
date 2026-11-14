@@ -52,6 +52,8 @@ Any client that launches stdio servers:
 | Drupal or Craft CMS | `https://yoursite.com/cronwatch`, once a token is set ([Drupal](/docs/drupal/), [Craft CMS](/docs/craft/)) |
 | WordPress | `https://yoursite.com/wp-json/cronwatch/v1`, once the JSON API is on in the plugin's settings ([WordPress](/docs/wordpress/)) |
 
+The URL is an http or https address with no user name, password, query, or fragment; anything else is refused at startup. A redirect from the dashboard is reported as an error and never followed, so give the address the dashboard answers at directly.
+
 **`CRONWATCH_TOKEN`** is the token your app reads from its own `CRONWATCH_TOKEN` (the WordPress plugin's comes from its settings), the one you sign in to the dashboard with. Choose any long random string, set it in the app's environment, and give the same one here:
 
 ```bash

@@ -44,7 +44,13 @@ cronwatch({ store: postgres({ connectionString: process.env.DATABASE_URL }) });
 cronwatch({ store: postgres({ pool, prefix: "monitoring_" }) });
 ```
 
-`connectionString` defaults to `DATABASE_URL`.
+`connectionString` defaults to `DATABASE_URL`. When the store makes its own pool, a connection lost while idle (a database restart, a failover) is dropped quietly; pass `onError` to `postgres()` to hear of it. A pool you pass in is yours, so give it its own `error` listener, as `pg` asks of every pool: without one, Node ends the process on that event.
+
+The store's own pool also gives up on a connection after five seconds (`connectionTimeoutMillis: 5000`) and turns on TCP keepalive (`keepAlive: true`), where `pg` alone waits for a connection without limit. So a database that cannot be reached, or a pool with every connection busy, fails a write after five seconds, and the failure goes to `onError` like any other store error, where it would have held the write for good. Pass `poolOptions` to change either, or to set anything else `pg.Pool` takes (`max`, `ssl`, `statement_timeout`); they go to the pool as given. A pool you pass in keeps the timeouts you made it with, so set them there.
+
+```ts
+cronwatch({ store: postgres({ poolOptions: { connectionTimeoutMillis: 2000, max: 5, statement_timeout: 10_000 } }) });
+```
 
 A `prefix` must be a plain lowercase identifier: lowercase letters, digits, and underscores, not starting with a digit, at most 47 characters. Anything else throws when the store is created rather than being changed quietly. Uppercase is refused because Postgres folds unquoted names to lowercase, so `Monitoring_` would become `monitoring_` behind your back.
 

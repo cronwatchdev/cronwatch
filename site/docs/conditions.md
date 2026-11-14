@@ -25,7 +25,7 @@ Alerts on the first failure by default. Set `failuresBeforeAlert: 3` to wait for
 
 ## stuck
 
-A run started and never reported finishing within `timeout`. Marked as `timeout` by the next check, counted as a failure. Usually a killed process: a serverless limit, a deploy, an OOM. Closes when the next run starts; the recovered message follows the next successful run.
+A run started and never reported finishing within `timeout`. Marked as `timeout` by the next check, counted as a failure. Usually a killed process: a serverless limit, a deploy, an OOM. It stays open until a run finishes successfully, which closes it with the recovered message. A later run that only starts leaves it open, and so does one that fails or times out in its turn, so a job that hangs on every run alerts once, not once per run. If the stuck run itself reports back later, a success closes stuck and a failure is not counted a second time.
 
 A run started with `job.start()` and never finished is caught the same way. See [Runs that span calls](#runs-that-span-calls).
 
@@ -122,7 +122,7 @@ same.log("sent 40 emails");
 await same.finish();                                  // or same.fail(error)
 ```
 
-Starting closes missed and stuck like any run starting. Finishing is judged like any run finishing: `expect`, failures, duration from the start, budgets. It opens nothing a finished `run()` would not. A run that is never finished is marked stuck after the job's `timeout`, so set `timeout` to cover the whole span, waits included. See [the run handle](/docs/api/#the-run-handle).
+Starting closes missed like any run starting, and leaves stuck open, as any start does. Finishing is judged like any run finishing: `expect`, failures, duration from the start, budgets. It opens nothing a finished `run()` would not. A run that is never finished is marked stuck after the job's `timeout`, so set `timeout` to cover the whole span, waits included. See [the run handle](/docs/api/#the-run-handle).
 
 A run is judged once, however many times it is finished. The finish is written only while the stored run is still running (or marked timed out by a check), in one step, so when two processes finish the same run at once (a queue that delivers the completion twice, say) one records it and counts it, and the other gets `null` and hears through `onError` that the run was already finished. The built-in stores do this; a custom store without `updateRunIf` falls back to a read then a write, which is only safe when one process finishes a given run. A finish that arrives after a check marked the run stuck is still recorded: a success closes stuck with a recovery, and a failure is not counted a second time.
 

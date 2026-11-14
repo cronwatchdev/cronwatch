@@ -31,7 +31,7 @@ The key comes from the Anthropic SDK's usual environment, normally `ANTHROPIC_AP
 |---|---|---|
 | `model` | `claude-opus-5` | any current model id |
 | `effort` | `medium` | `low`, `medium`, or `high` |
-| `maxTokens` | `800` | a diagnosis is a paragraph |
+| `maxTokens` | `4096` | a diagnosis is a paragraph, but the model's thinking counts toward the limit too |
 | `context` | | a sentence about the app, so advice is specific |
 | `fallbacks` | `true` | route a policy refusal to Anthropic's default fallback model inside the same request. Turn off if your account or gateway rejects the beta. |
 
@@ -39,7 +39,7 @@ The key comes from the Anthropic SDK's usual environment, normally `ANTHROPIC_AP
 
 Triage runs only when an alert is sent, never per run, so it costs roughly one short request per incident: every missed, failed, stuck, slow, and over-budget alert, but never a recovery. It gets 25 seconds; if the request is slower or fails, the alert goes out without a diagnosis and the error is reported through `onError`. The request is made once, without retries, and is cancelled when the 25 seconds are up, so it never runs on after the alert has gone.
 
-Triage runs once per alert, whatever happens to it. When it gives nothing (it threw, timed out, or answered empty) the alert's `triage` is `null`, and it is not asked again when the alert is retried. An alert that a channel has not accepted is queued with its diagnosis, so a later retry sends the same one. Alerts queued by a `deliver: "check"` process are triaged by the check that first retries them, within that check's 20 second retry budget.
+Triage runs once per alert, whatever happens to it. When it gives nothing (it threw, timed out, answered empty, or reached `maxTokens` before writing any diagnosis, which is reported through `onError`) the alert's `triage` is `null`, and it is not asked again when the alert is retried. An alert that a channel has not accepted is queued with its diagnosis, so a later retry sends the same one. Alerts queued by a `deliver: "check"` process are triaged by the check that first retries them, within that check's 20 second retry budget.
 
 ## What is sent
 

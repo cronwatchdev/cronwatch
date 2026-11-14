@@ -67,7 +67,7 @@ with nightly.run() as ctx:
     ctx.metric("cost", 1.2)            # watched against budgets and baselines
 ```
 
-The run is recorded when the block ends. An exception inside it is recorded as the failure and raised again, so your own error handling still works; that includes a `KeyboardInterrupt` or `SystemExit` that stops the block, so a run is never left running to be reported stuck later.
+The run is recorded when the block ends. An exception inside it is recorded as the failure and raised again, so your own error handling still works; that includes a `KeyboardInterrupt` or `SystemExit` that stops the block, so a run is never left running to be reported stuck later. A store that hangs holds the job back five seconds at most: past that the job runs, the delay is reported to `on_error`, and the run is recorded when it finishes.
 
 A function works the same way, passed to `run`, which returns what the function returns (a string it returns is the run's output when nothing was logged), or as a decorator, where every call is a run and `cronwatch.current()` is its context:
 
@@ -160,7 +160,7 @@ application = cw.routes()
 
 `cw.routes(token=..., base_path=..., origin=..., trust_proxy=False)`:
 
-- `token`: leave it out to read `CRONWATCH_TOKEN`; an empty string or one of only whitespace, given here or in the variable, counts as unset, and anything but a string or `None` (`False`, a number) raises `TypeError`. `None` opts out and serves the routes open, for a mount behind your own auth.
+- `token`: leave it out to read `CRONWATCH_TOKEN`; an empty string or one of only whitespace, given here or in the variable, counts as unset, and anything but a string or `None` (`False`, a number) raises `TypeError`. `cronwatch.OPEN` opts out and serves the routes open, for a mount behind your own auth. `None` does the same, and outside development logs a warning once, because `None` is also what `os.environ.get("CRONWATCH_TOKEN")` returns when the variable is not set, so a line meant to read the token would serve the dashboard to anyone. Leave `token` out, or read the variable with `os.environ["CRONWATCH_TOKEN"]` or `os.environ.get("CRONWATCH_TOKEN", "")`, never `os.environ.get(...)` without a default. The same goes for `cron_secret` and a handler's `secret`.
 
   Without a token, in development, the routes make a token of their own and print a sign-in link to standard output on the first request. Anywhere else they answer 503. The environment is the first of `CRONWATCH_ENV`, `APP_ENV`, and `ENVIRONMENT` that holds more than spaces (where the SDK reads `NODE_ENV` third), trimmed and lowercased; `development`, `dev`, and `local` count as development (not `test` or `testing`), and `production` and `prod` as production, as in every CronWatch library.
 
@@ -191,7 +191,7 @@ lambda_handler = hook.aws_lambda
 
 `.django` is a Django view (see [Django](/docs/django/#jobs-a-platform-cron-calls)), `.aws_lambda` takes Lambda's `(event, context)` and returns the response dict API Gateway and function URLs expect, and `.wsgi` and `.asgi` are apps of their own. Called directly with a request, the handler answers in that request's own kind. An `async def` function gives an async handler.
 
-The secret is `handler(fn, secret=...)`, else the client's `cron_secret`, which reads `CRON_SECRET` by default; it is compared in constant time. A wrong or missing bearer is answered 401 and runs nothing. With no secret at all, outside development, the handler answers 503 and reports it once to `on_error`, rather than let anyone on the internet run the job; `secret=None` opts out on purpose, for an endpoint your platform already protects. A run is answered 200 or 500 with `{"ok", "job", "run", "status", "durationMs"}`, and a function that returns a response of its own is answered with it.
+The secret is `handler(fn, secret=...)`, else the client's `cron_secret`, which reads `CRON_SECRET` by default; it is compared in constant time. A wrong or missing bearer is answered 401 and runs nothing. With no secret at all, outside development, the handler answers 503 and reports it once to `on_error`, rather than let anyone on the internet run the job; `secret=cronwatch.OPEN` opts out on purpose, for an endpoint your platform already protects (`secret=None` does too, with a warning once outside development, since it is what `os.environ.get("CRON_SECRET")` returns for a variable that is not set). A run is answered 200 or 500 with `{"ok", "job", "run", "status", "durationMs"}`, and a function that returns a response of its own is answered with it.
 
 A response with a status of 400 or more fails the run, recorded as `HTTP <status>` and its reason, whether a handler, `run()`, or `finish(result=...)` got it. Django, Flask, Starlette and FastAPI, requests, httpx, and `http.client` responses are all recognised, so a job that calls an API and returns its answer fails when the API does.
 
@@ -407,7 +407,7 @@ cw = cronwatch.Cronwatch(triage=Anthropic(context="A Flask app on Postgres, jobs
 |---|---|---|
 | `model` | `"claude-opus-5"` | any current model id |
 | `effort` | `"medium"` | `"low"`, `"medium"`, or `"high"` |
-| `max_tokens` | `800` | a diagnosis is a paragraph |
+| `max_tokens` | `4096` | a diagnosis is a paragraph, but the model's thinking counts toward the limit; an answer that reaches it before any text is reported to `on_error` and the alert goes out without a diagnosis |
 | `context` | | a sentence about the app, so advice is specific |
 | `fallbacks` | `True` | route a policy refusal to Anthropic's default fallback model inside the same request. Turn off if your account or gateway rejects the beta |
 | `api_key` | what the `anthropic` package resolves, normally `ANTHROPIC_API_KEY` | |
@@ -427,7 +427,7 @@ A triage of your own is any function that takes the context (`alert`, `recent_ru
 | `alerts` | console | a list of channels. `[]` sends nothing |
 | `triage` | | a function returning a diagnosis |
 | `sources` | | where runs this process does not wrap come from, such as [pg_cron](#pg-cron). Each is synced at the start of every check; one that raises is reported to `on_error` and the check carries on |
-| `cron_secret` | `$CRON_SECRET` | the bearer the dashboard's check endpoint accepts beside the token. `""` or only whitespace, given here or in the variable, counts as unset; `None` means none on purpose; anything else (`False`, a number) raises `TypeError` |
+| `cron_secret` | `$CRON_SECRET` | the bearer the dashboard's check endpoint accepts beside the token. `""` or only whitespace, given here or in the variable, counts as unset; `cronwatch.OPEN` means none on purpose (`None` too, but a handler left open by it warns once outside development); anything else (`False`, a number) raises `TypeError` |
 | `retention` | `"30d"` | how long finished runs are kept. Each job's newest run is always kept |
 | `defaults` | | `grace`, `timeout`, `timezone`, `failures_before_alert` applied to every job that does not set its own |
 | `redact` | secret patterns | a function applied to output and errors; `False` keeps them as logged. See [Redaction](#redaction) |
@@ -437,7 +437,7 @@ A triage of your own is any function that takes the context (`alert`, `recent_ru
 
 `cw.job(name, **options)` takes `schedule` (five or six field cron, a nickname such as `"@hourly"`, or `"every 5m"`), `timezone` (IANA; the process's zone by default), `grace` (`"10m"`), `timeout` (`"1h"`), `max_duration`, `budget` (`{"metric": ceiling}`), `floor` (`{"metric": floor}`), `expect` (a string the output must contain, a compiled `re` pattern it must match, or a function), `failures_before_alert` (1), `description`, and `tags`, with the rules in the [API reference](/docs/api/). An `expect` pattern, like an `expect` function, runs in your process with no time limit, so keep it clear of repeats that can backtrack without end (see [expect rules](/docs/conditions/#expect-rules)). A name is 1 to 120 letters, digits, `.`, `_`, `:`, or `-`, starting with a letter or digit. Bad options raise `ValueError` when the job is declared.
 
-`timeout` and `max_duration` both measure a run's length, and are easy to mix up. `timeout` is for a run that has not finished: once a running run is older than it, the next check gives up on it (the run becomes `timeout`, a failure) and the job is stuck. `max_duration` is for a run that finished: one that succeeded but took longer is slow, and stays a success. So set `timeout` well above `max_duration`: `max_duration="10m", timeout="1h"` hears about a run that crept past ten minutes, and gives up on one still going after an hour.
+`timeout` and `max_duration` both measure a run's length, and are easy to mix up. `timeout` is for a run that has not finished: once a running run is older than it, the next check gives up on it (the run becomes `timeout`, a failure) and the job is stuck, until a run finishes ok: a later run only starting, or timing out too, neither closes stuck nor alerts again. `max_duration` is for a run that finished: one that succeeded but took longer is slow, and stays a success. So set `timeout` well above `max_duration`: `max_duration="10m", timeout="1h"` hears about a run that crept past ten minutes, and gives up on one still going after an hour.
 
 The client:
 
