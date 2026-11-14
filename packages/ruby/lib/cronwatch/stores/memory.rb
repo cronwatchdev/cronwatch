@@ -10,8 +10,12 @@ module Cronwatch
     # get_job, list_jobs, delete_job, insert_run, update_run, update_run_if
     # (optional: without it the client reads the run, then writes it), get_run,
     # list_runs, last_run, running_runs, get_state, set_state, compare_and_set_state
-    # (optional: without it the client falls back to set_state), prune, and close
-    # (optional). They take and return the types in types.rb.
+    # (optional: without it the client falls back to set_state), prune, close
+    # (optional), and abandonable? (optional: true when a call may be made
+    # from, and left behind in, a thread other than the caller's, which lets
+    # run give up on a start write that hangs; without it the client calls
+    # the store on the caller's thread and waits). They take and return the
+    # types in types.rb.
     class Memory
       def initialize
         @jobs = {}
@@ -20,6 +24,12 @@ module Cronwatch
         @states = {}
         @seq = 0
         @lock = Mutex.new
+      end
+
+      # Nothing here belongs to the thread that calls it, so a call may be
+      # made from, and left behind in, another (Client#record_execute_start).
+      def abandonable?
+        true
       end
 
       def upsert_job(definition, now)

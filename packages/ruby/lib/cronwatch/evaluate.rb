@@ -563,14 +563,17 @@ module Cronwatch
     end
 
     # Called when a run starts, or when a run a source reports is recorded.
-    # Missed and stuck are about the absence of a run, so a run starting
-    # closes them without an alert; the recovered message waits for a
-    # successful finish. Missed closes only when the run catches the schedule
-    # up (catches_up?), which a run starting now always does.
+    # Missed is about the absence of a run, so a run starting closes it
+    # without an alert; the recovered message waits for a successful finish.
+    # It closes only when the run catches the schedule up (catches_up?),
+    # which a run starting now always does. Nothing else closes here. Stuck
+    # in particular stays open: a run that has only started may hang as the
+    # last one did, and closing stuck for it would open it, and alert, again
+    # at every timeout of a job that hangs every time. Only a run that
+    # finishes ok closes stuck.
     def on_run_start(definition, run, state, now)
       next_state = clone_state(state)
       close_condition(next_state, :missed) if catches_up?(definition, run, now)
-      close_condition(next_state, :stuck)
       next_state
     end
 

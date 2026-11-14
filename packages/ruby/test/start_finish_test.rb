@@ -311,6 +311,58 @@ class StartFinishTest < Minitest::Test
     assert_nil run.finish, "finished once only"
   end
 
+  def test_a_secret_that_starts_in_one_flush_and_ends_in_the_next_is_redacted_whole
+    cw, = client
+    job = cw.job("deploy")
+    run = job.start
+    run.log("starting")
+    run.log("-----BEGIN PRIVATE KEY-----")
+    run.log("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj")
+    run.flush
+    assert_equal "starting\n[redacted]", cw.get_run(run.id).output
+    run.log("MFNRV0X0e1nSecondHalfOfTheKeySecondHalfOfTheKeySecondHalfOfTheKe")
+    run.log("-----END PRIVATE KEY-----")
+    run.log("api_token:")
+    run.flush
+    assert_equal "starting\n[redacted]\napi_token:", cw.get_run(run.id).output
+    # A label flushed, then its value: at the next flush, and again at finish.
+    run.log("hunter2hunter2")
+    run.flush
+    assert_equal "starting\n[redacted]\napi_token:\n[redacted]", cw.get_run(run.id).output
+    run.log("password:")
+    run.flush
+    run.log("correct-horse")
+    finished = run.finish
+    assert_equal "starting\n[redacted]\napi_token:\n[redacted]\npassword:\n[redacted]", finished.output
+    refute_match(/SecondHalf|hunter2|correct-horse/, json(cw.get_run(run.id)))
+    assert_empty @errors
+  end
+
+  def test_flushes_after_another_process_wrote_to_the_run_still_append_each_redacted
+    cw, = client
+    run = cw.job("deploy").start
+    run.log("one")
+    run.flush
+    # Another handle on the same run (another process) appends in between.
+    other = cw.job("deploy").resume(run.id)
+    other.log("from elsewhere")
+    other.flush
+    run.log("token=abc123abc123")
+    run.flush
+    assert_equal "one\nfrom elsewhere\ntoken=[redacted]", cw.get_run(run.id).output
+    # A long run: the remembered tail stays bounded and the output capped.
+    6.times do |i|
+      run.log("line #{i} #{"x" * 6000}")
+      run.flush
+    end
+    run.log("secret=tail-secret-value")
+    finished = run.finish
+    assert_operator finished.output.length, :<=, (16 * 1024) + 40
+    assert_match(/secret=\[redacted\]\z/, finished.output)
+    refute_match(/tail-secret-value/, finished.output)
+    assert_empty @errors
+  end
+
   # Not in the SDK's file: a failed flush keeps its lines for finish, ahead of those logged since.
   def test_a_flush_that_cannot_write_keeps_its_lines_for_finish
     broken = Set.new

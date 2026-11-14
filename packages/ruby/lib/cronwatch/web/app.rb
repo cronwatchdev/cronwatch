@@ -32,7 +32,9 @@ module Cronwatch
   #            With no token while Cronwatch::Environment is development
   #            (Environment.stated_development?: under Puma, Unicorn,
   #            Thin, or rackup, which set RACK_ENV=development by default,
-  #            RACK_ENV alone does not count), the app makes a random one and
+  #            RACK_ENV alone does not count), the client makes a random one
+  #            (kept for every app built for it, so a Rails reload of
+  #            config/routes.rb does not sign the browser out) and the app
   #            prints a sign-in link to stdout on its first request; with no
   #            token otherwise it answers 503. Pass `token: nil` to opt out and serve it open everywhere,
   #            for example behind your own auth. /api/check also accepts the
@@ -125,7 +127,11 @@ module Cronwatch
       # alike), so development gets a token too: made here, and shown only in
       # the server log.
       @generated = @token.nil? && !@opted_out && Environment.stated_development?
-      @token = Web.development_token if @generated
+      # The client's, so that an app built again for the same client (Rails
+      # builds one each time it reloads config/routes.rb, after any change to
+      # the app's code) keeps the token a browser has already signed in with.
+      @sign_in = (client ? client.development_sign_in : DevelopmentSignIn.new) if @generated
+      @token = @sign_in.token if @generated
       Web.warn_short_token(@token) unless @generated
       @announced = false
       @announce_lock = Mutex.new
@@ -146,8 +152,33 @@ module Cronwatch
            "such as the output of `ruby -rsecurerandom -e 'puts SecureRandom.urlsafe_base64(32)'`"
     end
 
-    # A token for one app in development, when none is configured: 32 random
-    # bytes, base64url (43 characters).
+    # The development token of one client, and the sign-in lines printed for
+    # it: every app built for the client shares them (Client#development_sign_in),
+    # so the token outlives the app and a line is printed once, however many
+    # times the app is built again.
+    #
+    # @api private
+    class DevelopmentSignIn
+      attr_reader :token
+
+      def initialize
+        @token = Web.development_token
+        @printed = {}
+        @lock = Mutex.new
+      end
+
+      # Whether `line` has not been printed for this client before.
+      def first?(line)
+        @lock.synchronize do
+          next false if @printed[line]
+
+          @printed[line] = true
+        end
+      end
+    end
+
+    # A token for one client in development, when none is configured: 32
+    # random bytes, base64url (43 characters).
     def self.development_token
       Base64.urlsafe_encode64(SecureRandom.random_bytes(32), padding: false)
     end
@@ -444,7 +475,8 @@ module Cronwatch
       end
     end
 
-    # Prints the development sign-in link, once per app.
+    # Prints the development sign-in link on the app's first request, unless
+    # an earlier app of the same client printed the same line.
     def announce(request, base)
       first = @announce_lock.synchronize do
         next false if @announced
@@ -455,7 +487,10 @@ module Cronwatch
 
       own = request_origin(request)
       shown = @origin || (Web.loopback_origin?(own) ? own : nil)
-      $stdout.puts(Web.development_sign_in_line(shown, base, @token))
+      line = Web.development_sign_in_line(shown, base, @token)
+      return unless @sign_in.first?(line)
+
+      $stdout.puts(line)
       $stdout.flush
     end
 
@@ -708,10 +743,15 @@ module Cronwatch
         "/#{out.join("/")}"
       end
 
+      # A header's value as valid UTF-8, or nil. A server hands the bytes
+      # over as they came (Puma as ASCII-8BIT), and a cookie or an
+      # Authorization header may hold any: bytes that are not UTF-8 become
+      # U+FFFD, so nothing that reads the value can raise on its encoding.
       def header(name)
         key = name.tr("-", "_").upcase
         key = "HTTP_#{key}" unless %w[CONTENT_TYPE CONTENT_LENGTH].include?(key)
-        @env[key]
+        value = @env[key]
+        value.nil? ? nil : Output.utf8(value)
       end
 
       # scheme://host[:port], the page's origin as the request URL gives it

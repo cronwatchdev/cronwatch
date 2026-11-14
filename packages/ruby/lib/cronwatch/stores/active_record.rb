@@ -97,10 +97,25 @@ module Cronwatch
             config = ::ActiveRecord::DatabaseConfigurations::HashConfig.new(
               db_config.env_name, "#{db_config.name}_cronwatch", db_config.configuration_hash,
             )
-            ::ActiveRecord::Base.connected_to(role: ::ActiveRecord.writing_role) { klass.establish_connection(config) }
+            # What klass.establish_connection does, but on the default shard
+            # whichever shard the app has swapped to when the store is first used.
+            klass.connection_specification_name = klass.name
+            klass.connection_handler.establish_connection(config, owner_name: klass, role: ::ActiveRecord.writing_role,
+                                                                  shard: klass.default_shard)
             klass
           end
         end
+      end
+
+      # The store's own pool for `db_config`. It is on the default shard
+      # alone, so it is asked for by name: connection_pool would look for it
+      # on the shard the app has swapped to (connected_to(shard:), Rails'
+      # ShardSelector), where it is not.
+      def self.own_pool(db_config)
+        own = own_connection_class(db_config)
+        own.connection_handler.retrieve_connection_pool(
+          own.connection_specification_name, role: ::ActiveRecord.writing_role, shard: own.default_shard, strict: true,
+        )
       end
 
       # The SDK's schema, character for character (sql.ts `schema`).
@@ -277,6 +292,20 @@ module Cronwatch
         write(:prune, [before])
       end
 
+      # Whether a call may be made from, and left behind in, a thread other
+      # than the caller's (Client#record_execute_start): on Postgres, where
+      # the store has a pool of its own. On SQLite it uses the caller's
+      # connection and joins its transaction, which another thread would not.
+      def abandonable?
+        return @abandonable unless @abandonable.nil?
+
+        source = connection_class
+        found = source.connection_handler.retrieve_connection_pool(
+          source.connection_specification_name, role: ::ActiveRecord.writing_role, shard: source.default_shard,
+        ) || source.connection_pool
+        @abandonable = self.class.dialect(found.db_config.adapter) == :postgres
+      end
+
       # The pool belongs to the app; there is nothing to close.
       def close
         nil
@@ -298,7 +327,7 @@ module Cronwatch
         ) || source.connection_pool
         return found if self.class.dialect(found.db_config.adapter) == :sqlite
 
-        self.class.own_connection_class(found.db_config).connection_pool
+        self.class.own_pool(found.db_config)
       end
 
       # Every call runs on the writing role, even inside the app's

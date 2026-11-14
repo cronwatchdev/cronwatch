@@ -462,11 +462,47 @@ class OutboxTest < Minitest::Test
     clock.advance(LEASE + MIN)
     cw.check
     closed = store.get_run("lost-import")
-    assert_equal :timeout, closed.status
+    # The placeholder holds the run's own error, so it is closed as the failure it was, with its own times.
+    assert_equal :failed, closed.status
     assert_equal MIN, closed.duration_ms
-    assert_equal "Imported, but its finish was never written; marked as timed out\nboom", closed.error
-    assert_equal [:stuck], sent.types
-    refute_equal :healthy, cw.job_summary("imported").health
+    assert_equal run[:finished_at], closed.finished_at
+    assert_equal "boom", closed.error
+    assert_equal [:failed], sent.types
+    assert_equal :failing, cw.job_summary("imported").health
+    # The importer comes back and records the same run again: nothing changes, and nothing is counted twice.
+    assert_empty cw.record_run(run)
+    cw.check
+    assert_equal [:failed], sent.types
+    state = store.get_state("imported")
+    assert_equal 1, state.consecutive_failures
+    assert_equal [:failed], state.open.keys
+    assert_nil state.pending_runs
+    # The next imported success recovers it.
+    clock.advance(MIN)
+    cw.record_run(run.merge(id: "next-import", status: "ok", started_at: clock.now - 1000, finished_at: clock.now, duration_ms: 1000, error: nil))
+    assert_equal %i[failed recovered], sent.types
+  end
+
+  def test_a_stranded_import_with_an_error_and_no_duration_takes_its_duration_from_the_placeholder
+    store = Cronwatch::Stores::Memory.new
+    clock, sent = Clock.new, Capture.new
+    cw = Cronwatch.new(store: store, now: clock.to_proc, alerts: [sent], cron_secret: nil, on_error: ->(*) {})
+    cw.job("imported", timeout: "1m")
+    cw.check
+    started = clock.now - (2 * MIN)
+    # A placeholder as an importer that stopped left it: running, with a finish time.
+    placeholder = { id: "p", job: "imported", status: :running, started_at: started, finished_at: clock.now, duration_ms: nil,
+                    output: nil, metrics: {}, trigger: "source" }
+    store.insert_run(Cronwatch::Run.new(**placeholder, error: "boom"))
+    store.insert_run(Cronwatch::Run.new(**placeholder, id: "q", error: nil))
+    clock.advance(LEASE + MIN)
+    cw.check
+    failed = store.get_run("p")
+    assert_equal [:failed, "boom", 2 * MIN, started + (2 * MIN)], [failed.status, failed.error, failed.duration_ms, failed.finished_at]
+    silent = store.get_run("q")
+    assert_equal :timeout, silent.status
+    assert_equal "Imported, but its finish was never written; marked as timed out", silent.error
+    assert_equal %i[failed stuck], sent.types.sort
   end
 
   def test_an_evaluated_import_whose_finish_write_fails_after_its_marker_is_closed_and_a_late_success_recovers_it

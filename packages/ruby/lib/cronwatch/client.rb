@@ -29,6 +29,12 @@ module Cronwatch
     # Wall-clock time one check spends retrying undelivered alerts, across
     # every job. Once it is spent the rest wait for the next check.
     RETRY_BUDGET_MS = 20_000
+    # How long run waits for the store to record a run's start (the job's
+    # declaration and the run's row) before running the job without it. A
+    # store that fails does so sooner; this is for one that hangs. Only a
+    # store whose calls can be left behind in another thread is waited on
+    # this way (see record_execute_start).
+    START_DEADLINE_MS = 5_000
     # Reads and writes of one job's state before an update gives up on a store that keeps changing under it.
     STATE_ATTEMPTS = 10
     # Runs read for a baseline, and the most read when failures crowd out the successes.
@@ -51,12 +57,31 @@ module Cronwatch
     STRANDED_ERROR = "Imported, but its finish was never written; marked as timed out"
     private_constant :CHANNEL_TIMEOUT_MS, :DEFAULT_OPTIONS, :FORK_LOCK, :HISTORY_MAX, :HISTORY_PAGE, :MAX_RUN_ID,
                      :PRUNE_INTERVAL_MS, :RESERVED_RUN_ID_PREFIX, :RETRY_BUDGET_MS, :RUN_STATUSES, :SILENCE_OPTIONS,
-                     :STATE_ATTEMPTS, :STRANDED_ERROR, :TRIAGE_TIMEOUT_MS
+                     :START_DEADLINE_MS, :STATE_ATTEMPTS, :STRANDED_ERROR, :TRIAGE_TIMEOUT_MS
 
     # What execute returns: the recorded run, and the block's own outcome.
     #
     # @api private
     ExecuteResult = Struct.new(:run, :result, :error, :threw, keyword_init: true)
+    # A start write that execute gave up waiting for, still under way in its
+    # own thread, and what the two sides tell each other under `lock`:
+    # `landed` once the write is in the store, `concluded` once the finish
+    # has been recorded or has failed to be, with the finished `run` and
+    # whether to `judge` it.
+    #
+    # @api private
+    class StartWrite
+      attr_reader :lock
+      attr_accessor :abandoned, :landed, :concluded, :run, :judge
+
+      def initialize
+        @lock = Mutex.new
+        @abandoned = false
+        @landed = false
+        @concluded = false
+        @judge = true
+      end
+    end
     # What a channel's call receives with each alert (the SDK's ChannelContext).
     # on_error(error) reports a problem that did not stop the alert going
     # out, such as one of several recipients refusing it, to the client's on_error.
@@ -153,6 +178,7 @@ module Cronwatch
       @channel_timeout_ms = CHANNEL_TIMEOUT_MS
       @triage_timeout_ms = TRIAGE_TIMEOUT_MS
       @retry_budget_ms = RETRY_BUDGET_MS
+      @start_deadline_ms = START_DEADLINE_MS
       @warned_deferred_start = false
       reset_process_state
     end
@@ -224,7 +250,9 @@ module Cronwatch
     # outcome. A StandardError from the block is not raised; see `threw`. An
     # exception outside StandardError (Interrupt, SystemExit, Sidekiq::Shutdown,
     # a Timeout, NotImplementedError) is recorded as a failed run and then
-    # raised again, so the run is never left running.
+    # raised again, so the run is never left running. A block left by a
+    # `return` from the method around it, a `break`, or a `throw` is recorded
+    # as a run that returned nil, and the jump carries on.
     #
     # `failure` is an optional callable that turns the block's result into an
     # error message, or nil when the result is fine: an HTTP handler uses it to
@@ -244,15 +272,15 @@ module Cronwatch
       run = Run.new(id: SecureRandom.uuid, job: name, status: :running, started_at: started_at, finished_at: nil,
                     duration_ms: nil, error: nil, output: nil, metrics: {}, trigger: trigger)
       recorded = false
+      # The start write, when it was given up on and is still under way.
+      start = nil
       begin
-        sync(definition, confirm: true)
-        @store.insert_run(run.dup)
-        recorded = true
+        recorded, start = record_execute_start(definition, run)
       rescue StandardError => e
         report(e, "recording #{name}")
       end
-      # The SDK closes missed and stuck beside the running job; here it is done
-      # just before the block runs. The result is the same.
+      # The SDK closes missed beside the running job; here it is done just
+      # before the block runs. The result is the same.
       if recorded
         begin
           update_state(name) { |before| [Evaluate.hold_run(Evaluate.on_run_start(definition, run, before, now), run.id), nil] }
@@ -265,30 +293,32 @@ module Cronwatch
       result = nil
       error = nil
       threw = false
+      returned = false
       begin
         result = yield(recorder.context)
+        returned = true
       rescue Exception => e # rubocop:disable Lint/RescueException -- recorded, then raised again below
         error = e
         threw = true
       ensure
         recorder.signal.settle!
+        # The block left without returning or raising: a `return` from the
+        # method around it, a `break`, or a `throw`. The run is over all the
+        # same, so it is finished here, as one that returned nil, and the
+        # jump carries on to where it was going. A thread being killed is
+        # left alone: it has no time to write and send, and the stuck check
+        # reports its run.
+        if !returned && !threw && Thread.current.status != "aborting"
+          begin
+            finish_execution(definition, run, recorder, recorded, start, nil, nil, false, failure, requeued_on_shutdown)
+          rescue StandardError => e
+            # Raised from here it would replace the jump.
+            report(e, "recording #{name}")
+          end
+        end
       end
 
-      finished_at = now
-      run.finished_at = finished_at
-      run.duration_ms = Evaluate.run_duration(started_at, finished_at)
-      run.metrics = recorder.metrics
-      returned = result.is_a?(String) ? Output.utf8(result) : nil
-      run.output = recorder.output || returned
-
-      conclude(definition, run, result, error, threw, recorder.expect_text || returned, failure: failure)
-      begin
-        judge = !(requeued_on_shutdown && threw && Client.shutdown?(error))
-        ignored = record_finish(definition, run, recorded, finished_at, judge: judge)
-        report(RuntimeError.new("run #{run.id} of #{name} #{ignored}; ignored"), "finishing #{name}") if ignored
-      rescue StandardError => e
-        report(e, "recording #{name}")
-      end
+      finish_execution(definition, run, recorder, recorded, start, result, error, threw, failure, requeued_on_shutdown)
 
       raise error if threw && interrupted?(error)
 
@@ -498,7 +528,7 @@ module Cronwatch
     def job_summary(name)
       ensure_ready
       definition = @registry.synchronize { @definitions[name] }
-      sync(definition, confirm: true) if definition
+      sync(definition, confirm: true, running: false) if definition
       stored = @store.get_job(name)
       return nil unless stored
 
@@ -609,6 +639,14 @@ module Cronwatch
       Web.build(self, **options)
     end
 
+    # The development token every dashboard built for this client shares, and
+    # the sign-in lines printed for it (Web::DevelopmentSignIn).
+    #
+    # @api private For Cronwatch::Web, not apps.
+    def development_sign_in
+      @registry.synchronize { @development_sign_in ||= Web::DevelopmentSignIn.new }
+    end
+
     # Stop the checks start_checking began.
     def stop
       stop_ticker
@@ -648,6 +686,128 @@ module Cronwatch
     end
 
     private
+
+    # The start of execute: the job's declaration and the run's row, written
+    # before the block runs. Returns `[recorded, start]`. Raises what the
+    # store raises.
+    #
+    # A store that hangs must not hold the job back, so a store whose calls
+    # can be left behind (`abandonable?`: the memory store, and the
+    # ActiveRecord store on Postgres, which writes through a pool of its own)
+    # is written to from a thread of its own and given START_DEADLINE_MS.
+    # Past that the job runs as one whose start was never written, and
+    # `start` is the write still under way: it may land later, leaving a
+    # running row. One that lands before the finish is finished over as
+    # usual; one that lands after it is finished then (late_finish), so no
+    # row is left running to be called stuck.
+    #
+    # Any other store is written to here, on the caller's thread, with no
+    # deadline: the ActiveRecord store on SQLite uses the caller's own
+    # connection and joins its transaction, which a write made from another
+    # thread would not, and a store of the app's own may be bound to its
+    # thread the same way. A blocking call cannot be given up on from the
+    # thread that makes it (Timeout would cut it off part way through a
+    # driver call), so there the wait is the store's own: its busy and pool
+    # checkout timeouts.
+    def record_execute_start(definition, run)
+      unless abandonable_store?
+        sync(definition, confirm: true)
+        @store.insert_run(run.dup)
+        return [true, nil]
+      end
+
+      # The run as it starts: what the start write holds, however late it lands.
+      begun = run.dup
+      start = StartWrite.new
+      thread = Thread.new do
+        Thread.current.report_on_exception = false
+        sync(definition, confirm: true)
+        @store.insert_run(begun)
+        # A finish that was recorded, or failed to be, before this landed has no finish coming.
+        late = start.lock.synchronize do
+          start.landed = true
+          start.abandoned && start.concluded
+        end
+        late_finish(definition, start) if late
+        nil
+      # Handed to the caller, which raises it as the write's failure.
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        e
+      end
+
+      if thread.join(@start_deadline_ms / 1000.0)
+        failure = thread.value
+        raise(failure.is_a?(StandardError) ? failure : RuntimeError.new("#{failure.class}: #{failure.message}")) if failure
+
+        return [true, nil]
+      end
+      # It may have landed just as the wait ended.
+      landed = start.lock.synchronize do
+        start.abandoned = true unless start.landed
+        start.landed
+      end
+      return [true, nil] if landed
+
+      name = definition.name
+      report(RuntimeError.new("the store took longer than #{Duration.format(@start_deadline_ms)} to record the start of #{name}; " \
+                              "running it unrecorded"), "recording #{name}")
+      [false, start]
+    end
+
+    # Whether the store's calls may be made from, and left behind in, a thread other than the caller's.
+    def abandonable_store?
+      @store.respond_to?(:abandonable?) && @store.abandonable? ? true : false
+    rescue StandardError
+      false
+    end
+
+    # A start write that landed after its run's finish was concluded without
+    # being recorded: the run is finished over the row now, and judged, so
+    # it is not left running.
+    def late_finish(definition, start)
+      run = start.run
+      record_finish(definition, run, true, run.finished_at, judge: start.judge)
+      nil
+    rescue StandardError => e
+      report(e, "recording #{definition.name}")
+    end
+
+    # The end of execute: the run as it finished, judged and recorded. Store
+    # failures are reported, never raised. `start` is the start write execute
+    # gave up waiting for, if it did (record_execute_start).
+    def finish_execution(definition, run, recorder, recorded, start, result, error, threw, failure, requeued_on_shutdown)
+      name = definition.name
+      finished_at = now
+      run.finished_at = finished_at
+      run.duration_ms = Evaluate.run_duration(run.started_at, finished_at)
+      run.metrics = recorder.metrics
+      returned = result.is_a?(String) ? Output.utf8(result) : nil
+      run.output = recorder.output || returned
+
+      conclude(definition, run, result, error, threw, recorder.expect_text || returned, failure: failure)
+      judge = !(requeued_on_shutdown && threw && Client.shutdown?(error))
+      # A start that has landed since is finished over, as one recorded in time.
+      recorded ||= start.lock.synchronize { start.landed } if start
+      written = false
+      begin
+        ignored = record_finish(definition, run, recorded, finished_at, judge: judge)
+        report(RuntimeError.new("run #{run.id} of #{name} #{ignored}; ignored"), "finishing #{name}") if ignored
+        written = true
+      rescue StandardError => e
+        report(e, "recording #{name}")
+      end
+      return if start.nil?
+
+      # From here a start that lands finishes the run itself. One that
+      # landed while the finish above was failing is finished now.
+      late = start.lock.synchronize do
+        start.run = run
+        start.judge = judge
+        start.concluded = true
+        !written && !recorded && start.landed
+      end
+      late_finish(definition, start) if late
+    end
 
     # Stops the interval thread and returns it, or nil when there was none.
     def stop_ticker
@@ -799,8 +959,8 @@ module Cronwatch
 
     # Writes the declaration of `definition`'s name as it stands, unless the
     # store has it. A handle kept from an earlier declaration writes the one
-    # that replaced it, never its own over it, and one forgotten since writes
-    # its own. The writes of one name take turns (the name's lock in
+    # that replaced it, never its own over it, and one forgotten since
+    # declares the job again as it was last declared here. The writes of one name take turns (the name's lock in
     # @syncing, held across the write), so one still under way cannot land
     # after a later one; and a name declared again while its write was under
     # way is still to be written. A name is marked as written only while
@@ -810,8 +970,11 @@ module Cronwatch
     #
     # With `confirm`, as a run starts, a name already written is read back:
     # another process may have forgotten the job since, and a job still
-    # declared here comes back on its next run.
-    def sync(definition, confirm: false)
+    # declared here comes back on its next run. `running` says the write is
+    # for a run (by default, whenever `confirm` is): a name forgotten here is
+    # then declared again, where a check or a dashboard read, whose loop may
+    # have picked the name up just before the forget, leaves it forgotten.
+    def sync(definition, confirm: false, running: confirm)
       ensure_ready
       name = definition.name
       if @registry.synchronize { @synced.include?(name) }
@@ -823,7 +986,23 @@ module Cronwatch
       after_fork_check
       turn = @registry.synchronize { @syncing[name] ||= Mutex.new }
       turn.synchronize do
-        standing = @registry.synchronize { @synced.include?(name) ? nil : @definitions.fetch(name, definition) }
+        standing = @registry.synchronize do
+          next nil if @synced.include?(name)
+
+          unless @definitions.key?(name)
+            # Forgotten here since this write was asked for. A check or a
+            # dashboard read that was on its way to write it leaves it
+            # forgotten: only a run brings a forgotten job back.
+            next nil unless running
+
+            # A handle kept from before the forget: its run declares the job
+            # again, as run by name does (declared), so the name is marked as
+            # written once more and the checks keep it declared.
+            forgotten = @forgotten.delete(name)
+            @definitions[name] = forgotten if forgotten
+          end
+          @definitions.fetch(name, definition)
+        end
         next if standing.nil?
 
         @store.upsert_job(Serialize.to_stored(standing), now)
@@ -1055,7 +1234,7 @@ module Cronwatch
     def record_finish(definition, run, recorded, finished_at, judge: true)
       unless recorded
         # The start was never written; the store may be back by now.
-        sync(definition)
+        sync(definition, running: true)
         begin
           @store.insert_run(run)
           finish_run(Serialize.to_stored(definition), run, finished_at) if judge
@@ -1091,9 +1270,9 @@ module Cronwatch
       defined?(::Sidekiq::Shutdown) && error.is_a?(::Sidekiq::Shutdown) ? true : false
     end
 
-    # The start of execute without the block: the run is inserted and missed
-    # and stuck close (on_run_start). A store that fails is reported and the
-    # handle inserts the finished run instead, as execute does.
+    # The start of execute without the block or the deadline: the run is
+    # inserted and missed closes (on_run_start). A store that fails is
+    # reported and the handle inserts the finished run instead, as execute does.
     def record_start(definition, trigger, id)
       name = definition.name
       unless id.nil?
@@ -1151,10 +1330,15 @@ module Cronwatch
     # `started` is true for a handle whose run this process inserted.
     def run_handle(definition, id, base, recorded, inactive, started: false)
       name = definition.name
+      # The lines this handle last flushed, as logged (:raw) and as they
+      # stand at the end of the stored output (:redacted), or nil before the
+      # first flush. See append_redacted. The handle's flushes and its
+      # finish take turns, so nothing else reads it meanwhile.
+      flushed = [nil]
       RunHandle.new(
         id: id, job: name, started_at: base&.started_at, inactive: inactive,
-        finish: ->(recorder, outcome, head) { finish_handle(definition, id, base, recorded, recorder, outcome, head, started) },
-        flush: recorded ? ->(lines, metrics) { flush_handle(name, id, lines, metrics) } : nil,
+        finish: ->(recorder, outcome, head) { finish_handle(definition, id, base, recorded, recorder, outcome, head, started, flushed) },
+        flush: recorded ? ->(lines, metrics) { flush_handle(name, id, lines, metrics, flushed) } : nil,
         ignored: ->(why) { ignore_finish(id, name, why) },
       )
     end
@@ -1171,7 +1355,7 @@ module Cronwatch
     # Returns the run as recorded, or nil when nothing was. A store that
     # fails is reported and raises RunHandle::Retry, which leaves the handle
     # active to be finished again.
-    def finish_handle(definition, id, base, recorded, recorder, outcome, head = nil, started = false)
+    def finish_handle(definition, id, base, recorded, recorder, outcome, head = nil, started = false, flushed = [nil])
       name = definition.name
       from = base
       if recorded
@@ -1204,7 +1388,7 @@ module Cronwatch
       run.duration_ms = Evaluate.run_duration(from.started_at, finished_at)
       run.error = nil
       # Capped by conclude, after it is redacted.
-      run.output = join_lines(from.output, added)
+      run.output = added.nil? ? from.output : append_redacted(from.output, added, flushed[0])[0]
       run.metrics = (from.metrics || {}).merge(recorder.metrics)
       expect_text = join_lines(head, join_lines(from.output, recorder.expect_text || returned))
       conclude(definition, run, result, error, failed, expect_text)
@@ -1230,7 +1414,7 @@ module Cronwatch
     # running, so a flush never undoes a finish. True once written; false
     # when the handle should keep them for finish (the run is not running or
     # is another job's, or the store failed).
-    def flush_handle(name, id, lines, metrics)
+    def flush_handle(name, id, lines, metrics, flushed = [nil])
       stored = @store.get_run(id)
       # Not running: the lines stay in the handle for finish, which reports why it cannot record them.
       return false if stored.nil? || stored.status != :running
@@ -1241,12 +1425,46 @@ module Cronwatch
       end
 
       updated = stored.dup
-      updated.output = join_output(stored.output, Output.redact_and_cap(lines, @redact)) unless lines.nil?
+      output, tail = lines.nil? ? [stored.output, nil] : append_redacted(stored.output, lines, flushed[0])
+      output = Output.cap(output) unless lines.nil? || output.nil?
+      updated.output = output
       updated.metrics = (stored.metrics || {}).merge(metrics)
-      write_run_if(updated, [:running])
+      return false unless write_run_if(updated, [:running])
+
+      # Remembered only while the stored output still ends with it (the cap did not cut into it).
+      flushed[0] = tail && output&.end_with?(tail[:redacted]) ? tail : nil unless lines.nil?
+      true
     rescue StandardError => e
       report(e, "flushing #{name}")
       false
+    end
+
+    # `lines` added to the stored output, redacted. While the output still
+    # ends with what the handle flushed last (`flushed`), that tail is
+    # redacted again with the new lines after it and replaced, so a secret
+    # that began in one flush and ends in the next (a private key logged a
+    # line at a time, a label and then its value) is blanked whole, where
+    # redacting each flush alone would store its second half. Otherwise (the
+    # first flush, or another process has written since) the lines are
+    # redacted alone and appended. Returns `[output, tail]`: the tail is what
+    # to remember once the write lands, at most Output::CAP of the raw text,
+    # from the start of a line, and only while its redaction is still the
+    # end of what was written.
+    def append_redacted(stored, lines, flushed)
+      added = Output.strip_nul(Output.utf8(lines))
+      joins = !flushed.nil? && !stored.nil? && stored.end_with?(flushed[:redacted])
+      raw = joins ? "#{flushed[:raw]}\n#{added}" : added
+      redacted = Output.redact_and_cap(raw, @redact)
+      output = joins ? stored[0, stored.length - flushed[:redacted].length] + redacted : join_lines(stored, redacted)
+      return [output, { raw: raw, redacted: redacted }] if JS.length16(raw) <= Output::CAP
+
+      kept_raw = JS.tail16(raw, Output::CAP)
+      cut = kept_raw.index("\n")
+      return [output, nil] if cut.nil?
+
+      kept_raw = kept_raw[(cut + 1)..]
+      kept = Output.redact_and_cap(kept_raw, @redact)
+      [output, redacted.end_with?(kept) ? { raw: kept_raw, redacted: kept } : nil]
     end
 
     # Raises for a run id no store could hold, or one reserved for the pg_cron source.
@@ -1269,12 +1487,6 @@ module Cronwatch
       return before if after.nil?
 
       "#{before}\n#{after}"
-    end
-
-    # Output appended to stored output, capped like any run's.
-    def join_output(before, after)
-      joined = join_lines(before, after)
-      joined && Output.cap(joined)
     end
 
     # Runs the job's state still holds as pending (Evaluate.hold_run) whose
@@ -1388,11 +1600,23 @@ module Cronwatch
         next if run.nil? || run.status != :running || run.job != listed.job
 
         run.status = :timeout
-        if stranded
-          # Its own status was never written; a late finish of it is judged
-          # as one after a timeout, so a success still recovers.
+        if stranded && !run.error.nil?
+          # The placeholder of a finished import keeps the run's own error,
+          # and only a run that failed has one: it is closed as the failure
+          # it was, with its own times, and alerts as failed. A later
+          # import of the same run finds it finished and changes nothing.
+          run.status = :failed
+          if run.duration_ms.nil?
+            run.duration_ms = Evaluate.run_duration(run.started_at, run.finished_at)
+          else
+            run.finished_at = run.started_at + run.duration_ms
+          end
+        elsif stranded
+          # Its own status was never written and nothing says it failed; a
+          # late finish of it is judged as one after a timeout, so a success
+          # still recovers.
           run.duration_ms = Evaluate.run_duration(run.started_at, run.finished_at) if run.duration_ms.nil?
-          run.error = run.error.nil? ? STRANDED_ERROR : "#{STRANDED_ERROR}\n#{run.error}"
+          run.error = STRANDED_ERROR
         else
           run.finished_at = at
           run.duration_ms = Evaluate.run_duration(run.started_at, at)

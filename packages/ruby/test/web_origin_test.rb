@@ -255,7 +255,6 @@ class WebOriginTest < Minitest::Test
     lines = []
     spoofed = { "x-forwarded-proto" => "https", "x-forwarded-host" => "attacker.example" }
     with_env("RAILS_ENV" => nil, "RACK_ENV" => "development", "CRONWATCH_TOKEN" => nil) do
-      cw, = make
       [
         [{ origin: "https://app.example.com" }, "#{INTERNAL}/cronwatch/", {}],
         [{ origin: "https://app.example.com", trust_proxy: true }, "#{INTERNAL}/cronwatch/", spoofed],
@@ -280,7 +279,8 @@ class WebOriginTest < Minitest::Test
         before = $stdout
         $stdout = StringIO.new
         begin
-          send_request(cw.routes(base_path: "/cronwatch", **options), "GET", url, headers)
+          # A client of its own each time: a client prints a line once, however many apps are built for it.
+          send_request(make.first.routes(base_path: "/cronwatch", **options), "GET", url, headers)
           lines << $stdout.string.chomp
         ensure
           $stdout = before

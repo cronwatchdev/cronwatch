@@ -47,6 +47,14 @@ class ActiveRecordStoreOptionsTest < Minitest::Test
     klass.connection_pool.with_connection { |c| Cronwatch::Stores::ActiveRecord.drop_tables!(c, prefix: "named_") }
   end
 
+  # Client#record_execute_start: only a store with a pool of its own is written to from another thread.
+  def test_the_store_on_sqlite_is_bound_to_its_callers_connection_and_on_postgres_is_not
+    klass = ARSupport.connection_class(:sqlite_file)
+    refute Cronwatch::Stores::ActiveRecord.new(connection_class: klass).abandonable?
+    skip ARSupport::NO_PG if ARSupport::PG_URL.nil?
+    assert Cronwatch::Stores::ActiveRecord.new(connection_class: ARSupport.connection_class(:postgres)).abandonable?
+  end
+
   def test_an_adapter_other_than_postgres_or_sqlite_is_refused_by_name
     mysql = Struct.new(:adapter_name).new("Mysql2")
     %w[Mysql2 Trilogy SQLServer].each do |adapter|

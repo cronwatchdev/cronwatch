@@ -156,10 +156,20 @@ module Cronwatch
       when Numeric then json(value.to_f)
       else
         if value.respond_to?(:as_json) && !value.is_a?(Struct) then json(value.as_json)
-        elsif value.respond_to?(:to_h) then json(value.to_h)
+        elsif value.respond_to?(:to_h) then json(hash_of(value))
         else quote(value.to_s)
         end
       end
+    end
+
+    # to_h, or the value's text where it has a to_h that cannot make a Hash
+    # of it: every Enumerable has one, and a Range's, a Set's, or an
+    # Enumerator's raises unless its elements are pairs.
+    def hash_of(value)
+      hash = value.to_h
+      hash.is_a?(Hash) ? hash : value.to_s
+    rescue StandardError
+      value.to_s
     end
 
     def quote(text)

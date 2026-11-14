@@ -94,8 +94,43 @@ class TriageAnthropicTest < Minitest::Test
       r = c["response"]
       blocks = r["content"].map { |b| Block.new(type: b["type"].to_sym, text: b["text"]) }
       client = StubClient.new(Response.new(stop_reason: r["stop_reason"].to_sym, content: blocks))
-      assert_json c["result"], triage_for({}, client).call(context_for("a missed run with no runs")), r.inspect
+      triage = triage_for({}, client)
+      if c.key?("error")
+        # No text and the limit reached: raised, for the client to report.
+        error = assert_raises(RuntimeError, r.inspect) { triage.call(context_for("a missed run with no runs")) }
+        assert_equal c["error"], error.message
+      else
+        assert_json c["result"], triage.call(context_for("a missed run with no runs")), r.inspect
+      end
     end
+  end
+
+  def test_the_limit_reached_before_any_text_is_an_error_naming_the_limit_and_text_cut_short_is_kept
+    assert_includes FIXTURE["responses"].map { |c| c.key?("error") }, true, "the fixture holds the case"
+    out_of_room = Response.new(stop_reason: :max_tokens, content: [])
+    error = assert_raises(RuntimeError) { triage_for({}, StubClient.new(out_of_room)).call(context_for("a missed run with no runs")) }
+    assert_equal "triage: the model reached max_tokens (4096) before writing a diagnosis; raise maxTokens or lower effort", error.message
+    error = assert_raises(RuntimeError) do
+      triage_for({ "maxTokens" => 300 }, StubClient.new(out_of_room)).call(context_for("a missed run with no runs"))
+    end
+    assert_match(/max_tokens \(300\)/, error.message, "the configured limit")
+
+    cut = Response.new(stop_reason: :max_tokens, content: [Block.new(type: :text, text: "The disk filled")])
+    assert_equal "The disk filled", triage_for({}, StubClient.new(cut)).call(context_for("a missed run with no runs"))
+    [Response.new(stop_reason: :refusal, content: []), Response.new(stop_reason: :end_turn, content: [])].each do |quiet|
+      assert_nil triage_for({}, StubClient.new(quiet)).call(context_for("a missed run with no runs"))
+    end
+    assert_equal 4096, Cronwatch::Triage::Anthropic.new(client: StubClient.new).max_tokens
+  end
+
+  def test_the_client_reports_a_triage_that_ran_out_of_room_and_sends_the_alert_without_one
+    errors = []
+    triage = triage_for({}, StubClient.new(Response.new(stop_reason: :max_tokens, content: [])))
+    cw, _, capture = make(triage: triage, on_error: ->(e, where) { errors << "#{where}: #{e.message}" })
+    assert_raises(RuntimeError) { cw.job("nightly").run { raise "boom" } }
+    assert_equal [:failed], capture.types
+    assert_nil capture.alerts[0].triage
+    assert_equal ["triage for nightly: triage: the model reached max_tokens (4096) before writing a diagnosis; raise maxTokens or lower effort"], errors
   end
 
   def test_job_output_is_fenced_as_data

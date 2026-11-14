@@ -384,6 +384,342 @@ class ClientTest < Minitest::Test
     assert_nil cw.job_summary("gone")
   end
 
+  # Counts upsert_job calls on their way to a memory store.
+  class CountingUpserts
+    attr_reader :upserts
+
+    def initialize(store)
+      @store = store
+      @upserts = 0
+    end
+
+    def upsert_job(*args)
+      @upserts += 1
+      @store.upsert_job(*args)
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      @store.respond_to?(name, include_private)
+    end
+
+    def method_missing(name, *args, &block)
+      @store.respond_to?(name) ? @store.public_send(name, *args, &block) : super
+    end
+  end
+
+  def test_a_job_that_hangs_on_every_run_alerts_stuck_once_and_recovers_on_its_first_success
+    cw, clock, alerts = make
+    job = cw.job("hangs", schedule: "*/5 * * * *", timezone: "UTC", timeout: "10m")
+    # Twelve runs, five minutes apart, none of which ever finishes.
+    handles = Array.new(12) do
+      handle = job.start
+      clock.advance(5 * MIN)
+      cw.check
+      handle
+    end
+    assert_equal [:stuck], alerts.types
+    assert_equal :stuck, cw.job_summary("hangs").health
+    # A run that fails alerts as failed by its own rule; stuck stays open beside it.
+    assert_raises(RuntimeError) { job.run { raise "boom" } }
+    assert_equal %i[stuck failed], alerts.types
+    assert_equal %i[failed stuck], cw.job_summary("hangs").open.sort
+    # A hung run that reports failing late is not counted again and alerts nothing.
+    handles[0].fail(RuntimeError.new("late"))
+    assert_equal %i[stuck failed], alerts.types
+    # The first success closes both with one recovery.
+    job.run { nil }
+    assert_equal %i[stuck failed recovered], alerts.types
+    assert_equal %i[failed stuck], alerts.alerts[2].details[:after].sort
+    assert_empty cw.job_summary("hangs").open
+  end
+
+  def test_a_stuck_run_that_finishes_ok_late_closes_stuck_with_a_recovery_though_other_runs_started_meanwhile
+    cw, clock, alerts = make
+    job = cw.job("slow-queue", timeout: "10m")
+    first = job.start
+    clock.advance(11 * MIN)
+    cw.check
+    assert_equal [:stuck], alerts.types
+    second = job.start
+    assert_equal [:stuck], cw.job_summary("slow-queue").open, "a start leaves stuck open"
+    first.finish
+    assert_equal %i[stuck recovered], alerts.types
+    second.finish
+    assert_equal %i[stuck recovered], alerts.types
+  end
+
+  def test_stuck_never_closes_on_a_start_whether_or_not_the_run_catches_the_schedule_up
+    definition = Cronwatch::JobDefinition.new(name: "j", schedule: "0 3 * * *", timezone: "UTC", grace: "10m")
+    at = ->(hour, minute = 0) { Time.utc(2026, 1, 6, hour, minute).to_i * 1000 }
+    run = ->(started) { Cronwatch::Run.new(id: "r", job: "j", status: :running, started_at: started, metrics: {}, trigger: "run") }
+    state = Cronwatch::Evaluate.empty_state("j")
+    state.open = { stuck: at.call(3), missed: at.call(3, 11) }
+    covering = Cronwatch::Evaluate.on_run_start(definition, run.call(at.call(3, 30)), state, at.call(3, 30))
+    assert_equal({ stuck: at.call(3) }, covering.open, "missed closes, stuck stays")
+    before = Cronwatch::Evaluate.on_run_start(definition, run.call(at.call(2, 0)), state, at.call(3, 30))
+    assert_equal at.call(3), before.open[:stuck]
+  end
+
+  # A memory store whose first insert_run (a run's start) waits until released.
+  class HangingStart < CountingUpserts
+    attr_reader :inserts
+
+    def initialize(store, later: nil)
+      super(store)
+      @gate = Queue.new
+      @waiting = Queue.new
+      @inserts = 0
+      @count = Mutex.new
+      @later = later
+    end
+
+    def release = @gate << true
+
+    # Returns once the first insert is waiting on the store.
+    def waiting = @waiting.pop
+
+    def insert_run(run)
+      nth = @count.synchronize { @inserts += 1 }
+      if nth == 1
+        @waiting << true
+        @gate.pop
+        return @store.insert_run(run)
+      end
+      @later ? @later.call : @store.insert_run(run)
+    end
+  end
+
+  def wait_until(seconds = 5)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+    sleep 0.005 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    assert yield, "waited #{seconds}s"
+  end
+
+  def test_a_store_that_hangs_while_recording_a_runs_start_does_not_hold_the_job_back_and_leaves_no_running_row
+    base = Cronwatch::Stores::Memory.new
+    store = HangingStart.new(base)
+    errors = []
+    cw, _, alerts = make(store: store, on_error: ->(e, where) { errors << "#{where}: #{e.message}" })
+    cw.instance_variable_set(:@start_deadline_ms, 150)
+    job = cw.job("nightly")
+    ran = Queue.new
+    resume = Queue.new
+    running = Thread.new do
+      job.run do |j|
+        ran << true
+        j.log("did the work")
+        resume.pop
+        "done"
+      end
+    end
+    store.waiting
+    assert ran.empty?, "still waiting on the store"
+    ran.pop # the job ran once the deadline passed
+    assert_equal ["recording nightly: the store took longer than 150ms to record the start of nightly; running it unrecorded"], errors
+    # The late start lands before the job is done, and the finish is written over it.
+    store.release
+    wait_until { base.running_runs.length == 1 }
+    resume << true
+    assert_equal "done", running.value
+    runs = cw.runs("nightly")
+    assert_equal 1, runs.length
+    assert_equal :ok, runs[0].status
+    assert_equal "did the work", runs[0].output
+    assert_empty base.running_runs
+    assert_equal 1, errors.length
+    assert_empty alerts.types
+  end
+
+  def test_the_deadline_is_five_seconds_and_a_store_that_fails_is_reported_as_before
+    assert_equal 5_000, Cronwatch::Client.const_get(:START_DEADLINE_MS)
+    errors = []
+    store = Flaky.new(Cronwatch::Stores::Memory.new, [:insert_run])
+    cw, = make(store: store, on_error: ->(e, where) { errors << "#{where}: #{e.message}" })
+    assert_equal :done, cw.job("nightly").run { :done }
+    assert_equal ["recording nightly: store down: insert_run"] * 2, errors, "the start, then the finish"
+  end
+
+  def test_a_start_write_that_lands_after_the_finish_failed_is_finished_then_not_left_running
+    base = Cronwatch::Stores::Memory.new
+    # The finish finds the store down, not hanging.
+    store = HangingStart.new(base, later: -> { raise "store down" })
+    errors = []
+    cw, _, alerts = make(store: store, on_error: ->(e, where) { errors << "#{where}: #{e.message}" })
+    cw.instance_variable_set(:@start_deadline_ms, 100)
+    error = assert_raises(RuntimeError) { cw.job("nightly").run { raise "boom" } }
+    assert_equal "boom", error.message, "the job's own error is what run raises"
+    assert_equal ["recording nightly", "recording nightly"], errors.map { |e| e.sub(/:.*/m, "") }
+    assert_empty cw.runs("nightly")
+    # The start write lands at last, after the finish gave up: the run is finished and judged now.
+    store.release
+    wait_until { alerts.types == [:failed] }
+    runs = cw.runs("nightly")
+    assert_equal 1, runs.length
+    assert_equal :failed, runs[0].status
+    assert_match(/boom/, runs[0].error)
+    assert_empty base.running_runs
+    assert_equal [:failed], alerts.types
+  end
+
+  # The window between the two: the finish is written as a run of its own
+  # because the start had not landed, the start lands while that finish is
+  # failing (its insert, and its read back), and neither may leave the row
+  # to the other.
+  def test_a_start_write_that_lands_while_the_finish_is_failing_is_finished_by_that_finish
+    base = Cronwatch::Stores::Memory.new
+    store = nil
+    reads_down = false
+    later = lambda do
+      # The finish's own insert: the start lands first, then this one fails, and so does its read back.
+      store.release
+      wait_until { base.running_runs.length == 1 }
+      reads_down = true
+      raise "store down"
+    end
+    store = Class.new(HangingStart) do
+      define_method(:get_run) do |id|
+        if reads_down
+          reads_down = false
+          raise "read down"
+        end
+        base.get_run(id)
+      end
+    end.new(base, later: later)
+    errors = []
+    cw, _, alerts = make(store: store, on_error: ->(e, where) { errors << "#{where}: #{e.message}" })
+    cw.instance_variable_set(:@start_deadline_ms, 100)
+    assert_raises(RuntimeError) { cw.job("nightly").run { raise "boom" } }
+    # Nothing to wait for: the finish path itself finished the row before run returned.
+    assert_empty base.running_runs, "no running row left by a live process"
+    runs = cw.runs("nightly")
+    assert_equal 1, runs.length
+    assert_equal :failed, runs[0].status
+    assert_match(/boom/, runs[0].error)
+    assert_equal [:failed], alerts.types, "judged once"
+    assert_equal ["recording nightly: the store took longer than 100ms to record the start of nightly; running it unrecorded",
+                  "recording nightly: store down"], errors
+  end
+
+  def test_a_store_bound_to_its_callers_thread_is_written_from_it_and_not_abandoned
+    base = Cronwatch::Stores::Memory.new
+    threads = []
+    store = Class.new(CountingUpserts) do
+      define_method(:abandonable?) { false }
+      define_method(:insert_run) do |run|
+        threads << Thread.current
+        base.insert_run(run)
+      end
+    end.new(base)
+    cw, = make(store: store)
+    cw.instance_variable_set(:@start_deadline_ms, 1)
+    cw.job("nightly").run { nil }
+    assert_equal [Thread.current], threads
+    assert_equal :ok, cw.runs("nightly").first.status
+
+    # A store without the method counts as bound.
+    bare = Object.new
+    cw2, = make(store: Cronwatch::Stores::Memory.new)
+    cw2.instance_variable_set(:@store, bare)
+    refute cw2.send(:abandonable_store?)
+    assert cw.class.new(store: Cronwatch::Stores::Memory.new, alerts: []).send(:abandonable_store?)
+  end
+
+  def test_a_handle_kept_across_a_forget_declares_the_job_again_on_its_next_run_and_writes_it_once
+    base = Cronwatch::Stores::Memory.new
+    store = CountingUpserts.new(base)
+    cw, = make(store: store)
+    job = cw.job("nightly", schedule: "0 2 * * *", description: "Nightly export")
+    job.run { nil }
+    assert_equal 1, store.upserts
+    cw.forget("nightly")
+    assert_empty cw.defined_jobs
+
+    job.run { nil }
+    assert_equal 2, store.upserts
+    assert_equal ["nightly"], cw.defined_jobs.map(&:name), "declared again, so checks and sources see it"
+    job.run { nil }
+    job.run { nil }
+    assert_equal 2, store.upserts, "written once, not on every run"
+    assert_equal "Nightly export", cw.job_summary("nightly").definition.description
+
+    # Forgotten by another process since: this one's check writes it again.
+    base.delete_job("nightly")
+    cw.check
+    refute_nil base.get_job("nightly")
+  end
+
+  # Runs a block once, just before the named store method is next called.
+  class Interrupting < CountingUpserts
+    def before(method, &block)
+      (@before ||= {})[method] = block
+    end
+
+    %i[upsert_job get_job].each do |method|
+      define_method(method) do |*args|
+        (@before ||= {}).delete(method)&.call
+        method == :upsert_job ? super(*args) : @store.get_job(*args)
+      end
+    end
+  end
+
+  # The SDK lands the forget between two awaits of the read; here it lands
+  # from inside the store call the read makes just before it would write.
+  def test_a_forget_that_lands_while_a_check_is_writing_declarations_is_not_undone_by_that_check
+    %i[check jobs job_summary].each do |read|
+      base = Cronwatch::Stores::Memory.new
+      store = Interrupting.new(base)
+      cw, = make(store: store)
+      cw.job("keep", schedule: "0 2 * * *")
+      cw.job("nightly", schedule: "0 2 * * *")
+      if read == :job_summary
+        # Written, so the read confirms the row is still there: the forget lands as it asks.
+        cw.jobs
+        store.before(:get_job) { cw.forget("nightly") }
+        assert_nil cw.job_summary("nightly")
+      else
+        # Neither is written yet, so the read's own loop is what would write them:
+        # the forget lands as it writes the first, with the second already picked up.
+        store.before(:upsert_job) { cw.forget("nightly") }
+        cw.public_send(read)
+      end
+      assert_equal ["keep"], cw.defined_jobs.map(&:name), "#{read}: still forgotten here"
+      assert_nil base.get_job("nightly"), "#{read}: not written again"
+      assert_nil base.get_state("nightly"), "#{read}: no state left behind"
+      # Its next run still brings it back.
+      cw.run("nightly") { nil }
+      refute_nil base.get_job("nightly")
+      assert_equal %w[keep nightly], cw.defined_jobs.map(&:name).sort
+    end
+  end
+
+  # The SDK called onError directly in its check; the gem has always gone
+  # through Client#report, which this holds it to.
+  def test_an_on_error_that_raises_does_not_stop_a_check_the_jobs_after_it_or_a_dashboard_read
+    base = Cronwatch::Stores::Memory.new
+    broken = []
+    store = Class.new(CountingUpserts) do
+      define_method(:list_runs) { |job, limit| broken.include?(job) ? raise("store down") : base.list_runs(job, limit) }
+      define_method(:prune) { |_before| raise "prune down" }
+    end.new(base)
+    calls = 0
+    source = Struct.new(:name) { def sync(_host) = raise("source down") }.new("bad")
+    cw, clock, alerts = nil
+    capture_io do
+      cw, clock, alerts = make(store: store, sources: [source], on_error: ->(_e, _where) { calls += 1 and raise "on_error raised" })
+      cw.job("a-broken", schedule: "every 5m")
+      cw.job("b-late", schedule: "every 5m")
+      cw.jobs # written to the store now, so both are due an hour on
+      broken << "a-broken"
+      clock.advance(HOUR)
+      result = cw.check
+      assert_operator calls, :>=, 3, "the source, the broken job, and the prune were each reported"
+      assert_equal %w[a-broken b-late], result.jobs.map(&:name)
+      assert_equal ["b-late missed"], alerts.alerts.map { |a| "#{a.job} #{a.type}" }, "the job after the broken one was still checked"
+      # A dashboard read of the broken job answers, showing it as failing.
+      assert_equal :failing, cw.job_summary("a-broken").health
+    end
+  end
+
   def test_after_a_forget_run_and_resume_run_by_name_declare_the_job_again_as_it_was_written
     cw, clock, alerts = make
     cw.job("nightly", schedule: "0 2 * * *", description: "Nightly export")

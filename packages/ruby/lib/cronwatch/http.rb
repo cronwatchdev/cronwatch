@@ -89,7 +89,8 @@ module Cronwatch
       # one from http_proxy or https_proxy, which fetch never reads, so an
       # alert (and the credentials in it) reaches only the channel's own host.
       def connection(uri)
-        http = Net::HTTP.new(uri.host, uri.port, nil)
+        # hostname, not host: an IPv6 literal without its brackets, which the name lookup refuses.
+        http = Net::HTTP.new(uri.hostname, uri.port, nil)
         http.use_ssl = uri.scheme == "https"
         http.open_timeout = @timeout
         http.read_timeout = @timeout

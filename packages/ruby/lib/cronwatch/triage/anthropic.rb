@@ -21,7 +21,8 @@ module Cronwatch
     # gives it 25 seconds and moves on without a diagnosis if it takes longer.
     class Anthropic
       DEFAULT_MODEL = "claude-opus-5"
-      DEFAULT_MAX_TOKENS = 800
+      # Room for the model's thinking as well as the paragraph it writes after it.
+      DEFAULT_MAX_TOKENS = 4096
       DEFAULT_EFFORT = "medium"
       FALLBACK_BETA = "server-side-fallback-2026-07-01"
       # Under the client's 25 second wait, so the request ends on its own first.
@@ -46,7 +47,10 @@ module Cronwatch
       # client:     bring a configured Anthropic::Client instead.
       # model:      default "claude-opus-5".
       # effort:     how hard the model thinks: "low", "medium" (the default) or "high".
-      # max_tokens: default 800. A diagnosis is a paragraph.
+      # max_tokens: default 4096. A diagnosis is a paragraph, but the model thinks first
+      #             (thinking is on by default on current models) and that thinking counts
+      #             toward this limit, so one sized for the paragraph alone can be used up
+      #             before any of it is written.
       # fallbacks:  route a policy refusal to Anthropic's default fallback model inside
       #             the same request, so a diagnosis still comes back. On by default;
       #             turn off if your account or gateway rejects the beta.
@@ -69,6 +73,14 @@ module Cronwatch
         return nil if response.stop_reason.to_s == "refusal"
 
         text = JS.trim((response.content || []).select { |block| block.type.to_s == "text" }.map(&:text).join("\n"))
+        # The limit ran out before any of the diagnosis was written (on its
+        # thinking, say): raised, so the client reports it to on_error rather
+        # than the alert going out with no diagnosis and no word of why. The
+        # text is the SDK's, its option name included.
+        if text.empty? && response.stop_reason.to_s == "max_tokens"
+          raise "triage: the model reached max_tokens (#{@max_tokens}) before writing a diagnosis; raise maxTokens or lower effort"
+        end
+
         text.empty? ? nil : text
       end
 
