@@ -92,7 +92,14 @@ jobs:
           git config user.email "noreply@cronwatch.dev"
           split="$(git subtree split --prefix=packages/php/drupal HEAD)"
           git tag -f -a "$version" -m "Release $version" "$split"
-          git push "$REPOSITORY" "$split:refs/heads/$branch"
+          # A run started again for an older tag: the branch already holds this
+          # commit and has moved on, and pushing it would be refused as not a
+          # fast-forward before the tag was ever sent.
+          if git fetch -q "$REPOSITORY" "refs/heads/$branch" 2>/dev/null && git merge-base --is-ancestor "$split" FETCH_HEAD; then
+            echo "$branch already has $split"
+          else
+            git push "$REPOSITORY" "$split:refs/heads/$branch"
+          fi
           # A tag already there on this commit is a rerun; on another commit, a release changed after it shipped.
           remote_tag="$(git ls-remote "$REPOSITORY" "refs/tags/$version^{}" | cut -f1)"
           if [ -z "$remote_tag" ]; then git push "$REPOSITORY" "refs/tags/$version";
@@ -133,7 +140,14 @@ jobs:
           git config user.email "noreply@cronwatch.dev"
           split="$(git subtree split --prefix=packages/php/craft HEAD)"
           git tag -f -a "$TAG" -m "Release ${TAG#v}" "$split"
-          git push "git@github.com:$REPOSITORY.git" "$split:refs/heads/main"
+          # A run started again for an older tag: the branch already holds this
+          # commit and has moved on, and pushing it would be refused as not a
+          # fast-forward before the tag was ever sent.
+          if git fetch -q "git@github.com:$REPOSITORY.git" refs/heads/main 2>/dev/null && git merge-base --is-ancestor "$split" FETCH_HEAD; then
+            echo "main already has $split"
+          else
+            git push "git@github.com:$REPOSITORY.git" "$split:refs/heads/main"
+          fi
           # A tag already there on this commit is a rerun; on another commit, a release changed after it shipped.
           remote_tag="$(git ls-remote "git@github.com:$REPOSITORY.git" "refs/tags/$TAG^{}" | cut -f1)"
           if [ -z "$remote_tag" ]; then git push "git@github.com:$REPOSITORY.git" "refs/tags/$TAG";

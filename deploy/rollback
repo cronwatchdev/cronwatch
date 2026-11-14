@@ -17,6 +17,13 @@ LIVE=/var/www/$SITE
 RELEASES=/var/www/$SITE-releases
 WEB_ROOT=site/dist
 
+# As release-deploy: root would own the symlink and the lock, and git refuses
+# a release another user owns, after the switch has already happened.
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this as joncphillips, not root." >&2
+    exit 1
+fi
+
 # Never at the same time as a deploy, and the target is chosen under the
 # lock, so a deploy finishing meanwhile cannot change what "the release
 # before the live one" means.

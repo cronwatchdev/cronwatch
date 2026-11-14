@@ -16,6 +16,7 @@
  *   CONTACT_FROM                               a verified sender, "CronWatch <contact@example.com>"
  *   CONTACT_TO                                 where messages go
  *   CONTACT_PORT                               default 3790; it listens on 127.0.0.1 only
+ *   CONTACT_ORIGIN                             the site the form is on, default https://cronwatch.dev
  *   CONTACT_SES_URL                            tests only: a local endpoint in place of SES
  */
 import { createHash, createHmac } from "node:crypto";
@@ -107,6 +108,22 @@ export function checkForm(fields) {
   return { ok: true, name, email, message };
 }
 
+/**
+ * Whether a post came from a page on another site. A form post is a simple
+ * request, so any page anywhere can send one from its visitor's browser and
+ * address, past the limits per address. Browsers say where a post came from:
+ * Sec-Fetch-Site (same-origin for the site's own form, none for one the
+ * person started themselves), and Origin on every cross-origin post. A
+ * client that sends neither (curl, an old browser) is not a page on another
+ * site, and the limits still count it.
+ */
+export function crossSite(headers, origin) {
+  const site = headers["sec-fetch-site"];
+  if (typeof site === "string" && site !== "same-origin" && site !== "none") return true;
+  const from = headers.origin;
+  return typeof from === "string" && from !== origin;
+}
+
 /** The caller's address: nginx's X-Real-IP when it looks like one, else the socket's. */
 function clientIp(req) {
   const real = req.headers["x-real-ip"];
@@ -196,6 +213,8 @@ export function readConfig(env) {
   for (const k of ["CONTACT_FROM", "CONTACT_TO"]) if (BREAKS.test(env[k].trim())) throw new Error(`${k} must be one line`);
   const port = Number(env.CONTACT_PORT ?? 3790);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("CONTACT_PORT should be a port number");
+  const origin = (env.CONTACT_ORIGIN || "https://cronwatch.dev").trim();
+  if (!/^https?:\/\/[^\s/]+$/.test(origin)) throw new Error("CONTACT_ORIGIN should look like https://cronwatch.dev");
   let sesUrl = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
   if (env.CONTACT_SES_URL) {
     // For tests only, so it may only point at this machine.
@@ -203,7 +222,7 @@ export function readConfig(env) {
     sesUrl = env.CONTACT_SES_URL;
   }
   return {
-    region, port, sesUrl,
+    region, port, sesUrl, origin,
     from: env.CONTACT_FROM.trim(),
     to: env.CONTACT_TO.trim(),
     credentials: { accessKeyId: env.AWS_ACCESS_KEY_ID.trim(), secretAccessKey: env.AWS_SECRET_ACCESS_KEY.trim(), sessionToken: env.AWS_SESSION_TOKEN?.trim() || undefined },
@@ -285,6 +304,10 @@ export function createContactServer(config, { log = (line) => console.log(line),
     req.on("error", () => {});
     req.on("end", async () => {
       if (over) return;
+      if (crossSite(req.headers, config.origin)) {
+        record(ip, "rejected", "cross-site");
+        return finish(303, FAILED);
+      }
       const fields = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
       const form = checkForm(fields);
       if (!form.ok) {

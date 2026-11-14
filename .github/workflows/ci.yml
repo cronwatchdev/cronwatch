@@ -65,7 +65,11 @@ jobs:
 
   # Whether the push or pull request touches anything outside site/ and
   # deploy/. A new branch or a force push, whose range cannot be read,
-  # counts as touching everything.
+  # counts as touching everything. So does a file moved into site/ or
+  # deploy/ from elsewhere (--no-renames lists the path it left), and
+  # site/docs/cloudflare.md, whose migration block the SDK's Workers test
+  # holds to the store's schema: that test needs workerd, so the page counts
+  # as code rather than the site job growing a Miniflare run.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -91,9 +95,10 @@ jobs:
           else
             range="$BEFORE..$AFTER"
           fi
-          files="$(git diff --name-only "$range")"
+          files="$(git diff --no-renames --name-only "$range")"
           printf '%s\n' "$files"
-          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(site|deploy)/'; then
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(site|deploy)/' \
+            && ! printf '%s\n' "$files" | grep -qxF 'site/docs/cloudflare.md'; then
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -108,7 +113,12 @@ jobs:
   # A change to the site alone: the dash check, the site's build, its
   # links, the contact service's tests, and the IndexNow script's, as the
   # test job checks them on a full run. The site needs only marked, and the
-  # two tests only Node, so no package's install scripts run.
+  # two tests only Node, so no package's install scripts run. Two of the
+  # packages' tests read files under site/ and run here too, so a site
+  # change cannot leave them failing on main: the release script's (the
+  # install lines in the docs, the landing page, the prompt, and build.mjs)
+  # and the SDK's webhook payload against the schema the site publishes
+  # (through tsx, which needs no install script).
   site:
     needs: changes
     if: needs.changes.outputs.code == 'false'
@@ -127,6 +137,8 @@ jobs:
       - run: node scripts/check-links.mjs site/dist
       - run: npm run test:contact
       - run: node --test site/scripts/indexnow.test.mjs
+      - run: node --test scripts/release.test.mjs
+      - run: TZ=UTC node --import tsx --test packages/sdk/test/webhook-schema.test.ts
 
   # The workflows (actionlint, which also runs shellcheck on every run:
   # step), the deploy and helper scripts (shellcheck), and the nginx vhost
@@ -1641,7 +1653,9 @@ jobs:
           - { name: oldest, boot: "3.5.0", shedlock: "6.10.0", quartz: "2.5.0", jobrunr: "8.0.0" }
           # The newest Boot is the starter POM's own spring-boot.version, left
           # unset here so its boot4-tomcat profile (the patched Tomcat) applies.
-          - { name: newest, boot: "", shedlock: "7.10.1", quartz: "2.5.2", jobrunr: "8.8.2" }
+          - { name: newest, boot: "", shedlock: "7.11.0", quartz: "2.5.2", jobrunr: "9.0.4" }
+          # The last JobRunr 8, which apps not yet on 9 run.
+          - { name: jobrunr-8, boot: "", shedlock: "7.11.0", quartz: "2.5.2", jobrunr: "8.8.2" }
     services:
       postgres:
         image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
@@ -1820,7 +1834,7 @@ jobs:
           # The oldest and newest release each integration supports: NuGet
           # resolves a package's floor, and the app's own lock picks the rest.
           - { name: oldest, hangfire: "1.8.0", quartz: "4.0.0" }
-          - { name: newest, hangfire: "1.8.25", quartz: "4.3.0" }
+          - { name: newest, hangfire: "1.8.25", quartz: "4.7.3" }
     env:
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"

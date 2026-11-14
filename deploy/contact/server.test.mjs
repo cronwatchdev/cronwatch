@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { after, before, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkForm, createContactServer, createLimiter, headerSafe, readConfig, signV4, sourceKey } from "./server.mjs";
+import { checkForm, createContactServer, createLimiter, crossSite, headerSafe, readConfig, signV4, sourceKey } from "./server.mjs";
 
 const SERVER = fileURLToPath(new URL("./server.mjs", import.meta.url));
 // Made-up credentials, shaped like real ones so a leak would be easy to spot.
@@ -122,6 +122,41 @@ test("a valid message is sent through SES and redirects to the sent page", async
   assert.equal(line.ip, "203.0.113.9");
   assert.ok(!JSON.stringify(line).includes("Hello"), "the message is not logged");
   assert.ok(!JSON.stringify(line).includes("ada@example.com"), "the address is not logged");
+});
+
+test("a post from a page on another site is turned away, and the site's own goes", async () => {
+  for (const headers of [
+    { origin: "https://attacker.example" },
+    { origin: "null" },
+    { origin: "https://www.cronwatch.dev" },
+    { origin: "https://cronwatch.dev.attacker.example" },
+    { "sec-fetch-site": "cross-site" },
+    { "sec-fetch-site": "same-site" },
+    { origin: "https://cronwatch.dev", "sec-fetch-site": "cross-site" },
+  ]) {
+    const r = await post(form({}), { headers });
+    assert.equal(r.status, 303, JSON.stringify(headers));
+    assert.equal(r.location, "/contact/error/", JSON.stringify(headers));
+    const line = await nextLog();
+    assert.equal(line.outcome, "rejected");
+    assert.equal(line.reason, "cross-site");
+  }
+  assert.equal(requests.length, 0, "nothing was sent");
+  const r = await post(form({}), { headers: { origin: "https://cronwatch.dev", "sec-fetch-site": "same-origin" } });
+  assert.equal(r.location, "/contact/sent/");
+  assert.equal(requests.length, 1);
+  assert.equal((await nextLog()).outcome, "sent");
+});
+
+test("crossSite: only what a browser says came from elsewhere", () => {
+  const site = "https://cronwatch.dev";
+  assert.equal(crossSite({}, site), false, "curl sends neither header");
+  assert.equal(crossSite({ origin: site }, site), false);
+  assert.equal(crossSite({ "sec-fetch-site": "same-origin", origin: site }, site), false);
+  assert.equal(crossSite({ "sec-fetch-site": "none" }, site), false);
+  assert.equal(crossSite({ origin: "http://cronwatch.dev" }, site), true, "the scheme counts");
+  assert.equal(crossSite({ origin: "https://cronwatch.dev:8443" }, site), true, "the port counts");
+  assert.equal(crossSite({ "sec-fetch-site": "cross-site", origin: site }, site), true);
 });
 
 test("a form sent without the timer (no script) still goes", async () => {
@@ -275,6 +310,9 @@ test("readConfig checks the region, the addresses and the test endpoint", () => 
   assert.throws(() => readConfig({ ...env, CONTACT_TO: "b@example.com\nBcc: c@example.com" }), /one line/);
   assert.throws(() => readConfig({ ...env, CONTACT_SES_URL: "https://attacker.example/" }), /tests/);
   assert.throws(() => readConfig({ ...env, CONTACT_PORT: "http" }), /port/);
+  assert.equal(c.origin, "https://cronwatch.dev");
+  assert.equal(readConfig({ ...env, CONTACT_ORIGIN: "http://localhost:4321" }).origin, "http://localhost:4321");
+  assert.throws(() => readConfig({ ...env, CONTACT_ORIGIN: "cronwatch.dev/" }), /CONTACT_ORIGIN/);
   for (const e of [() => readConfig({}), () => readConfig({ ...env, AWS_REGION: "x y" })]) {
     try { e(); } catch (err) { assert.ok(!err.message.includes(SECRET)); }
   }

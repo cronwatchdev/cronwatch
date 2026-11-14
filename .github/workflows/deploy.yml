@@ -26,9 +26,13 @@ on:
 # The job needs no token: it only reads secrets and talks SSH.
 permissions: {}
 
-# Never run two deploys at once.
+# One deploy per commit. The group is the commit, not the site: a group
+# keeps a single run waiting and drops it for the next to queue, whichever
+# commit that is, so CI finishing out of order could drop the newer commit's
+# deploy for an older one's. The server takes one deploy at a time under its
+# own lock, and skips a commit older than the live one.
 concurrency:
-  group: deploy-production
+  group: deploy-production-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
