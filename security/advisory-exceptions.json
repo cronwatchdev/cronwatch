@@ -89,5 +89,52 @@
       }
     ],
     "reason": "Test-only Phoenix server dependency. No patched Cowlib release exists. The upstream advisory identifies Cowboy 2.16.0 or newer as protected by its default invalid_response_headers=error_terminate behavior; this fixture leaves that default intact. The scanner requires that protected Cowboy version in the same inventory. Published packages do not depend on Cowboy or Cowlib."
+  },
+  {
+    "ecosystem": "RubyGems",
+    "name": "actionpack",
+    "version": "7.2.4",
+    "sources": [
+      "packages/ruby/test/rails/gemfiles/rails_7_2.gemfile.lock"
+    ],
+    "advisories": [
+      "GHSA-2586-8ghr-69fj",
+      "GHSA-gmj8-hvj3-49mw",
+      "GHSA-r9jg-fmfx-2gv6",
+      "GHSA-rwvh-fw6r-pwvp",
+      "GHSA-wm3x-v3qw-4jh3",
+      "GHSA-x6mj-8jx9-qhqv"
+    ],
+    "expires": "2027-01-10",
+    "reason": "Rails 7.2 is past its security support, and these advisories (published 2026-11-10) are fixed only in Rails 8.0.5.2 and 8.1.4.1. The lockfile is the unpublished Rails 7.2 test bundle, which keeps the gem's Rails 7.2 compatibility tested; the gem itself has no Rails dependency, and an app chooses and patches its own Rails. Remove by expiry, with Rails 7.2 support if no fix appears."
+  },
+  {
+    "ecosystem": "RubyGems",
+    "name": "actionview",
+    "version": "7.2.4",
+    "sources": [
+      "packages/ruby/test/rails/gemfiles/rails_7_2.gemfile.lock"
+    ],
+    "advisories": [
+      "GHSA-2p2f-4rq4-gjwc",
+      "GHSA-68p9-83h6-5wpj",
+      "GHSA-rq8q-p985-fjq7",
+      "GHSA-v6rj-xm57-3p59"
+    ],
+    "expires": "2027-01-10",
+    "reason": "Rails 7.2 is past its security support, and these advisories (published 2026-11-10) are fixed only in Rails 8.0.5.2 and 8.1.4.1. The lockfile is the unpublished Rails 7.2 test bundle, which keeps the gem's Rails 7.2 compatibility tested; the gem itself has no Rails dependency, and an app chooses and patches its own Rails. Remove by expiry, with Rails 7.2 support if no fix appears."
+  },
+  {
+    "ecosystem": "RubyGems",
+    "name": "activesupport",
+    "version": "7.2.4",
+    "sources": [
+      "packages/ruby/test/rails/gemfiles/rails_7_2.gemfile.lock"
+    ],
+    "advisories": [
+      "GHSA-8474-xrp6-wh69"
+    ],
+    "expires": "2027-01-10",
+    "reason": "Rails 7.2 is past its security support, and these advisories (published 2026-11-10) are fixed only in Rails 8.0.5.2 and 8.1.4.1. The lockfile is the unpublished Rails 7.2 test bundle, which keeps the gem's Rails 7.2 compatibility tested; the gem itself has no Rails dependency, and an app chooses and patches its own Rails. Remove by expiry, with Rails 7.2 support if no fix appears."
   }
 ]
