@@ -58,12 +58,23 @@ export class ApiClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        // The API never redirects. A redirect followed would send this request,
+        // and put the answer in a tool result, wherever the dashboard pointed.
+        redirect: "manual",
         signal: AbortSignal.timeout(timeout),
       });
-      text = await readCapped(response, this.maxBodyBytes);
+      if (isRedirect(response)) {
+        await response.body?.cancel();
+        text = null;
+      } else text = await readCapped(response, this.maxBodyBytes);
     } catch (e) {
       if ((e as Error)?.name === "TimeoutError") throw new ApiError(`${method} ${path} got no answer within ${timeout / 1000} seconds`, 0);
       throw new ApiError(`${method} ${path} could not reach the dashboard`, 0);
+    }
+    if (isRedirect(response)) {
+      const to = response.headers.get("location");
+      const where = to === null ? "" : `\n${untrusted(to.slice(0, 200), FROM_DASHBOARD)}`;
+      throw new ApiError(`${method} ${path} answered with a redirect (${response.status || "blocked"}), which is not followed; is CRONWATCH_URL where cw.routes() is mounted?${where}`, response.status);
     }
     if (text === null) throw new ApiError(`${method} ${path} answered ${response.status} with a body over ${this.maxBodyBytes} bytes; it was not read`, response.status);
     let data: unknown = null;
@@ -79,6 +90,11 @@ export class ApiClient {
     }
     return data as T;
   }
+}
+
+/** A 3xx with somewhere to go, or the opaque answer a fetch that does not follow one gives. */
+function isRedirect(response: Response): boolean {
+  return response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304);
 }
 
 /** The body as text, or null past `limit` bytes, read no further than that. */

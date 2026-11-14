@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
+import { checkBaseUrl } from "./url.js";
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -22,6 +23,9 @@ A plain http URL is refused unless it is this machine (localhost, 127.0.0.1,
 [::1]), since the token would cross the network unencrypted. For a private
 network you trust, pass --allow-http or set CRONWATCH_ALLOW_HTTP=1.
 
+The URL is only where the routes are mounted: one with a user name, password,
+query, or fragment is refused, and a redirect from it is never followed.
+
 Add it to Claude Code with:
 
   claude mcp add cronwatch -e CRONWATCH_URL=https://app.example.com/cronwatch -e CRONWATCH_TOKEN=... -- npx -y @cronwatch/mcp
@@ -34,20 +38,12 @@ const token = flag("--token") ?? process.env.CRONWATCH_TOKEN ?? null;
 const allowHttp = args.includes("--allow-http") || process.env.CRONWATCH_ALLOW_HTTP === "1";
 
 if (baseUrl) {
-  let url: URL;
-  try {
-    url = new URL(baseUrl);
-  } catch {
-    console.error(`cronwatch-mcp: CRONWATCH_URL "${baseUrl}" is not a URL.`);
+  const verdict = checkBaseUrl(baseUrl, allowHttp);
+  if (verdict.error) {
+    console.error(`cronwatch-mcp: ${verdict.error}`);
     process.exit(2);
   }
-  if (url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-    if (!allowHttp) {
-      console.error(`cronwatch-mcp: ${baseUrl} is plain http, so the token would travel unencrypted; use https. For a private network you trust, pass --allow-http or set CRONWATCH_ALLOW_HTTP=1.`);
-      process.exit(2);
-    }
-    console.error(`cronwatch-mcp: ${baseUrl} is plain http, so the token travels unencrypted (allowed by --allow-http or CRONWATCH_ALLOW_HTTP).`);
-  }
+  if (verdict.warning) console.error(`cronwatch-mcp: ${verdict.warning}`);
 }
 if (!baseUrl) {
   console.error("cronwatch-mcp: set CRONWATCH_URL (or pass --url) to where cw.routes() is mounted, e.g. https://app.example.com/cronwatch");

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createServer as createHttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -7,6 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 import { ApiClient } from "../src/client.js";
 import { bounded, LINE_MAX, RESPONSE_MAX, untrusted } from "../src/text.js";
+import { checkBaseUrl } from "../src/url.js";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
 
@@ -271,4 +274,68 @@ test("the CLI refuses plain http to another host unless told to allow it", async
   const bad = await cli({ CRONWATCH_URL: "not a url" });
   assert.equal(bad.code, 2);
   assert.match(bad.stderr, /is not a URL/);
+});
+
+test("the CLI refuses a URL with a user name or password, another scheme, or a query, and never prints the password", async () => {
+  const withPassword = await cli({ CRONWATCH_URL: "https://admin:hunter2@app.example.com/cronwatch", CRONWATCH_TOKEN: "tok" });
+  assert.equal(withPassword.code, 2);
+  assert.match(withPassword.stderr, /CRONWATCH_URL \(https:\/\/app\.example\.com\/cronwatch\) carries a user name or password/);
+  assert.doesNotMatch(withPassword.stderr, /hunter2|admin/);
+
+  const scheme = await cli({ CRONWATCH_URL: "ftp://app.example.com/cronwatch", CRONWATCH_TOKEN: "tok" });
+  assert.equal(scheme.code, 2);
+  assert.match(scheme.stderr, /must be an http or https URL, not ftp:\/\//);
+
+  const query = await cli({ CRONWATCH_URL: "https://app.example.com/cronwatch?key=s3cret", CRONWATCH_TOKEN: "tok" });
+  assert.equal(query.code, 2);
+  assert.match(query.stderr, /has a query or fragment/);
+  assert.doesNotMatch(query.stderr, /s3cret/);
+});
+
+test("checkBaseUrl passes https and this machine, and its plain http messages leave a password out", () => {
+  assert.deepEqual(checkBaseUrl("https://app.example.com/cronwatch", false), {});
+  assert.deepEqual(checkBaseUrl("https://app.example.com/cronwatch/", false), {});
+  assert.deepEqual(checkBaseUrl("http://localhost:3000/cronwatch", false), {});
+  assert.match(checkBaseUrl("http://10.0.0.5/cronwatch", true).warning ?? "", /^http:\/\/10\.0\.0\.5\/cronwatch is plain http/);
+  assert.match(checkBaseUrl("http://10.0.0.5/cronwatch", false).error ?? "", /^http:\/\/10\.0\.0\.5\/cronwatch is plain http/);
+  // Refused for the password before the scheme is weighed, so it is never repeated.
+  for (const allow of [true, false]) assert.doesNotMatch(JSON.stringify(checkBaseUrl("http://u:pw-123@10.0.0.5/cronwatch", allow)), /pw-123/);
+  assert.doesNotMatch(checkBaseUrl("https://u:pw-123@ex ample/", false).error ?? "", /pw-123/);
+});
+
+test("a redirect is not followed: the request goes nowhere else, and the tool says so", async () => {
+  const seen: string[] = [];
+  const elsewhere = createHttpServer((req, res) => {
+    seen.push(`elsewhere ${req.method} ${req.url} ${req.headers.authorization ?? "no token"}`);
+    res.end(JSON.stringify({ jobs: [] }));
+  });
+  await new Promise<void>((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
+  const target = `http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/latest/meta-data`;
+  const dashboard = createHttpServer((req, res) => {
+    seen.push(`dashboard ${req.method} ${req.url}`);
+    // Another origin for the list, this one for the rest.
+    res.writeHead(req.method === "GET" ? 307 : 302, { location: req.url === "/cronwatch/api/jobs" ? target : "/cronwatch/api/jobs" }).end();
+  });
+  await new Promise<void>((resolve) => dashboard.listen(0, "127.0.0.1", resolve));
+  const server = createServer({ baseUrl: `http://localhost:${(dashboard.address() as AddressInfo).port}/cronwatch`, token: "tok" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientTransport);
+  try {
+    for (const [name, args, request] of [["list_jobs", {}, "GET /jobs"], ["run_check", {}, "POST /check"], ["forget_job", { name: "nightly" }, "DELETE /jobs/nightly"]] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      const text = (result.content as { text: string }[])[0]!.text;
+      assert.equal(result.isError, true, name);
+      assert.ok(text.startsWith(`${request} answered with a redirect (${name === "list_jobs" ? 307 : 302}), which is not followed; is CRONWATCH_URL where cw.routes() is mounted?`), text);
+      // Where it pointed is the dashboard's word: fenced.
+      assert.deepEqual(fences(text), { open: 1, close: 1 }, text);
+    }
+    assert.deepEqual(seen, ["dashboard GET /cronwatch/api/jobs", "dashboard POST /cronwatch/api/check", "dashboard DELETE /cronwatch/api/jobs/nightly"]);
+  } finally {
+    await client.close();
+    await server.close();
+    elsewhere.close();
+    dashboard.close();
+  }
 });
