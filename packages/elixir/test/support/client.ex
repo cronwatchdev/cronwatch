@@ -154,6 +154,28 @@ defmodule Cronwatch.Test.Client do
     end
   end
 
+  # Kept out of the package's API report (api.txt lists what is documented).
+  @doc false
+  # What restarted/2 compares against: the instance's Cronwatch.Runs and
+  # Cronwatch.Checker as they are now.
+  def processes(cw) do
+    {Process.whereis(Cronwatch.Runs.server(cw)), Process.whereis(Cronwatch.Checker.server(cw))}
+  end
+
+  @doc false
+  # Waits until the instance is whole again after Cronwatch.Runs (or a
+  # process before it) went down: a new Cronwatch.Runs with its tables made,
+  # and a new Cronwatch.Checker, the last of the processes restarted after
+  # it (the locks and the task supervisor come before it). A run made once
+  # only the new Cronwatch.Runs is there can find the locks still down, and
+  # then runs unrecorded, as the instance promises while it restarts.
+  def restarted(cw, {old_runs, old_checker}) do
+    eventually(fn ->
+      {runs, checker} = processes(cw)
+      runs != nil and runs != old_runs and checker != nil and checker != old_checker and Cronwatch.Runs.up?(cw)
+    end)
+  end
+
   defp sleep_then(fun, tries) do
     Process.sleep(10)
     eventually(fun, tries - 1)

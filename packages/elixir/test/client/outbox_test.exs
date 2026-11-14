@@ -385,12 +385,42 @@ defmodule Cronwatch.OutboxTest do
     assert Cronwatch.get_run!(run.id, instance: cw).status == "running"
     Clock.advance(clock, Evaluate.send_lease_ms() + @min)
     Cronwatch.check!(instance: cw)
+    # The placeholder holds the run's own error, so it is closed as the
+    # failure it was, with its own times.
     closed = Cronwatch.get_run!(run.id, instance: cw)
-    assert closed.status == "timeout"
+    assert closed.status == "failed"
     assert closed.duration_ms == @min
-    assert closed.error == "Imported, but its finish was never written; marked as timed out\nboom"
-    assert Capture.types(alerts) == ["stuck"]
-    assert Cronwatch.job_summary!("imported", instance: cw).health != "healthy"
+    assert closed.finished_at == run.finished_at
+    assert closed.error == "boom"
+    assert Capture.types(alerts) == ["failed"]
+    assert Cronwatch.job_summary!("imported", instance: cw).health == "failing"
+
+    # The importer comes back and records the same run again: nothing
+    # changes, and nothing is counted twice.
+    assert Cronwatch.record_run(run, instance: cw) == {:ok, []}
+    Cronwatch.check!(instance: cw)
+    assert Capture.types(alerts) == ["failed"]
+    state = Cronwatch.Core.read_state!(Cronwatch.Config.get(cw), "imported")
+    assert state.consecutive_failures == 1
+    assert Cronwatch.job_summary!("imported", instance: cw).open == ["failed"]
+    assert state.pending_runs in [nil, []]
+
+    # The next imported success recovers it.
+    Clock.advance(clock, @min)
+    now = Clock.now(clock)
+
+    next = %{
+      run
+      | id: "next-import",
+        status: "ok",
+        started_at: now - 1000,
+        finished_at: now,
+        duration_ms: 1000,
+        error: nil
+    }
+
+    assert {:ok, _} = Cronwatch.record_run(next, instance: cw)
+    assert Capture.types(alerts) == ["failed", "recovered"]
   end
 
   test "an evaluated import whose finish write fails after its marker is closed by a check, and a late success recovers it" do

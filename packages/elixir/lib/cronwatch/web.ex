@@ -222,7 +222,9 @@ if Code.ensure_loaded?(Plug.Conn) do
 
             cond do
               byte_size(data) > limit -> :too_large
-              data == "" and parsed?(conn) -> {:parsed, conn.body_params}
+              # Nothing left to read and the endpoint's parsers have run: the
+              # body is what they made of it, an empty object (`{}`) included.
+              data == "" and fetched?(conn) -> {:parsed, conn.body_params}
               true -> {:ok, data}
             end
 
@@ -240,7 +242,12 @@ if Code.ensure_loaded?(Plug.Conn) do
       e -> {:error, e}
     end
 
+    # Whether the endpoint's parsers read a body with fields in it: they
+    # also leave an empty map for a body they passed over unread.
     defp parsed?(%{body_params: %Plug.Conn.Unfetched{}}), do: false
     defp parsed?(%{body_params: params}), do: map_size(params) > 0
+
+    defp fetched?(%{body_params: %Plug.Conn.Unfetched{}}), do: false
+    defp fetched?(%{body_params: params}), do: is_map(params)
   end
 end

@@ -28,7 +28,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     `create_statements/1` from one.
 
     A store call made inside the app's own transaction (`repo.in_transaction?()`
-    in the calling process) runs from a task, on a connection of its own, so
+    in the calling process) runs from a process of its own, on a connection of its own, so
     a run is recorded even when the app's transaction is rolled back.
 
     On SQLite, keep the repo's `journal_mode: :wal` (ecto_sqlite3's default)
@@ -137,7 +137,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     ## Running statements
 
-    # Runs `fun` with the store's repo put, from a task when the calling
+    # Runs `fun` with the store's repo put, from a process of its own when the calling
     # process is inside a transaction of the repo, so the store's writes
     # never join (and are never rolled back with) the app's transaction.
     defp within(%__MODULE__{repo: repo, dynamic_repo: dyn}, fun) do
@@ -151,26 +151,42 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @doc false
-    # Runs `fun` in a task, on a connection of its own, and hands back what
-    # it answered, or raises in the caller what it raised: a raise in a
-    # linked task would otherwise take the caller (a job's own process) down
-    # with it, where the same raise outside a transaction is a store error
-    # the client reports.
+    # Runs `fun` in a process of its own, on a connection of its own, and
+    # hands back what it answered, or raises in the caller what it raised.
+    # The process is monitored, never linked: a link would take the caller
+    # (a job's own process) down with a raise in it, where the same raise
+    # outside a transaction is a store error the client reports, and would
+    # leave an `{:EXIT, pid, :normal}` in the mailbox of a caller that traps
+    # exits, one for every store call, which a GenServer's handle_info then
+    # has to know about. `$callers` is set as `Task` sets it, so the Ecto
+    # sandbox in the app's tests still finds the test's connection.
     def apart(repo, dyn, fun) do
-      task =
-        Task.async(fn ->
+      callers = [self() | Process.get(:"$callers", [])]
+
+      {pid, ref} =
+        spawn_monitor(fn ->
+          Process.put(:"$callers", callers)
           if dyn, do: repo.put_dynamic_repo(dyn)
 
-          try do
-            {:ok, fun.()}
-          catch
-            kind, reason -> {:raised, kind, reason, __STACKTRACE__}
-          end
+          answer =
+            try do
+              {:ok, fun.()}
+            catch
+              kind, reason -> {:raised, kind, reason, __STACKTRACE__}
+            end
+
+          exit({:cronwatch_apart, answer})
         end)
 
-      case Task.await(task, :infinity) do
-        {:ok, value} -> value
-        {:raised, kind, reason, stacktrace} -> :erlang.raise(kind, reason, stacktrace)
+      receive do
+        {:DOWN, ^ref, :process, ^pid, {:cronwatch_apart, {:ok, value}}} ->
+          value
+
+        {:DOWN, ^ref, :process, ^pid, {:cronwatch_apart, {:raised, kind, reason, stacktrace}}} ->
+          :erlang.raise(kind, reason, stacktrace)
+
+        {:DOWN, ^ref, :process, ^pid, reason} ->
+          exit(reason)
       end
     end
 

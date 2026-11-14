@@ -12,6 +12,7 @@ defmodule Cronwatch.Output do
   alias Cronwatch.JS
   alias Cronwatch.JSRE
   alias Cronwatch.JSRE.Match
+  alias Cronwatch.Output.Assignment
 
   @output_cap 16 * 1024
   @redacted "[redacted]"
@@ -225,8 +226,17 @@ defmodule Cronwatch.Output do
   # they match what they match in JavaScript. Bounded quantifiers throughout,
   # so a long line cannot make these backtrack. They apply in this order, each
   # to the text the ones before it left. A replacement is a template in which
-  # `$1` stands for group 1 (the only group the SDK's replacements name), or
-  # :assignment, the key=value pattern's function.
+  # `$1` stands for group 1 (the only group the SDK's replacements name).
+  #
+  # The key=value pattern alone is not run by the engine: tried from every
+  # place a name can start, its two `{0,40}` runs around the keyword cost a
+  # backtracking matcher some 1,700 attempts each, seconds for 68 KB of
+  # `pwd-pwd-pwd-` on the BEAM. Cronwatch.Output.Assignment finds the same
+  # matches directly, and the tests hold it to this source.
+  @assignment String.trim_trailing(~S"""
+              \b([A-Za-z0-9_-]{0,40}(?:secret|token|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]{0,40}(?<![Tt][Oo][Kk][Ee][Nn][Ss])"?\s{0,3}(?:=>|[=:])\s{0,3})(?:(")[^"\n]{1,4096}"|(')[^'\n]{1,4096}'|["']?[^\s"',;&]{1,4096})
+              """)
+
   @patterns [
     # A PEM private key, header to footer. Without a footer (the output was
     # trimmed) it runs to the end of the base64 body. A "-" that starts five
@@ -236,9 +246,7 @@ defmodule Cronwatch.Output do
     # password=..., API_KEY: ..., "client_secret": "...", TOKEN='...',
     # token=..., :password=>"..." (but not max_tokens: 800). A quoted value is
     # blanked to its closing quote, spaces and all, and keeps its quotes.
-    {String.trim_trailing(~S"""
-     \b([A-Za-z0-9_-]{0,40}(?:secret|token|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]{0,40}(?<![Tt][Oo][Kk][Ee][Nn][Ss])"?\s{0,3}(?:=>|[=:])\s{0,3})(?:(")[^"\n]{1,4096}"|(')[^'\n]{1,4096}'|["']?[^\s"',;&]{1,4096})
-     """), "gi", :assignment},
+    :assignment,
     # Authorization: Basic <base64> and Authorization: Token <token>, also as
     # a JSON or hash entry.
     {String.trim_trailing(~S"""
@@ -266,20 +274,37 @@ defmodule Cronwatch.Output do
     {~S"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])", "g", "[redacted]"}
   ]
 
+  @doc false
+  # The key=value pattern as the SDK writes it (flags `gi`), for the tests
+  # that hold Cronwatch.Output.Assignment to it.
+  def assignment_source, do: @assignment
+
+  @doc false
+  # The key=value redaction as the engine runs the pattern: what
+  # Cronwatch.Output.Assignment must answer, unit for unit.
+  def assignment_by_pattern(units) do
+    @assignment
+    |> JSRE.compile!("gi")
+    |> JSRE.replace_units(units, fn m ->
+      quote = Match.group(m, 2) || Match.group(m, 3) || ""
+      IO.iodata_to_binary([Match.group(m, 1) || "", quote, JS.units(@redacted), quote])
+    end)
+  end
+
   # The patterns compiled once per node, on first use, and kept in
   # :persistent_term, written that once and read by every process after.
   defp compiled do
     case :persistent_term.get({__MODULE__, :patterns}, nil) do
       nil ->
         patterns =
-          for {source, flags, replacement} <- @patterns do
-            replacement =
-              case replacement do
-                :assignment -> :assignment
-                text -> {:template, text |> :binary.split("$1", [:global]) |> Enum.map(&JS.units/1)}
-              end
+          for pattern <- @patterns do
+            case pattern do
+              :assignment ->
+                {:assignment, JS.units(@redacted)}
 
-            {JSRE.compile!(source, flags), replacement}
+              {source, flags, text} ->
+                {JSRE.compile!(source, flags), text |> :binary.split("$1", [:global]) |> Enum.map(&JS.units/1)}
+            end
           end
 
         :persistent_term.put({__MODULE__, :patterns}, patterns)
@@ -306,19 +331,15 @@ defmodule Cronwatch.Output do
   @spec redact_secrets(String.t()) :: String.t()
   def redact_secrets(text) do
     compiled()
-    |> Enum.reduce(JS.units(text), fn {re, replacement}, units ->
-      JSRE.replace_units(re, units, &apply_replacement(replacement, &1))
+    |> Enum.reduce(JS.units(text), fn
+      {:assignment, redacted}, units -> Assignment.replace(units, redacted)
+      {re, template}, units -> JSRE.replace_units(re, units, &fill(template, &1))
     end)
     |> JS.from_units()
   end
 
-  defp apply_replacement({:template, [first | rest]}, m) do
+  defp fill([first | rest], m) do
     group = Match.group(m, 1) || ""
     IO.iodata_to_binary([first | Enum.map(rest, &[group, &1])])
-  end
-
-  defp apply_replacement(:assignment, m) do
-    quote = Match.group(m, 2) || Match.group(m, 3) || ""
-    IO.iodata_to_binary([Match.group(m, 1) || "", quote, JS.units(@redacted), quote])
   end
 end

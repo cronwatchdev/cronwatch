@@ -36,16 +36,16 @@ defmodule Cronwatch.Run.Exec do
   defp prepare(job, opts) do
     c = Config.get(job.instance)
     trigger = Keyword.get(opts, :trigger, "run")
-    {run, recorded, started} = start(c, job, trigger, nil, Keyword.get(opts, :discard_when) != nil)
-    Lines.open(Runs.table(c.name, :lines), run.id)
-    {:ok, c, {run, recorded, started}}
+    started = start(c, job, trigger, nil, Keyword.get(opts, :discard_when) != nil)
+    Lines.open(Runs.table(c.name, :lines), elem(started, 0).id)
+    {:ok, c, started}
   rescue
     ArgumentError -> :unavailable
   catch
     :exit, _ -> :unavailable
   end
 
-  defp run(c, job, fun, opts, {run, recorded, started}) do
+  defp run(c, job, fun, opts, {run, recorded, started, late}) do
     trigger = Keyword.get(opts, :trigger, "run")
     isolate = Keyword.get(opts, :isolate, false)
     kill = Keyword.get(opts, :kill_at_timeout, false)
@@ -64,7 +64,7 @@ defmodule Cronwatch.Run.Exec do
       trigger: trigger
     }
 
-    info = %{job: job, run: run, recorded: recorded, started: started, cancel: cancel, key: run.id}
+    info = %{job: job, run: run, recorded: recorded, started: started, cancel: cancel, key: run.id, late: late}
     meta = %{instance: c.name, job: job.name, run: run.id, trigger: trigger}
 
     outcome =
@@ -106,11 +106,10 @@ defmodule Cronwatch.Run.Exec do
 
   @doc """
   Whether the instance can record a run: its config is in place and
-  Cronwatch.Runs is up.
+  Cronwatch.Runs is up, its tables made.
   """
   def available?(instance) do
-    :persistent_term.get({Cronwatch, instance}, nil) != nil and
-      is_pid(Process.whereis(Runs.server(instance)))
+    :persistent_term.get({Cronwatch, instance}, nil) != nil and Runs.up?(instance)
   end
 
   @doc """
@@ -184,7 +183,7 @@ defmodule Cronwatch.Run.Exec do
   # Takes the run back (discard_when) or records it as it ended.
   defp settle(c, job, info, outcome, discard, opts) do
     if discard && given_back?(c, job, discard, outcome) && take_back(c, job, info) do
-      Lines.close(Runs.table(c.name, :lines), info.key)
+      given_back(c, info, outcome_build(c, job, info, outcome), true)
     else
       c
       |> record_outcome(job, info, outcome)
@@ -193,17 +192,47 @@ defmodule Cronwatch.Run.Exec do
   end
 
   # The run as its function ended: judged, recorded, and alerted on.
-  defp record_outcome(c, job, info, outcome) do
+  defp record_outcome(c, job, info, outcome), do: record(c, job, info, outcome_build(c, job, info, outcome))
+
+  # What makes the finished run of an outcome, from the run as it finished.
+  defp outcome_build(c, job, info, outcome) do
     lines = Runs.table(c.name, :lines)
     failure = failure_text(outcome)
     result = result_of(outcome)
 
-    record(c, job, info, fn run ->
+    fn run ->
       snap = Lines.snapshot(lines, info.key)
       text = returned_text(result)
       run = %{run | metrics: snap.metrics, output: Lines.output(snap) || text}
       Core.conclude(c, job.expect, run, failure, Lines.expect_text(snap) || text)
-    end)
+    end
+  end
+
+  # A run taken back lets go of its lines. One whose start write was given
+  # up on and has not landed yet has no row to take back: that write is told
+  # to take its row back when it lands, and handed the run as it ended
+  # (`build`, judged or not as `evaluate` says), which it records in the
+  # row's place when the store cannot take it back.
+  defp given_back(c, info, build, evaluate) do
+    lines = Runs.table(c.name, :lines)
+
+    how =
+      if not match?(%{late: %{}}, info) or landed?(info) do
+        :used
+      else
+        try do
+          finished_at = Core.now(c)
+          duration = Evaluate.run_duration(info.run.started_at, finished_at)
+          {:discarded, build.(%{info.run | finished_at: finished_at, duration_ms: duration}), finished_at, evaluate}
+        rescue
+          _ -> :discarded
+        catch
+          _, _ -> :discarded
+        end
+      end
+
+    Lines.close(lines, info.key)
+    conclude_late(info, how)
   end
 
   # Whether a failed run is one to take back (discard_when): the predicate
@@ -243,10 +272,13 @@ defmodule Cronwatch.Run.Exec do
   # run is recorded as it ended, so it is not left running to be reported
   # stuck; a row no longer running (a check marked it stuck meanwhile) is
   # reported and left as it is. A run whose start was never written has
-  # nothing to take back.
+  # nothing to take back (one whose write is still under way is taken back
+  # by that write, when it lands: conclude_late/2).
   defp take_back(c, job, info, unjudged \\ false) do
+    written = info.recorded or landed?(info)
+
     cond do
-      not info.recorded ->
+      not written and not match?(%{late: %{}}, info) ->
         true
 
       not Store.has?(c.store, :delete_run_if, 3) ->
@@ -259,6 +291,11 @@ defmodule Cronwatch.Run.Exec do
         )
 
         false
+
+      # Its start write is still under way: the row is taken back when it
+      # lands (conclude_late/2).
+      not written ->
+        true
 
       true ->
         try do
@@ -287,14 +324,17 @@ defmodule Cronwatch.Run.Exec do
   monitor on this process, the context for `current/0`, and the Logger
   metadata, as `run/3` sets them up. `close/2` or `take_back/2` must follow
   in the same process. Options: `trigger`, `id` (a run id of the
-  integration's own), and `defer` (close missed and stuck only once the run
+  integration's own), and `defer` (close missed only once the run
   is known not to be given back).
   """
   def open(%Job{} = job, opts) do
     c = Config.get(job.instance)
     trigger = Keyword.get(opts, :trigger, "run")
     {:ok, timeout} = Evaluate.timeout_ms(job.definition)
-    {run, recorded, started} = start(c, job, trigger, Keyword.get(opts, :id), Keyword.get(opts, :defer, false))
+
+    {run, recorded, started, late} =
+      start(c, job, trigger, Keyword.get(opts, :id), Keyword.get(opts, :defer, false))
+
     Lines.open(Runs.table(c.name, :lines), run.id)
     cancel = :atomics.new(1, [])
 
@@ -308,7 +348,9 @@ defmodule Cronwatch.Run.Exec do
       trigger: trigger
     }
 
-    info = %{job: job, run: run, recorded: recorded, started: started, cancel: cancel, key: run.id}
+    info = %{job: job, run: run, recorded: recorded, started: started, cancel: cancel, key: run.id, late: late}
+    # Which Cronwatch.Runs holds the run: one restarted meanwhile does not.
+    runs = GenServer.whereis(Runs.server(c.name))
     Runs.register(c.name, run.id, self(), info, timeout)
     Context.push(ctx)
     previous = Logger.metadata()
@@ -322,14 +364,15 @@ defmodule Cronwatch.Run.Exec do
       meta
     )
 
-    %{config: c, job: job, info: info, previous: previous, meta: meta, start_time: start_time}
+    %{config: c, job: job, info: info, previous: previous, meta: meta, start_time: start_time, runs: runs}
   end
 
   @doc """
   Closes a run `open/2` opened, with its outcome as `run/3` sees one
   (`{:returned, value}`, `{:error, exception, stacktrace}`, `{:throw, value,
   stacktrace}`, or `{:exit, reason, stacktrace}`), and records it. Nothing is
-  recorded when the monitor already has (the process died meanwhile).
+  recorded when the monitor already has (the process died meanwhile); a run
+  lost with `Cronwatch.Runs`'s tables when it restarted is recorded here.
   """
   def close(%{config: c, job: job, info: info} = state, outcome) do
     if unwind(state, status_of(outcome)), do: record_outcome(c, job, info, outcome)
@@ -347,9 +390,16 @@ defmodule Cronwatch.Run.Exec do
   def take_back(%{config: c, job: job, info: info} = state, outcome) do
     if unwind(state, "discarded") do
       cond do
-        take_back(c, job, info, outcome == :unjudged) -> Lines.close(Runs.table(c.name, :lines), info.key)
-        outcome == :unjudged -> record_unjudged(c, job, info)
-        true -> record_outcome(c, job, info, outcome)
+        take_back(c, job, info, outcome == :unjudged) ->
+          if outcome == :unjudged,
+            do: given_back(c, info, unjudged_build(c, info), false),
+            else: given_back(c, info, outcome_build(c, job, info, outcome), true)
+
+        outcome == :unjudged ->
+          record_unjudged(c, job, info)
+
+        true ->
+          record_outcome(c, job, info, outcome)
       end
     end
 
@@ -358,23 +408,21 @@ defmodule Cronwatch.Run.Exec do
 
   # A run given back that the store could not take back: stored as it
   # ended, ok, with its lines, and not judged.
-  defp record_unjudged(c, job, info) do
+  defp record_unjudged(c, job, info), do: record(c, job, info, unjudged_build(c, info), false)
+
+  defp unjudged_build(c, info) do
     lines = Runs.table(c.name, :lines)
 
-    record(
-      c,
-      job,
-      info,
-      fn run ->
-        snap = Lines.snapshot(lines, info.key)
-        Core.conclude(c, nil, %{run | metrics: snap.metrics, output: Lines.output(snap)}, nil, nil)
-      end,
-      false
-    )
+    fn run ->
+      snap = Lines.snapshot(lines, info.key)
+      Core.conclude(c, nil, %{run | metrics: snap.metrics, output: Lines.output(snap)}, nil, nil)
+    end
   end
 
   # Undoes what open/2 set up in this process, and answers whether the run
-  # was still open (the monitor did not record it).
+  # is this process's to record: it was still open (the monitor did not
+  # record it), or it went with Cronwatch.Runs's tables when that restarted
+  # (or is restarting) since the run was opened, and no one else will.
   defp unwind(state, status) do
     Logger.reset_metadata(state.previous)
     Context.pop()
@@ -386,7 +434,11 @@ defmodule Cronwatch.Run.Exec do
       Map.put(state.meta, :status, status)
     )
 
-    Runs.close(state.config.name, state.info.run.id)
+    Runs.close(state.config.name, state.info.run.id) or
+      case GenServer.whereis(Runs.server(state.config.name)) do
+        nil -> true
+        runs -> runs != Map.get(state, :runs)
+      end
   end
 
   # The run as it was recorded, to the caller's own `recorded:` function
@@ -398,22 +450,28 @@ defmodule Cronwatch.Run.Exec do
     end
   end
 
-  # Inserts the running row and closes missed and stuck beside the job,
-  # which never waits on it, or, for a run that may be given back, when it
-  # is recorded. The store failing never stops the job.
+  # How long run/3 (and a run an integration opens) waits for the store to
+  # record a run's start, the job's declaration and the run's row, before
+  # running the job without it. A store that fails does so sooner; this is
+  # for one that hangs. The tests shorten it through the application
+  # environment (:start_deadline), which apps leave alone.
+  @start_deadline 5_000
+
+  defp start_deadline, do: Application.get_env(:cronwatch, :start_deadline, @start_deadline)
+
+  # The two flags a start write given up on shares with the run: the run
+  # gave up waiting, and the write landed.
+  @gave_up 1
+  @landed 2
+
+  # Inserts the running row and closes missed beside the job, which never
+  # waits on it, or, for a run that may be given back, when it is recorded.
+  # The store failing never stops the job, and one that hangs holds it for
+  # start_deadline/0 at most. Answers `{run, recorded, started, late}`:
+  # `late` is nil, or the write that was given up on (write_start/3).
   defp start(c, job, trigger, id, defer) do
     run = %Run{id: id || Core.uuid(), job: job.name, status: "running", started_at: Core.now(c), trigger: trigger}
-
-    recorded =
-      try do
-        Core.sync!(c, job, true)
-        Core.store!(c, :insert_run, [run])
-        true
-      rescue
-        e ->
-          Core.report(c, e, "recording #{job.name}")
-          false
-      end
+    {recorded, late} = write_start(c, job, run)
 
     started =
       cond do
@@ -427,10 +485,167 @@ defmodule Cronwatch.Run.Exec do
           start_state(c, job, run)
       end
 
-    {run, recorded, started}
+    {run, recorded, started, late}
   end
 
-  # Closes missed and stuck beside the job, in a task of the instance; nil
+  # Writes the job's declaration and the running row, in a process of the
+  # instance's task supervisor that the caller waits on for start_deadline/0,
+  # and answers `{recorded, late}`.
+  #
+  # A store that hangs must not hold the job back: past the deadline the job
+  # runs as one whose start was never written, which is reported. The write
+  # is still under way and may land later, leaving a running row, so its
+  # process stays to see the run through (`late`, kept in the run's info):
+  # a write that lands before the finish is finished over as usual
+  # (landed?/1); one that lands after the finish is told how the run ended
+  # (conclude_late/2) and finishes it then, so no row is left running to be
+  # called stuck; one that fails in the end leaves nothing behind.
+  #
+  # The caller monitors the process with an alias and is never linked to
+  # it: giving up takes the monitor and the alias down together, so neither
+  # the answer nor a :DOWN reaches its mailbox afterwards.
+  defp write_start(c, job, run) do
+    write = fn ->
+      Core.sync!(c, job, true)
+      Core.store!(c, :insert_run, [run])
+    end
+
+    flags = :atomics.new(2, [])
+
+    case start_writer(c, fn -> writer(c, job, run, write, flags) end) do
+      nil -> {written(c, job, guarded(write)), nil}
+      pid -> await_start(c, job, pid, flags)
+    end
+  end
+
+  defp start_writer(c, fun) do
+    case Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(c.name), fun) do
+      {:ok, pid} -> pid
+      _ -> nil
+    end
+  catch
+    # The instance's task supervisor is restarting: written here, in the caller.
+    :exit, _ -> nil
+  end
+
+  defp guarded(write) do
+    write.()
+    :ok
+  rescue
+    e -> {:error, e}
+  catch
+    kind, reason -> {:raised, kind, reason}
+  end
+
+  defp await_start(c, job, pid, flags) do
+    ref = Process.monitor(pid, alias: :reply_demonitor)
+    send(pid, {:cronwatch_start, ref})
+    late = %{flags: flags, writer: pid}
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(ref, [:flush])
+        {written(c, job, result), nil}
+
+      {:DOWN, ^ref, :process, _, reason} ->
+        {written(
+           c,
+           job,
+           {:error, Cronwatch.Error.other("the start was not written: #{Exception.format_exit(reason)}")}
+         ), nil}
+    after
+      start_deadline() ->
+        :atomics.put(flags, @gave_up, 1)
+        Process.demonitor(ref, [:flush])
+
+        # An answer that arrived as the deadline passed is still the answer.
+        receive do
+          {^ref, result} -> {written(c, job, result), late}
+        after
+          0 ->
+            Core.report(
+              c,
+              Cronwatch.Error.other(
+                "the store took longer than #{Cronwatch.Duration.format(start_deadline())} to record the start of " <>
+                  "#{job.name}; running it unrecorded"
+              ),
+              "recording #{job.name}"
+            )
+
+            {false, late}
+        end
+    end
+  end
+
+  # Whether the start was written; a store's failure is reported, and an
+  # exit or a throw in it is the caller's, as it was when the caller wrote.
+  defp written(_c, _job, :ok), do: true
+
+  defp written(c, job, {:error, e}) do
+    Core.report(c, e, "recording #{job.name}")
+    false
+  end
+
+  defp written(_c, _job, {:raised, kind, reason}), do: :erlang.raise(kind, reason, [])
+
+  # The process that writes a run's start. Once the write has landed and
+  # the run has given up on it, it waits to hear how the run ended.
+  defp writer(c, job, run, write, flags) do
+    receive do
+      {:cronwatch_start, reply} ->
+        result = guarded(write)
+        if result == :ok, do: :atomics.put(flags, @landed, 1)
+        send(reply, {reply, result})
+        if result == :ok and :atomics.get(flags, @gave_up) == 1, do: finish_late(c, job, run)
+    after
+      # The caller ended before it asked.
+      start_deadline() -> :ok
+    end
+  end
+
+  defp finish_late(c, job, run) do
+    receive do
+      {:cronwatch_concluded, :used} ->
+        :ok
+
+      # The finish did not know of the row: it is finished and judged now.
+      # A finish that was recorded all the same (the row found on its
+      # insert) is found finished here, and nothing more happens.
+      {:cronwatch_concluded, {:finish, finished, finished_at, evaluate}} ->
+        Core.record_finish!(c, job, finished, true, finished_at, evaluate)
+
+      # The run was given back: the row goes, or, from a store that cannot
+      # take it back, is finished as the run ended.
+      {:cronwatch_concluded, {:discarded, finished, finished_at, evaluate}} ->
+        unless delete_late(c, job, run), do: Core.record_finish!(c, job, finished, true, finished_at, evaluate)
+
+      # The run never came to a finish (its recording failed before one was made).
+      {:cronwatch_concluded, :discarded} ->
+        delete_late(c, job, run)
+    end
+  rescue
+    e -> Core.report(c, e, "recording #{job.name}")
+  catch
+    kind, reason -> Core.report(c, {kind, reason}, "recording #{job.name}")
+  end
+
+  defp delete_late(c, job, run) do
+    Store.has?(c.store, :delete_run_if, 3) and Core.store!(c, :delete_run_if, [run.id, job.name, "running"]) == true
+  end
+
+  # Whether a start write given up on has landed since.
+  defp landed?(%{late: %{flags: flags}}), do: :atomics.get(flags, @landed) == 1
+  defp landed?(_info), do: false
+
+  # Tells a start write given up on how its run ended: `:used` (the finish
+  # was written over its row, or the row was taken back), `{:finish, run,
+  # finished_at, evaluate}` (the finish did not know of the row),
+  # `{:discarded, run, finished_at, evaluate}` (given back before the row
+  # was there), or `:discarded`.
+  defp conclude_late(%{late: %{writer: pid}}, how), do: send(pid, {:cronwatch_concluded, how})
+  defp conclude_late(_info, _how), do: :ok
+
+  # Closes missed beside the job, in a task of the instance; nil
   # (nothing to wait for) when its task supervisor is restarting.
   defp start_state(c, job, run) do
     {:ok, pid} =
@@ -621,6 +836,14 @@ defmodule Cronwatch.Run.Exec do
   end
 
   defp record_now(c, job, info, build, evaluate) do
+    {run, how} = finish_now(c, job, info, build, evaluate)
+    conclude_late(info, how)
+    run
+  end
+
+  # Answers `{run, how}`: the run as recorded (nil when the recording itself
+  # failed), and what a start write given up on is told (conclude_late/2).
+  defp finish_now(c, job, info, build, evaluate) do
     lines = Runs.table(c.name, :lines)
 
     try do
@@ -636,9 +859,12 @@ defmodule Cronwatch.Run.Exec do
       Lines.close(lines, info.key)
       # A run not judged does not judge its start either.
       unless not evaluate and info.started == :deferred, do: wait_for(c, job, info.started, info.run)
+      # A start write given up on that has landed since is a row to finish over.
+      recorded = info.recorded or landed?(info)
+      how = if recorded, do: :used, else: {:finish, run, finished_at, evaluate}
 
       try do
-        case Core.record_finish!(c, job, run, info.recorded, finished_at, evaluate) do
+        case Core.record_finish!(c, job, run, recorded, finished_at, evaluate) do
           nil ->
             :ok
 
@@ -649,19 +875,25 @@ defmodule Cronwatch.Run.Exec do
               "finishing #{job.name}"
             )
         end
-      rescue
-        e -> Core.report(c, e, "recording #{job.name}")
-      end
 
-      run
+        {run, how}
+      rescue
+        e ->
+          Core.report(c, e, "recording #{job.name}")
+          {run, how}
+      catch
+        kind, reason ->
+          Core.report(c, {kind, reason}, "recording #{job.name}")
+          {nil, how}
+      end
     rescue
       e ->
         Core.report(c, e, "recording #{job.name}")
-        nil
+        {nil, :discarded}
     catch
       kind, reason ->
         Core.report(c, {kind, reason}, "recording #{job.name}")
-        nil
+        {nil, :discarded}
     after
       # Whatever happened (an app's clock that raised), the run's lines
       # do not outlive it.
@@ -671,7 +903,7 @@ defmodule Cronwatch.Run.Exec do
 
   defp wait_for(_c, _job, nil, _run), do: :ok
 
-  # A run that might have been given back closes missed and stuck now that
+  # A run that might have been given back closes missed now that
   # it is known not to be.
   defp wait_for(c, job, :deferred, run) do
     Core.update_state!(c, job.name, fn before -> {Evaluate.start_run(job.definition, run, before, Core.now(c)), nil} end)

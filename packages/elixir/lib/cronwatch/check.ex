@@ -220,25 +220,38 @@ defmodule Cronwatch.Check do
          %Run{status: "running", job: job_name} = run when job_name == listed.job <-
            Core.store!(c, :get_run, [listed.id]) do
       run =
-        if stranded do
-          # Its own status was never written; a late finish of it is judged
-          # as one after a timeout, so a success still recovers.
-          %{
-            run
-            | status: "timeout",
-              duration_ms: run.duration_ms || Evaluate.run_duration(run.started_at, run.finished_at),
-              error: if(run.error == nil, do: @stranded_error, else: @stranded_error <> "\n" <> run.error)
-          }
-        else
-          {:ok, timeout} = ok!(Evaluate.timeout_ms(definition))
+        cond do
+          stranded and run.error != nil ->
+            # The placeholder of a finished import keeps the run's own
+            # error, and only a run that failed has one: it is closed as the
+            # failure it was, with its own times, and alerts as failed. A
+            # later import of the same run finds it finished and changes
+            # nothing.
+            if run.duration_ms != nil,
+              do: %{run | status: "failed", finished_at: run.started_at + run.duration_ms},
+              else: %{run | status: "failed", duration_ms: Evaluate.run_duration(run.started_at, run.finished_at)}
 
-          %{
-            run
-            | status: "timeout",
-              finished_at: now,
-              duration_ms: Evaluate.run_duration(run.started_at, now),
-              error: "Still running after #{Duration.format(timeout)}; marked as timed out"
-          }
+          stranded ->
+            # Its own status was never written and nothing says it failed;
+            # a late finish of it is judged as one after a timeout, so a
+            # success still recovers.
+            %{
+              run
+              | status: "timeout",
+                duration_ms: run.duration_ms || Evaluate.run_duration(run.started_at, run.finished_at),
+                error: @stranded_error
+            }
+
+          true ->
+            {:ok, timeout} = ok!(Evaluate.timeout_ms(definition))
+
+            %{
+              run
+              | status: "timeout",
+                finished_at: now,
+                duration_ms: Evaluate.run_duration(run.started_at, now),
+                error: "Still running after #{Duration.format(timeout)}; marked as timed out"
+            }
         end
 
       # Only over a row still running: a finish that landed meanwhile wins.
@@ -318,7 +331,7 @@ defmodule Cronwatch.Check do
   """
   def job_summary!(c, name) do
     Core.ensure_ready!(c)
-    if job = Runs.job(c.name, name), do: Core.sync!(c, job, true)
+    if job = Runs.job(c.name, name), do: Core.sync!(c, job, true, false)
 
     case Core.store!(c, :get_job, [name]) do
       nil -> nil

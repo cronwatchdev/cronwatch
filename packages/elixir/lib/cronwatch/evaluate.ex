@@ -676,13 +676,16 @@ defmodule Cronwatch.Evaluate do
 
   @doc """
   Called when a run starts, or when a run a source reports is recorded.
-  Missed and stuck are about the absence of a run, so a run starting closes
-  them without an alert; the recovered message waits for a successful
-  finish. Missed closes only when the run catches the schedule up
-  (`catches_up?/3`), which a run starting now always does.
+  Missed is about the absence of a run, so a run starting closes it without
+  an alert; the recovered message waits for a successful finish. It closes
+  only when the run catches the schedule up (`catches_up?/3`), which a run
+  starting now always does. Nothing else closes here. Stuck in particular
+  stays open: a run that has only started may hang as the last one did, and
+  closing stuck for it would open it, and alert, again at every timeout of
+  a job that hangs every time. Only a run that finishes ok closes stuck.
   """
   def on_run_start(def, %Run{} = run, state, now) do
-    state |> clone() |> close_missed(def, run, now) |> close_condition("stuck")
+    state |> clone() |> close_missed(def, run, now)
   end
 
   @doc "A run's start as it is written: `on_run_start/4`, and the run held as pending (`hold_run/2`)."
@@ -941,8 +944,9 @@ defmodule Cronwatch.Evaluate do
   `isStranded`): `record_run/2` writes one as running, with `finished_at`
   set to when it was written, and the finish that follows never landed (the
   importer stopped, or a store write failed and it was not retried). A
-  check closes one `send_lease_ms/0` after it was written, as it closes a
-  stuck run.
+  check closes one `send_lease_ms/0` after it was written: as the failed run
+  it was when the placeholder holds an error (only a run that failed has
+  one), else as it closes a stuck run.
   """
   @spec stranded?(Run.t(), number()) :: boolean()
   def stranded?(%Run{} = run, now) do

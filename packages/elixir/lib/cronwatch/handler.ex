@@ -52,6 +52,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     alias Cronwatch.Env
     alias Cronwatch.JS
     alias Cronwatch.JS.Object
+    alias Cronwatch.Output
     alias Cronwatch.Run.Exec
     alias Cronwatch.Runs
     alias Cronwatch.Web.Request
@@ -108,12 +109,15 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     @impl Plug
     def call(%Plug.Conn{} = conn, %__MODULE__{} = opts) do
-      c = Config.get(opts.instance)
+      # nil while the instance is not running (stopping, or between a crash
+      # and its restart): the request is still held to the secret, and the
+      # job still runs, unrecorded, as Cronwatch.run/3 runs one then.
+      c = config(opts.instance)
       {secret, opted_out} = secret(opts, c)
 
       cond do
         secret == nil and not opted_out and not Env.development?() ->
-          if Runs.flag(opts.instance, {__MODULE__, :warned_no_secret}) do
+          if c != nil and warn_no_secret?(opts.instance) do
             Config.report(
               c,
               Cronwatch.Error.other(
@@ -141,6 +145,19 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
+    defp config(instance) do
+      Config.get(instance)
+    rescue
+      ArgumentError -> nil
+    end
+
+    defp warn_no_secret?(instance) do
+      Runs.flag(instance, {__MODULE__, :warned_no_secret})
+    rescue
+      # Its tables went with Cronwatch.Runs, which is restarting.
+      ArgumentError -> false
+    end
+
     # The options' secret, else the instance's; and whether anyone may run
     # the job without one.
     defp secret(%{secret: false}, _c), do: {nil, true}
@@ -159,6 +176,10 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
+    # An instance that is not running cannot say what its secret is, or
+    # whether it opted out: CRON_SECRET is asked for, as an instance given no
+    # `cron_secret:` asks for it, and without it the request is refused.
+    defp secret(_opts, nil), do: {Env.read_secret("CRON_SECRET"), false}
     defp secret(_opts, c), do: {Routes.cron_secret(c), c.cron_secret == false}
 
     # Read as the dashboard's routes read it: the scheme in any case.
@@ -170,8 +191,26 @@ if Code.ensure_loaded?(Plug.Conn) do
     end
 
     defp run(conn, opts, secret) do
+      case declared(opts) do
+        nil -> unrecorded(conn, opts, secret)
+        job -> recorded(conn, opts, secret, job)
+      end
+    end
+
+    # The job, declared with no options when the instance does not declare
+    # it; nil when the instance is not running, or stops while it is asked.
+    defp declared(opts) do
+      if Exec.available?(opts.instance) do
+        Runs.job(opts.instance, opts.job) || Cronwatch.implicit_job!(opts.job, instance: opts.instance)
+      end
+    rescue
+      ArgumentError -> nil
+    catch
+      :exit, _ -> nil
+    end
+
+    defp recorded(conn, opts, secret, job) do
       {m, f, args} = opts.run
-      job = Runs.job(opts.instance, opts.job) || Cronwatch.job!(opts.job, instance: opts.instance)
       key = {__MODULE__, make_ref()}
 
       result =
@@ -188,10 +227,49 @@ if Code.ensure_loaded?(Plug.Conn) do
         end
 
       run = Process.delete(key)
+      respond(result, conn, &answer(&1, opts, run, secret))
+    end
 
-      # A conn answered is halted, as every other answer here is, so a
-      # pipeline the handler is plugged into does not go on to answer it
-      # again.
+    # Monitoring being down never stops a job: with no instance to record
+    # it, the function runs all the same, and the answer says how it went,
+    # with no run to name.
+    defp unrecorded(conn, opts, secret) do
+      {m, f, args} = opts.run
+      started = System.monotonic_time(:millisecond)
+
+      result =
+        try do
+          {:returned,
+           Exec.unrecorded(opts.instance, opts.job, fn ctx -> apply(m, f, [ctx, conn | args]) end, trigger: "handler")}
+        rescue
+          e -> {:failed, Output.describe_uncapped(:error, e, __STACKTRACE__)}
+        catch
+          kind, reason -> {:failed, Output.describe_uncapped(kind, reason, __STACKTRACE__)}
+        end
+
+      error =
+        case result do
+          {:failed, text} -> text
+          {:returned, {:error, reason}} -> Output.describe_uncapped(:returned, reason, [])
+          {:returned, :error} -> Output.describe_uncapped(:returned, :error, [])
+          {:returned, value} -> Exec.http_failure(value)
+        end
+
+      # As a recorded run's error is kept: redacted, then capped.
+      run = %{
+        id: nil,
+        status: if(error, do: "failed", else: "ok"),
+        duration_ms: max(System.monotonic_time(:millisecond) - started, 0),
+        error: error && Output.redact_and_cap(error, &Output.redact_secrets/1)
+      }
+
+      respond(result, conn, &answer(&1, opts, run, secret))
+    end
+
+    # A conn answered is halted, as every other answer here is, so a
+    # pipeline the handler is plugged into does not go on to answer it
+    # again; anything else is answered with the run's JSON.
+    defp respond(result, conn, answer) do
       case result do
         {:returned, %Plug.Conn{state: state} = answered} when state in [:sent, :chunked, :file, :upgraded] ->
           Plug.Conn.halt(answered)
@@ -200,10 +278,10 @@ if Code.ensure_loaded?(Plug.Conn) do
           answered |> Plug.Conn.send_resp() |> Plug.Conn.halt()
 
         {:returned, %Plug.Conn{} = answered} ->
-          answer(answered, opts, run, secret)
+          answer.(answered)
 
         _ ->
-          answer(conn, opts, run, secret)
+          answer.(conn)
       end
     end
 

@@ -19,10 +19,13 @@ defmodule Cronwatch.Store do
 
   Every callback must answer in bounded time, failing with `{:error, reason}`
   when its database does not answer (a query timeout, as Ecto's and the
-  memory store's calls have). The instance waits for a store call without a
-  deadline of its own: a call that never returns holds the job's lock on
-  this node, so later runs of that job wait behind it, and holds the check
-  that every caller of `Cronwatch.check/1` shares.
+  memory store's calls have). The instance bounds one wait itself: the two
+  writes before a job runs (its declaration and the run's row) are given
+  five seconds, after which the job runs unrecorded and the write, if it
+  lands later, is finished then. Every other store call is waited for
+  without a deadline: one that never returns holds the job's lock on this
+  node, so later runs of that job wait behind it, and holds the check that
+  every caller of `Cronwatch.check/1` shares.
 
   `Cronwatch.StoreCase` is the contract test every store passes, for a store
   of the app's own.

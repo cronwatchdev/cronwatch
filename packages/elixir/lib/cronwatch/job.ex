@@ -4,19 +4,23 @@ defmodule Cronwatch.Job do
   belongs to, its name, and its definition. `definition` is the stored JSON
   object (a `Cronwatch.JS.Object`, fields in the order given, `expect`
   described last); `expect` is the rule itself, as the options give it.
+  `implicit` is true for a job no one declared, made for a run by a name
+  the instance did not know: such a job never takes a stored definition's
+  options away (see `Cronwatch.run/3`).
   """
 
   alias Cronwatch.JS.Object
 
   @enforce_keys [:instance, :name, :fields, :definition]
-  defstruct [:instance, :name, :fields, :definition, expect: nil]
+  defstruct [:instance, :name, :fields, :definition, expect: nil, implicit: false]
 
   @type t :: %__MODULE__{
           instance: atom(),
           name: String.t(),
           fields: Object.t(),
           definition: Object.t(),
-          expect: rule() | nil
+          expect: rule() | nil,
+          implicit: boolean()
         }
 
   @typedoc "An `expect` rule, as `Cronwatch.job/2` reads it from the options."

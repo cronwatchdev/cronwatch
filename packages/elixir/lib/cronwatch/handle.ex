@@ -169,7 +169,11 @@ defmodule Cronwatch.RunHandle do
       inactive: inactive,
       finished: inactive != nil,
       finish_called: false,
-      head: nil
+      head: nil,
+      # The lines this handle last flushed, as logged (`raw`) and as they
+      # stand at the end of the stored output (`redacted`), or nil before
+      # the first flush (see append_redacted/4).
+      flushed: nil
     }
 
     Runs.register_handle(c.name, ref, self(), state)
@@ -264,10 +268,18 @@ defmodule Cronwatch.RunHandle do
           # it cannot record them.
           %Run{status: "running", job: ^name} = stored ->
             added = Lines.output(taken)
-            output = if added, do: join_output(stored.output, Core.clean(c, added)), else: stored.output
+            next = if added, do: append_redacted(c, s.flushed, stored.output, added)
+            output = if next, do: Output.cap(elem(next, 0)), else: stored.output
             written = %{stored | output: output, metrics: Object.merge(stored.metrics, taken.metrics)}
 
             if Core.write_run_if!(c, written, ["running"]) do
+              # Remembered only while the stored output still ends with it
+              # (the cap did not cut into it).
+              with {_, tail} <- next do
+                kept = if tail != nil and String.ends_with?(output, tail.redacted), do: tail
+                update(h, &%{&1 | flushed: kept})
+              end
+
               text = Lines.expect_text(taken)
 
               if text != nil and (s.head == nil or JS.len16(s.head) < Output.output_cap()) do
@@ -409,7 +421,7 @@ defmodule Cronwatch.RunHandle do
               duration_ms: Evaluate.run_duration(from.started_at, finished_at),
               error: nil,
               # Capped by Core.conclude, after it is redacted.
-              output: join_lines(from.output, added),
+              output: if(added, do: elem(append_redacted(c, s.flushed, from.output, added), 0), else: from.output),
               metrics: Object.merge(from.metrics, snap.metrics)
           }
 
@@ -437,11 +449,41 @@ defmodule Cronwatch.RunHandle do
   defp join_lines(before, nil), do: before
   defp join_lines(before, after_text), do: before <> "\n" <> after_text
 
-  # Output appended to stored output, capped like any run's.
-  defp join_output(before, after_text) do
-    case join_lines(before, after_text) do
-      nil -> nil
-      joined -> Output.cap(joined)
+  # `lines` added to the stored output, redacted (the SDK's appendRedacted).
+  # While the output still ends with what this handle flushed last, that
+  # tail is redacted again with the new lines after it and replaced, so a
+  # secret that began in one flush and ends in the next (a private key
+  # logged a line at a time, a label and then its value) is blanked whole,
+  # where redacting each flush alone would store its second half. Otherwise
+  # (the first flush, or another process has written since) the lines are
+  # redacted alone and appended. Answers `{output, tail}`: `tail` is what to
+  # remember once the write lands, at most the output cap of the raw text,
+  # from the start of a line, and only while its redaction is still the end
+  # of what was written.
+  defp append_redacted(c, flushed, stored, lines) do
+    added = Output.strip_nul(lines)
+    joins = flushed != nil and stored != nil and String.ends_with?(stored, flushed.redacted)
+    raw = if joins, do: flushed.raw <> "\n" <> added, else: added
+    redacted = Core.clean(c, raw)
+
+    output =
+      if joins,
+        do: binary_part(stored, 0, byte_size(stored) - byte_size(flushed.redacted)) <> redacted,
+        else: join_lines(stored, redacted)
+
+    cap = Output.output_cap()
+
+    if JS.len16(raw) <= cap do
+      {output, %{raw: raw, redacted: redacted}}
+    else
+      case :binary.split(JS.tail16(raw, cap), "\n") do
+        [_, rest] ->
+          kept = Core.clean(c, rest)
+          {output, if(String.ends_with?(redacted, kept), do: %{raw: rest, redacted: kept})}
+
+        _ ->
+          {output, nil}
+      end
     end
   end
 

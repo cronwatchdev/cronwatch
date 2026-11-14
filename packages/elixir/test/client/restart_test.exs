@@ -20,9 +20,9 @@ defmodule Cronwatch.RestartTest do
   # Crashes Cronwatch.Runs through a call it has no clause for, so its
   # terminate/2 runs, as it does for any crash but a kill.
   defp crash_runs(cw) do
-    old = Process.whereis(Runs.server(cw))
+    {old, _} = before = processes(cw)
     catch_exit(GenServer.call(old, :no_such_call))
-    eventually(fn -> (pid = Process.whereis(Runs.server(cw))) && pid != old end)
+    restarted(cw, before)
   end
 
   test "a crash of the store's process restarts the rest, and the instance keeps recording" do
@@ -31,9 +31,9 @@ defmodule Cronwatch.RestartTest do
     assert Cronwatch.run("before", fn _ -> :ok end, instance: cw) == :ok
 
     {_, store, _, _} = Enum.find(Supervisor.which_children(sup), &(elem(&1, 0) == Cronwatch.Store.Memory))
-    old_runs = Process.whereis(Runs.server(cw))
+    before = processes(cw)
     Process.exit(store, :kill)
-    eventually(fn -> (pid = Process.whereis(Runs.server(cw))) && pid != old_runs end)
+    restarted(cw, before)
 
     assert supervisor(cw) == sup
     assert Cronwatch.run("after", fn _ -> :done end, instance: cw) == :done
@@ -128,5 +128,35 @@ defmodule Cronwatch.RestartTest do
     assert Task.await(caller) == :shutdown
     eventually(fn -> match?([%{status: "failed"}], runs(cw, "isolated")) end)
     assert [%{error: "exit: :shutdown"}] = runs(cw, "isolated")
+  end
+
+  # The name is registered before Cronwatch.Runs has made its tables, and a
+  # run that found it then read one not made yet and raised, without
+  # running the job (one run in some thousands made as it restarted).
+  test "a run made while Cronwatch.Runs is still starting runs unrecorded, and never raises" do
+    %{cw: cw} = make()
+    assert Runs.up?(cw)
+    # As it is between its name being registered and its init/1 returning.
+    :ets.delete(Runs.table(cw, :flags), {Runs, :up})
+    refute Runs.up?(cw)
+
+    capture_log(fn ->
+      assert Cronwatch.run("nightly", fn _ -> :ran end, instance: cw) == :ran
+    end)
+
+    assert runs(cw, "nightly") == []
+  end
+
+  test "a run that finds the config in place but no Cronwatch.Runs runs unrecorded" do
+    instance = :"cw_gone#{System.unique_integer([:positive])}"
+    # As it is while Cronwatch.Runs is down between a crash and its restart.
+    {:ok, config} = Cronwatch.Config.new(name: instance)
+    Cronwatch.Config.put(config)
+    on_exit(fn -> Cronwatch.Config.erase(instance) end)
+    refute Runs.up?(instance)
+
+    capture_log(fn ->
+      assert Cronwatch.run("nightly", fn _ -> :ran end, instance: instance) == :ran
+    end)
   end
 end

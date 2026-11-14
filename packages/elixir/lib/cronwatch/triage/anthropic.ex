@@ -23,7 +23,12 @@ defmodule Cronwatch.Triage.Anthropic do
     * `:model`: default `"claude-opus-5"`.
     * `:effort`: how hard the model thinks, `"low"`, `"medium"` (the
       default), or `"high"`; a stack trace rarely needs more.
-    * `:max_tokens`: default 800; any other number is sent as given, for the
+    * `:max_tokens`: default 4096. A diagnosis is a paragraph, but the model
+      thinks first and that thinking counts toward the limit, so one sized
+      for the paragraph alone can be used up before any of it is written;
+      when it is, triage fails with an error that says so (reported to the
+      instance's error handler as `triage for <job>`), and the alert goes
+      out without a diagnosis. Any other number is sent as given, for the
       API to judge.
     * `:fallbacks`: `false` turns off routing a policy refusal to
       Anthropic's default fallback model inside the same request, for an
@@ -49,7 +54,8 @@ defmodule Cronwatch.Triage.Anthropic do
 
   @default_model "claude-opus-5"
   @default_effort "medium"
-  @default_max_tokens 800
+  # Room for the model's thinking as well as the paragraph it writes after it.
+  @default_max_tokens 4096
   @fallback_beta "server-side-fallback-2026-07-01"
   @api_version "2023-06-01"
   @request_timeout 24_000
@@ -168,7 +174,7 @@ defmodule Cronwatch.Triage.Anthropic do
     # One attempt, no retries: a retry would run on after the alert has
     # gone out without a diagnosis.
     with {:ok, answer} <- Post.fetch(transport, timeout(), url, headers, JS.stringify_lone(params)) do
-      if Post.ok?(answer), do: read(answer, url), else: {:error, Post.refused("Anthropic", url, answer, [key])}
+      if Post.ok?(answer), do: read(t, answer, url), else: {:error, Post.refused("Anthropic", url, answer, [key])}
     end
   end
 
@@ -181,10 +187,10 @@ defmodule Cronwatch.Triage.Anthropic do
     end
   end
 
-  defp read(answer, url) do
+  defp read(t, answer, url) do
     case JS.parse(answer.body) do
       {:ok, message} ->
-        {:ok, diagnosis(message)}
+        result(message, if(is_nil(t.max_tokens), do: @default_max_tokens, else: t.max_tokens))
 
       {:error, e} ->
         {:error,
@@ -342,6 +348,28 @@ defmodule Cronwatch.Triage.Anthropic do
       end
 
     Units.concat(Enum.intersperse(lines, "\n"))
+  end
+
+  @doc false
+  # What a Messages API answer comes to: `{:ok, diagnosis}` (`diagnosis/1`),
+  # or an error when the limit ran out before any of the diagnosis was
+  # written (on the model's thinking, say), so the client reports it to the
+  # error handler rather than the alert going out with no diagnosis and no
+  # word of why. Text that was cut short is still the diagnosis; a refusal
+  # and an empty answer that ended on its own are none, without an error.
+  # The message is the SDK's, its option's name included.
+  def result(message, max_tokens \\ @default_max_tokens) do
+    text = diagnosis(message)
+
+    if text == "" and match?(%Object{}, message) and Object.get(message, "stop_reason") == "max_tokens" do
+      {:error,
+       Post.fail(
+         "triage: the model reached max_tokens (#{JS.format_number(JS.normalize(max_tokens))}) " <>
+           "before writing a diagnosis; raise maxTokens or lower effort"
+       )}
+    else
+      {:ok, text}
+    end
   end
 
   @doc false

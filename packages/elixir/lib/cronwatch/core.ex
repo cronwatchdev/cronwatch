@@ -13,6 +13,7 @@ defmodule Cronwatch.Core do
   alias Cronwatch.Error
   alias Cronwatch.Evaluate
   alias Cronwatch.JobState
+  alias Cronwatch.JS.Object
   alias Cronwatch.Locks
   alias Cronwatch.Output
   alias Cronwatch.Run
@@ -88,7 +89,8 @@ defmodule Cronwatch.Core do
   @doc """
   Writes the declaration of `job`'s name as it stands, unless the store has
   it. A handle kept from an earlier declaration writes the one that replaced
-  it, never its own over it, and one forgotten since writes its own. A name
+  it, never its own over it, and one forgotten since declares the job again
+  as it was last declared here. A name
   declared again while its write was under way is still to be written. A
   name is marked as written only while that same declaration stands, so a
   forget that lands during the write (deleting the row after it) leaves the
@@ -96,9 +98,13 @@ defmodule Cronwatch.Core do
 
   With `confirm`, as a run starts, a name already written is read back:
   another process may have forgotten the job since, and a job still declared
-  here comes back on its next run.
+  here comes back on its next run. `running` says the write is for a run
+  (by default, whenever `confirm` is): a name forgotten here is then
+  declared again, where a check or a dashboard read, which may have picked
+  the name up just before the forget, leaves it forgotten.
   """
-  def sync!(c, job, confirm \\ false) do
+  def sync!(c, job, confirm \\ false, running \\ nil) do
+    running = if running == nil, do: confirm, else: running
     ensure_ready!(c)
 
     if confirm and Runs.synced?(c.name, job.name) and store!(c, :get_job, [job.name]) == nil do
@@ -108,15 +114,58 @@ defmodule Cronwatch.Core do
     unless Runs.synced?(c.name, job.name) do
       declaring(c, job.name, fn ->
         unless Runs.synced?(c.name, job.name) do
-          standing = Runs.job(c.name, job.name) || job
-          store!(c, :upsert_job, [standing.definition, now(c)])
-          Runs.mark_synced(c.name, standing)
+          case standing(c, job, running) do
+            nil ->
+              :ok
+
+            standing ->
+              unless keeps_stored?(c, standing), do: store!(c, :upsert_job, [standing.definition, now(c)])
+              Runs.mark_synced(c.name, standing)
+          end
         end
       end)
     end
 
     :ok
   end
+
+  # The declaration to write: the one that stands. A name not declared was
+  # forgotten here since this write was asked for (or went with a
+  # Cronwatch.Runs that restarted). A check or a dashboard read that was on
+  # its way to write it leaves it forgotten, and answers nil: only a run
+  # brings a forgotten job back. A run (a handle kept from before the
+  # forget) declares the job again, as it was last declared here, as a run
+  # by name does, so the name is marked as written once more and the checks
+  # keep it declared.
+  defp standing(c, job, running) do
+    cond do
+      declared = Runs.job(c.name, job.name) -> declared
+      not running -> nil
+      true -> Runs.declared(c.name, job.name) || redeclared(c, job)
+    end
+  end
+
+  defp redeclared(c, job) do
+    Runs.declare(c.name, job)
+    job
+  end
+
+  # A job no one declared (Cronwatch.Job's `implicit`) is not written over a
+  # stored definition that says more than it does: another process, or this
+  # one before Cronwatch.Runs restarted, declared the job with a schedule,
+  # a timeout, or an expect rule, and a run by name must not take them away.
+  defp keeps_stored?(c, %{implicit: true} = job) do
+    case store!(c, :get_job, [job.name]) do
+      %{definition: %Object{} = stored} ->
+        mine = Object.keys(job.definition)
+        Enum.any?(Object.keys(stored), &(&1 not in mine))
+
+      _ ->
+        false
+    end
+  end
+
+  defp keeps_stored?(_c, _job), do: false
 
   @doc """
   Runs `fun` in its turn among the writes of one name's declaration, which
@@ -230,7 +279,7 @@ defmodule Cronwatch.Core do
         :claim
       else
         # The start was never written; the store may be back by now.
-        sync!(c, job)
+        sync!(c, job, false, true)
 
         try do
           store!(c, :insert_run, [run])

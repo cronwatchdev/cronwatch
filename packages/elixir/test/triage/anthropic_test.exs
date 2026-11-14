@@ -26,6 +26,11 @@ defmodule Cronwatch.Triage.AnthropicTest do
     t
   end
 
+  defp triage_with_opts(opts) do
+    {:ok, t} = Anthropic.init([api_key: "k", base_url: "https://gateway.example/anthropic/"] ++ opts)
+    t
+  end
+
   defmodule Hang do
     @moduledoc false
     @behaviour Cronwatch.Transport
@@ -91,7 +96,7 @@ defmodule Cronwatch.Triage.AnthropicTest do
   test "max_tokens left out is the default, and any number is sent as given" do
     cx = context("a missed run with no runs")
 
-    for {given, want} <- [{nil, 800}, {0, 0}, {1, 1}, {4096, 4096}, {-1, -1}] do
+    for {given, want} <- [{nil, 4096}, {0, 0}, {1, 1}, {4096, 4096}, {-1, -1}] do
       {:ok, t} = Anthropic.init(api_key: "k", max_tokens: given)
       {p, _} = Anthropic.params(t, cx)
       assert JS.Object.get(p, "max_tokens") == want
@@ -173,5 +178,78 @@ defmodule Cronwatch.Triage.AnthropicTest do
     assert alert.url == "https://hooks.slack.example/T/B/x"
     assert alert.body =~ "_Triage:_ The disk is full."
     assert alert.body =~ "(<https://app.example/cronwatch/jobs/nightly|open>)"
+  end
+
+  defmodule Spent do
+    @moduledoc false
+    # Answers triage as Claude does when the limit ran out on its thinking,
+    # and everything else with ok.
+    @behaviour Cronwatch.Transport
+
+    @impl true
+    def post(_opts, request) do
+      body =
+        if String.starts_with?(request.url, "https://api.anthropic.com/"),
+          do: ~s({"stop_reason":"max_tokens","content":[]}),
+          else: "ok"
+
+      {:ok, %Cronwatch.Transport.Response{status: 200, body: body}}
+    end
+  end
+
+  test "triage leaves room for the model's thinking, and says when the limit ran out before any diagnosis" do
+    cx = context("a stuck run")
+    rec = Rec.start()
+    ask = fn opts -> Anthropic.triage(triage_with_opts([transport: Rec.spec(rec)] ++ opts), cx) end
+
+    sent = fn ->
+      rec |> Rec.taken() |> List.last() |> Map.fetch!(:body) |> JS.parse!() |> JS.Object.get("max_tokens")
+    end
+
+    Rec.answer_with(rec, 200, ~s({"stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}))
+    assert ask.([]) == {:ok, "ok"}
+    assert sent.() == 4096
+    assert ask.(max_tokens: 1200) == {:ok, "ok"}
+    assert sent.() == 1200
+
+    # Thinking used the whole limit: no text block at all.
+    Rec.answer_with(rec, 200, ~s({"stop_reason":"max_tokens","content":[{"type":"thinking","thinking":""}]}))
+    assert {:error, e} = ask.(max_tokens: 1200)
+
+    assert Exception.message(e) ==
+             "triage: the model reached max_tokens (1200) before writing a diagnosis; raise maxTokens or lower effort"
+
+    # A diagnosis cut short is still a diagnosis, and a refusal or an empty
+    # answer is still none.
+    Rec.answer_with(rec, 200, ~s({"stop_reason":"max_tokens","content":[{"type":"text","text":"The database was"}]}))
+    assert ask.([]) == {:ok, "The database was"}
+    Rec.answer_with(rec, 200, ~s({"stop_reason":"end_turn","content":[]}))
+    assert ask.([]) == {:ok, ""}
+    Rec.answer_with(rec, 200, ~s({"stop_reason":"refusal","content":[]}))
+    assert ask.([]) == {:ok, ""}
+  end
+
+  test "an alert whose triage ran out of tokens still goes out, and the error handler hears why" do
+    {:ok, errors} = Agent.start_link(fn -> [] end)
+    {:ok, sent} = Agent.start_link(fn -> [] end)
+    name = :"cw_triage_#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {Cronwatch,
+       name: name,
+       cron_secret: false,
+       alerts: [Cronwatch.Alerts.fun("t", fn alert -> Agent.update(sent, &(&1 ++ [alert])) end)],
+       triage: {Anthropic, api_key: "test-key", base_url: "https://api.anthropic.com", transport: {Spent, []}},
+       on_error: fn e, w -> Agent.update(errors, &(&1 ++ ["#{w}: #{Cronwatch.Config.describe(e)}"])) end,
+       jobs: [{"nightly", []}]}
+    )
+
+    assert_raise RuntimeError, "boom", fn -> Cronwatch.run("nightly", fn _ -> raise "boom" end, instance: name) end
+    assert [%{triage: nil, type: "failed"}] = Agent.get(sent, & &1)
+
+    assert Agent.get(errors, & &1) == [
+             "triage for nightly: triage: the model reached max_tokens (4096) before writing a diagnosis; " <>
+               "raise maxTokens or lower effort"
+           ]
   end
 end

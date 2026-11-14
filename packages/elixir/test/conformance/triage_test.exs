@@ -61,8 +61,15 @@ defmodule Cronwatch.Conformance.TriageTest do
     failures =
       failures ++
         Enum.flat_map(list(f, "responses"), fn c ->
-          got = Anthropic.diagnosis(field(c, "response"))
-          want = field(c, "result") || ""
+          # A case holds the diagnosis (`result`, null for none) or the
+          # error triage fails with (`error`).
+          got =
+            case Anthropic.result(field(c, "response")) do
+              {:ok, text} -> {:result, text}
+              {:error, e} -> {:error, e.message}
+            end
+
+          want = if error = field(c, "error"), do: {:error, error}, else: {:result, field(c, "result") || ""}
           if got == want, do: [], else: ["diagnosis #{JS.stringify(field(c, "response"))}: #{inspect(got)}"]
         end)
 

@@ -36,6 +36,17 @@ defmodule Cronwatch.Runs do
   @doc "An instance's table."
   def table(instance, which), do: :"#{instance}.cronwatch.#{which}"
 
+  @doc """
+  Whether this process is up with every table made and the instance's jobs
+  in them. Its name is registered before its `init/1` runs, so the name
+  alone says less: a run that found it then read a table not made yet.
+  """
+  def up?(instance) do
+    is_pid(Process.whereis(server(instance))) and :ets.member(table(instance, :flags), {__MODULE__, :up})
+  rescue
+    ArgumentError -> false
+  end
+
   ## Jobs
 
   @doc "Declares a job: stores it, not yet written to the store."
@@ -122,11 +133,12 @@ defmodule Cronwatch.Runs do
 
   # A call on the run path, which must not take a job down while this
   # process is restarting: `default` when it is not there to answer.
+  # However it went (not started, stopping, killed, or crashed part way
+  # through this call), it is not there, and the run goes on.
   defp call(instance, message, default) do
     GenServer.call(server(instance), message, :infinity)
   catch
-    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown, :killed] -> default
-    :exit, {{:shutdown, _}, _} -> default
+    :exit, _ -> default
   end
 
   @doc "The info of a run in flight, or nil."
@@ -185,6 +197,10 @@ defmodule Cronwatch.Runs do
     :ets.new(table(instance, :forgotten), [:set | opts])
     config = Config.get(instance)
     for job <- config.jobs, do: :ets.insert(table(instance, :jobs), {job.name, job, false})
+    # Last: the process is registered under its name before this function
+    # runs, so until now a caller could find it with only some of its tables
+    # made (up?/1).
+    :ets.insert(table(instance, :flags), {{__MODULE__, :up}})
     {:ok, %{instance: instance, runs: %{}, owners: %{}}}
   end
 
@@ -381,9 +397,30 @@ defmodule Cronwatch.Runs do
   # be reported stuck at its timeout.
   defp record_dead(_instance, _id, nil, _reason), do: :ok
 
+  # The instance's task supervisor starts after this process and stops
+  # before it, so a run that dies as the instance stops (an isolated run's
+  # task, shut down with the supervisor) finds it gone: the run is then
+  # recorded from a process of its own, rather than this one crashing on the
+  # call and the run being left running.
   defp record_dead(instance, id, info, reason) do
-    Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(instance), fn ->
-      Exec.record_dead(instance, id, info, reason)
-    end)
+    record = fn ->
+      try do
+        Exec.record_dead(instance, id, info, reason)
+      rescue
+        _ -> :ok
+      catch
+        _, _ -> :ok
+      end
+    end
+
+    started =
+      try do
+        Task.Supervisor.start_child(Cronwatch.Supervisor.tasks(instance), record)
+      catch
+        :exit, _ -> :unavailable
+      end
+
+    if not match?({:ok, _}, started), do: spawn(record)
+    :ok
   end
 end

@@ -163,12 +163,22 @@ defmodule Cronwatch do
         _ -> instance(run_opts)
       end
 
-    if Exec.available?(inst) do
-      job = resolve!(job, job_opts, run_opts)
-      Exec.run(job, fun, run_opts)
-    else
-      Exec.unrecorded(inst, job_name(job), fun, run_opts)
+    case Exec.available?(inst) && resolved(job, job_opts, run_opts) do
+      %Job{} = resolved -> Exec.run(resolved, fun, run_opts)
+      _ -> Exec.unrecorded(inst, job_name(job), fun, run_opts)
     end
+  end
+
+  # The job to run, or nil when the instance stopped (or Cronwatch.Runs went
+  # down, its tables with it) while it was looked up: the job then runs
+  # unrecorded, as it does when the instance is found down to begin with. A
+  # job the options do not make is still refused, with Cronwatch.Error.
+  defp resolved(job, job_opts, run_opts) do
+    resolve!(job, job_opts, run_opts)
+  rescue
+    ArgumentError -> nil
+  catch
+    :exit, _ -> nil
   end
 
   defp job_name(%Job{name: name}), do: name
@@ -176,16 +186,62 @@ defmodule Cronwatch do
 
   defp resolve!(%Job{} = job, [], _), do: job
 
+  defp resolve!(%Job{} = job, job_opts, _), do: job!(job.name, [{:instance, job.instance} | job_opts])
+
   defp resolve!(name, job_opts, run_opts) when is_binary(name) do
     inst = instance(run_opts)
 
-    case if(job_opts == [], do: Runs.declared(inst, name)) do
-      %Job{} = job -> job
-      _ -> job!(name, [{:instance, inst} | job_opts])
+    cond do
+      job_opts != [] -> job!(name, [{:instance, inst} | job_opts])
+      job = Runs.declared(inst, name) -> job
+      true -> implicit_job!(name, instance: inst)
     end
   end
 
-  defp resolve!(%Job{} = job, job_opts, _), do: job!(job.name, [{:instance, job.instance} | job_opts])
+  @doc false
+  # The job for a run by a name this instance does not declare (never
+  # declared, or declared in a Cronwatch.Runs that has restarted since,
+  # which keeps only the instance's `jobs:`). It is declared as the store
+  # holds it, when the store holds it with options, so the run is judged by
+  # them and they stay stored; otherwise bare, and marked implicit, so that
+  # writing it never takes a stored definition's options away.
+  def implicit_job!(name, opts \\ []) do
+    inst = instance(opts)
+    c = Config.get(inst)
+
+    with options when is_list(options) <- stored_options(c, name),
+         {:ok, job} <- job(name, [{:instance, inst} | options]) do
+      job
+    else
+      _ ->
+        job = unwrap(Job.new(c.name, name, [], c.defaults))
+        job = %{job | implicit: true}
+        Runs.declare(c.name, job)
+        job
+    end
+  end
+
+  # The options that declare the stored job again, or nil when the store
+  # has none, has it without options, or cannot be read (which is reported,
+  # as the run's own store failures are).
+  defp stored_options(c, name) do
+    Core.ensure_ready!(c)
+
+    with %{definition: %Cronwatch.JS.Object{} = definition} <- Core.store!(c, :get_job, [name]),
+         [_ | _] = options <- Cronwatch.Bridge.options_of(definition) do
+      options
+    else
+      _ -> nil
+    end
+  rescue
+    e ->
+      Core.report(c, e, "recording #{name}")
+      nil
+  catch
+    kind, reason ->
+      Core.report(c, {kind, reason}, "recording #{name}")
+      nil
+  end
 
   @doc "The calling process's run (or the run of the process that started it), or nil."
   @spec current() :: Context.t() | nil
@@ -347,9 +403,12 @@ defmodule Cronwatch do
   evaluation marker and finish are written, with a `finished_at` of when it
   was stored, so a concurrent check does not mark it stuck. One whose
   finish is still not written five minutes later (the importer stopped, or
-  never retried) is closed by the next check as timed out, with an error
-  saying so, and alerts as a stuck run; a later retry that succeeds still
-  recovers it. A run imported while still running keeps a nil
+  never retried) is closed by the next check: one whose placeholder holds
+  an error (only a run that failed has one) as the failed run it was, with
+  its own error and times, alerting as failed, after which the same run
+  recorded again changes nothing; any other as timed out, with an error
+  saying so, alerting as a stuck run, which a later retry that succeeds
+  still recovers. A run imported while still running keeps a nil
   `finished_at`, so it is never closed that way: it times out by the job's
   timeout, as any running run does. Runs stored with `evaluate: false` are
   not evaluated by a retry.
