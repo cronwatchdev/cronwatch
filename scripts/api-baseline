@@ -6,4 +6,4 @@
 # or a change a pre-1.0 dependency forces, as site/docs/stability.md
 # allows), push the change, then a commit moving this line to the change's
 # commit, in the same push, and record it in CHANGELOG.md.
-696687b4c95585152f4efc3cd04df76072270c44
+b72413c8cc1f0a28231c93fc560d037c2e9edfa4

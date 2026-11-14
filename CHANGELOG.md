@@ -44,7 +44,7 @@ Every notable change to CronWatch, newest first. All the packages, in every lang
 
 - Every language: stuck stays open until a run finishes successfully. A run that only starts no longer closes it, so a job that hangs on every run alerts once, not once per run, and its health stays stuck until that run.
 - Every language: an imported run whose finish was never written is closed as failed, with its own error, when it carried one, where before it alerted as stuck.
-- Every language: Claude triage's `max_tokens` defaults to 4096, leaving room for the model's thinking, and a response that reaches the limit before any diagnosis is reported to the error handler.
+- Every language: triage's `max_tokens` defaults to 4096, leaving room for the model's thinking, and a response that reaches the limit before any diagnosis is reported to the error handler. In Go this changes the value of the exported constant `triage.DefaultMaxTokens` from 800 to 4096, which the API check counts as incompatible; it is accepted on purpose, and `scripts/api-baseline` moves to that commit.
 - Java: the JobRunr integration is tested on JobRunr 9 as well as 8, and the stores on MariaDB Connector/J 4, which turns TLS on by default: a MariaDB server without TLS needs `sslMode=disable` in the app's own DataSource.
 - Updated test, build, and example dependencies to their current patch and minor releases across npm, Maven, NuGet, Cargo, and Go's unpublished modules. No published package's dependency floor moved.
 - The dependency audit refuses a resolved inventory older than its manifest, reads every Maven module's tree, fails on a paginated OSV answer, and weighs an expired exception only in its own ecosystem.
