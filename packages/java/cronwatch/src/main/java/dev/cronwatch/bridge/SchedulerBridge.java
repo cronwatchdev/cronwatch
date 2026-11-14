@@ -406,13 +406,20 @@ public final class SchedulerBridge {
             .name("cronwatch-sync")
             .unstarted(
                 () -> {
+                  @Nullable Throwable failed = null;
                   try {
                     sync.run();
-                    done.complete(null);
                   } catch (Throwable t) {
-                    done.completeExceptionally(t);
+                    failed = t;
                   } finally {
+                    // Out of SYNCING before the caller hears it ended, so a
+                    // sync it starts straight after is not taken for this one.
                     SYNCING.remove(key, Thread.currentThread());
+                  }
+                  if (failed == null) {
+                    done.complete(null);
+                  } else {
+                    done.completeExceptionally(failed);
                   }
                 });
     if (SYNCING.putIfAbsent(key, thread) != null) {

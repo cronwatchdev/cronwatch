@@ -821,4 +821,19 @@ class BridgeTest {
       release.countDown();
     }
   }
+
+  // A sync that had ended was still marked as under way for a moment after
+  // syncWithin answered, so a check right after it was skipped and reported.
+  @Test
+  void aSyncRightAfterOneThatEndedIsNeverSkipped() {
+    List<String> errors = new CopyOnWriteArrayList<>();
+    try (Cronwatch cw = client(new MemoryStore(), errors)) {
+      for (int i = 0; i < 5_000; i++) {
+        assertTrue(
+            SchedulerBridge.syncWithin(cw, Duration.ofSeconds(10), "jobrunr", () -> {}),
+            "sync " + i + " was skipped: " + errors);
+      }
+      assertEquals(List.of(), errors);
+    }
+  }
 }
