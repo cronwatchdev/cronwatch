@@ -11,7 +11,7 @@ use crate::alerts::{Request, Response, Transport};
 use crate::deliver::TriageContext;
 use crate::js::{LoneJson, Object, Value};
 use crate::store::{BoxError, BoxFuture};
-use crate::triage::{AnthropicOptions, DEADLINE, anthropic, diagnosis, params};
+use crate::triage::{AnthropicOptions, DEADLINE, DEFAULT_MAX_TOKENS, anthropic, diagnosis, params};
 use crate::types::{Alert, Run};
 
 /// The fixture's triage contexts, by name.
@@ -79,8 +79,16 @@ async fn conformance_triage() {
         count += 1;
     }
     for c in objects(&f, "responses") {
-        let got = diagnosis(field(c, "response"));
-        let want = field(c, "result").as_str().unwrap_or("");
+        // Every response is read with the default limit; one that ran out
+        // before any text has `error` and no `result`.
+        let got = diagnosis(field(c, "response"), DEFAULT_MAX_TOKENS).map_err(|e| e.to_string());
+        let want = match c.get("error").and_then(Value::as_str) {
+            Some(error) => {
+                assert!(!c.has("result"), "an error and a result: {}", Value::Object(c.clone()).to_json());
+                Err(error.to_string())
+            }
+            None => Ok(field(c, "result").as_str().unwrap_or("").to_string()),
+        };
         if got != want {
             failures.push(format!("{}: {got:?}, want {want:?}", field(c, "response").to_json()));
         }

@@ -120,12 +120,12 @@ async fn the_request_ends_on_its_own_before_the_client_stops_waiting() {
     assert_eq!(started.elapsed(), DEADLINE);
 }
 
-/// `None` is the default, 800; any other value goes as given, 0 included, as
-/// the SDK's `maxTokens ?? 800` sends it, for the API to judge.
+/// `None` is the default, 4096; any other value goes as given, 0 included, as
+/// the SDK's `maxTokens ?? 4096` sends it, for the API to judge.
 #[test]
 fn max_tokens_none_is_the_default() {
     let cx = context("a missed run with no runs");
-    for (given, want) in [(None, 800.0), (Some(0), 0.0), (Some(1), 1.0), (Some(4096), 4096.0), (Some(-1), -1.0)] {
+    for (given, want) in [(None, 4096.0), (Some(0), 0.0), (Some(1), 1.0), (Some(800), 800.0), (Some(-1), -1.0)] {
         let o = AnthropicOptions { max_tokens: given, ..Default::default() };
         let p = params(&o, &cx, &mut LoneJson::new());
         assert_eq!(p.get("max_tokens").and_then(Value::as_f64), Some(want), "{given:?}");

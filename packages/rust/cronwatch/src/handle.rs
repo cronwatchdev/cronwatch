@@ -117,7 +117,7 @@ impl Client {
     }
 
     /// The start of `execute` without the function: the run is inserted and
-    /// missed and stuck close. A store that fails is reported and the handle
+    /// missed closes. A store that fails is reported and the handle
     /// inserts the finished run instead, as `execute` does.
     async fn record_start(&self, def: &Arc<JobDef>, trigger: String, id: Option<String>) -> Result<RunHandle, Error> {
         let name = &def.name;
@@ -145,7 +145,7 @@ impl Client {
             metrics: Metrics::new(),
             trigger,
         };
-        let inserted = match self.sync_with(def, true).await {
+        let inserted = match self.sync_with(def, true, true).await {
             Ok(()) => self.inner.store.insert_run(&run).await.map_err(Error::store),
             Err(err) => Err(err),
         };
@@ -241,6 +241,72 @@ struct HandleState {
     /// so without it an expect rule at finish would miss a line logged early,
     /// which `run` would have seen.
     head: Option<String>,
+    /// The lines this handle last flushed, or `None` before the first
+    /// flush (see `Flushed`).
+    flushed: Option<Flushed>,
+}
+
+/// The lines a handle last flushed, as logged (`raw`) and as they stand at
+/// the end of the stored output (`redacted`). The next lines are redacted
+/// together with them, so a secret that began in one flush and ends in the
+/// next (a private key logged a line at a time, a label and then its value)
+/// is blanked whole, where redacting each flush alone would store its
+/// second half.
+#[derive(Clone)]
+struct Flushed {
+    raw: String,
+    redacted: String,
+}
+
+/// The byte at which the last `n` UTF-16 code units of `s` begin, moved
+/// past a character the count would split.
+fn tail_start(s: &str, n: usize) -> usize {
+    let mut skip = js::len16(s).saturating_sub(n);
+    for (at, c) in s.char_indices() {
+        if skip == 0 {
+            return at;
+        }
+        skip = skip.saturating_sub(c.len_utf16());
+    }
+    s.len()
+}
+
+/// The SDK's `appendRedacted`: `lines` added to the stored output,
+/// redacted. While the output still ends with what this handle flushed
+/// last, that tail is redacted again with the new lines after it and
+/// replaced; otherwise (the first flush, or another process has written
+/// since) the lines are redacted alone and appended. The second answer is
+/// what to remember once the write lands: at most `OUTPUT_CAP` of the raw
+/// text, from the start of a line, and only while its redaction is still
+/// the end of what was written.
+fn append_redacted(
+    flushed: Option<&Flushed>,
+    stored: Option<&str>,
+    lines: &str,
+    redact: impl Fn(&str) -> String,
+) -> (Option<String>, Option<Flushed>) {
+    let added = output::strip_nul(lines);
+    let joined = flushed.zip(stored).filter(|(f, s)| s.ends_with(&f.redacted));
+    let mut raw = match joined {
+        Some((f, _)) => format!("{}\n{added}", f.raw),
+        None => added,
+    };
+    let redacted = output::redact_and_cap(&raw, &redact);
+    let out = match joined {
+        Some((f, s)) => Some(format!("{}{redacted}", &s[..s.len() - f.redacted.len()])),
+        None => join_lines(stored, Some(redacted.clone())),
+    };
+    if js::len16(&raw) <= OUTPUT_CAP {
+        return (out, Some(Flushed { raw, redacted }));
+    }
+    let from = tail_start(&raw, OUTPUT_CAP);
+    let Some(cut) = raw[from..].find('\n') else {
+        return (out, None);
+    };
+    raw = raw[from + cut + 1..].to_string();
+    let kept = output::redact_and_cap(&raw, &redact);
+    let tail = redacted.ends_with(&kept).then_some(Flushed { raw, redacted: kept });
+    (out, tail)
 }
 
 impl fmt::Debug for RunHandle {
@@ -256,11 +322,6 @@ fn join_lines(before: Option<&str>, after: Option<String>) -> Option<String> {
         (Some(b), None) => Some(b.to_string()),
         (Some(b), Some(a)) => Some(format!("{b}\n{a}")),
     }
-}
-
-/// Output appended to stored output, capped like any run's.
-fn join_output(before: Option<&str>, after: Option<String>) -> Option<String> {
-    join_lines(before, after).map(|t| output::cap_output(&t))
 }
 
 fn recorder_metrics(rec: &Recorder) -> Metrics {
@@ -291,6 +352,7 @@ impl RunHandle {
                     finished,
                     finish_called: false,
                     head: None,
+                    flushed: None,
                 }),
             }),
         }
@@ -358,7 +420,7 @@ impl RunHandle {
         let h = &self.inner;
         let _turn = h.turn.lock().await;
         let (c, name) = (&h.client, &h.def.name);
-        let (taken, lines, metrics) = {
+        let (taken, lines, metrics, flushed) = {
             let mut state = lock(&h.state);
             if state.finished || !h.recorded {
                 return;
@@ -370,7 +432,7 @@ impl RunHandle {
             }
             // Lines logged while this waits on the store go to a new recorder.
             let taken = std::mem::replace(&mut state.rec, Arc::new(Recorder::new()));
-            (taken, lines, metrics)
+            (taken, lines, metrics, state.flushed.clone())
         };
         let put_back = || {
             let mut state = lock(&h.state);
@@ -405,9 +467,12 @@ impl RunHandle {
             return;
         }
         let mut next = stored.clone();
-        if let Some(lines) = lines {
-            let lines = output::redact_and_cap(&lines, |t| c.redact(t));
-            next.output = join_output(stored.output.as_deref(), Some(lines));
+        // Redacted together with what this handle flushed last, so a secret
+        // split across the two is blanked whole.
+        let appended =
+            lines.map(|lines| append_redacted(flushed.as_ref(), stored.output.as_deref(), &lines, |t| c.redact(t)));
+        if let Some((output, _)) = &appended {
+            next.output = output.as_deref().map(output::cap_output);
         }
         next.metrics = stored.metrics.merged(&metrics);
         // Only over a row still running, so a flush never undoes a finish
@@ -419,8 +484,13 @@ impl RunHandle {
             }
             Ok(false) => put_back(),
             Ok(true) => {
+                let mut state = lock(&h.state);
+                if let Some((_, tail)) = appended {
+                    // Remembered only while the stored output still ends
+                    // with it (the cap did not cut into it).
+                    state.flushed = tail.filter(|t| next.output.as_deref().is_some_and(|o| o.ends_with(&t.redacted)));
+                }
                 if let Some(text) = taken.expect_text() {
-                    let mut state = lock(&h.state);
                     if state.head.as_deref().is_none_or(|head| js::len16(head) < OUTPUT_CAP) {
                         let joined = join_lines(state.head.as_deref(), Some(text)).unwrap_or_default();
                         state.head = Some(js::head16(&joined, OUTPUT_CAP));
@@ -527,9 +597,9 @@ impl RunHandle {
             self.ignored(&format!("was already finished as {}", from.status));
             return None;
         }
-        let (rec, head) = {
+        let (rec, head, flushed) = {
             let state = lock(&h.state);
-            (state.rec.clone(), state.head.clone())
+            (state.rec.clone(), state.head.clone(), state.flushed.clone())
         };
         let finished_at = c.now();
         let added = rec.output().or_else(|| result_text.clone());
@@ -538,8 +608,12 @@ impl RunHandle {
         run.finished_at = Some(finished_at);
         run.duration_ms = Some(run_duration(from.started_at, finished_at));
         run.error = None;
-        // Capped by conclude, after it is redacted.
-        run.output = join_lines(from.output.as_deref(), added);
+        // Redacted with what this handle flushed last, as a flush is, then
+        // capped by conclude, after it is redacted whole.
+        run.output = match added {
+            None => from.output.clone(),
+            Some(added) => append_redacted(flushed.as_ref(), from.output.as_deref(), &added, |t| c.redact(t)).0,
+        };
         run.metrics = from.metrics.merged(&recorder_metrics(&rec));
         let expect_text = rec.expect_text().or(result_text);
         let expect_text = join_lines(head.as_deref(), join_lines(from.output.as_deref(), expect_text));

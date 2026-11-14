@@ -660,16 +660,19 @@ pub(crate) fn catches_up(def: &Definition, run: &Run, now: i64) -> bool {
 }
 
 /// Called when a run starts, or when a run a source reports is recorded.
-/// Missed and stuck are about the absence of a run, so a run starting
-/// closes them without an alert; the recovered message waits for a
-/// successful finish. Missed closes only when the run catches the schedule
-/// up (`catches_up`), which a run starting now always does.
+/// Missed is about the absence of a run, so a run starting closes it
+/// without an alert; the recovered message waits for a successful finish.
+/// It closes only when the run catches the schedule up (`catches_up`),
+/// which a run starting now always does. Nothing else closes here. Stuck in
+/// particular stays open: a run that has only started may hang as the last
+/// one did, and closing stuck for it would open it, and alert, again at
+/// every timeout of a job that hangs every time. Only a run that finishes
+/// ok closes stuck.
 pub(crate) fn on_run_start(def: &Definition, run: &Run, state: &JobState, now: i64) -> JobState {
     let mut next = clone_state(state);
     if catches_up(def, run, now) {
         close_condition(&mut next, Condition::Missed);
     }
-    close_condition(&mut next, Condition::Stuck);
     next
 }
 
@@ -914,7 +917,9 @@ pub(crate) fn is_stuck(def: &Definition, run: &Run, now: i64) -> Result<bool, St
 /// writes one as running, with `finished_at` set to when it was written, and
 /// the finish that follows never landed (the importer stopped, or a store
 /// write failed and it was not retried). A check closes one `SEND_LEASE_MS`
-/// after it was written, as it closes a stuck run.
+/// after it was written: as the failed run it was when the placeholder
+/// holds an error (only a run that failed has one), else as it closes a
+/// stuck run.
 pub(crate) fn is_stranded(run: &Run, now: i64) -> bool {
     run.status == RunStatus::Running && run.finished_at.is_some_and(|at| now.saturating_sub(at) > SEND_LEASE_MS)
 }
@@ -1109,6 +1114,55 @@ mod tests {
             AlertDetails::UnderFloor { breaches } => breaches.clone(),
             other => panic!("not under_floor: {other:?}"),
         }
+    }
+
+    /// evaluate.test.ts: a run starting closes nothing but missed, so a job
+    /// that hangs on every run alerts stuck once.
+    #[test]
+    fn stuck_stays_open_through_later_starts_failures_and_timeouts_and_closes_on_the_next_success() {
+        let d = def(r#"{"name":"j"}"#);
+        let run = |status: RunStatus, at: i64| Run::new(format!("r{at}"), "j", status, at);
+        let start_now = |state: &JobState, at: i64| on_run_start(&d, &run(RunStatus::Running, at), state, at);
+        let stuck = on_run_finish(&d, &run(RunStatus::Timeout, T0 - HOUR), &empty_state("j"), &[], T0).unwrap();
+        assert_eq!(types(&stuck), ["stuck"]);
+        // The next run starting closes nothing: it may hang as the last one did.
+        let started = start_now(&stuck.state, T0 + 60_000);
+        assert_eq!(started.open_at(&Condition::Stuck), Some(T0));
+        assert_eq!(started.pending_recovery, Some(Vec::new()));
+        // It times out too: stuck is already open, so there is no second alert.
+        let again = on_run_finish(&d, &run(RunStatus::Timeout, T0 + 60_000), &started, &[], T0 + HOUR).unwrap();
+        assert!(again.alerts.is_empty());
+        assert_eq!(again.state.open_at(&Condition::Stuck), Some(T0), "open since the first time");
+        assert_eq!(again.state.consecutive_failures, 2);
+        // A run that fails opens failed by its own rule and leaves stuck open.
+        let failed = on_run_finish(
+            &d,
+            &run(RunStatus::Failed, T0 + HOUR),
+            &start_now(&again.state, T0 + HOUR),
+            &[],
+            T0 + HOUR + 1000,
+        )
+        .unwrap();
+        assert_eq!(types(&failed), ["failed"]);
+        assert_eq!(failed.state.open_at(&Condition::Stuck), Some(T0));
+        // The first success closes both, with one recovery naming both.
+        let ok = on_run_finish(
+            &d,
+            &run(RunStatus::Ok, T0 + 2 * HOUR),
+            &start_now(&failed.state, T0 + 2 * HOUR),
+            &[],
+            T0 + 2 * HOUR + 1000,
+        )
+        .unwrap();
+        assert_eq!(types(&ok), ["recovered"]);
+        let AlertDetails::Recovered { after, .. } = &ok.alerts[0].details else {
+            panic!("not a recovery: {:?}", ok.alerts[0].details);
+        };
+        let mut after: Vec<&str> = after.iter().map(Condition::as_str).collect();
+        after.sort_unstable();
+        assert_eq!(after, ["failed", "stuck"]);
+        assert!(ok.state.open.is_empty());
+        assert_eq!(ok.state.pending_recovery, Some(Vec::new()));
     }
 
     #[test]

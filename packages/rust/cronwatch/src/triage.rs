@@ -38,8 +38,10 @@ pub const DEFAULT_MODEL: &str = "claude-opus-5";
 /// How hard the model thinks unless told otherwise.
 pub const DEFAULT_EFFORT: &str = "medium";
 /// The most tokens a diagnosis may use unless told otherwise. A diagnosis is
-/// a paragraph.
-pub const DEFAULT_MAX_TOKENS: i64 = 800;
+/// a paragraph, but the model thinks first (thinking is on by default on
+/// current models) and that thinking counts toward this limit, so one sized
+/// for the paragraph alone can be used up before any of it is written.
+pub const DEFAULT_MAX_TOKENS: i64 = 4096;
 /// The beta that routes a policy refusal to Anthropic's default fallback
 /// model inside the same request.
 pub(crate) const FALLBACK: &str = "server-side-fallback-2026-07-01";
@@ -81,8 +83,12 @@ pub struct AnthropicOptions {
     /// How hard the model thinks: `low`, `medium`, or `high`. `""` for
     /// [`DEFAULT_EFFORT`]; a stack trace rarely needs more.
     pub effort: String,
-    /// `None` for [`DEFAULT_MAX_TOKENS`]. Any other value is sent as given,
-    /// as the SDK sends it, for the API to judge.
+    /// `None` for [`DEFAULT_MAX_TOKENS`], 4096: room for the model's thinking
+    /// as well as the paragraph it writes after it. Any other value is sent
+    /// as given, as the SDK sends it, for the API to judge. An answer that
+    /// reaches the limit before any text is an error, reported to the
+    /// client's error handler (`triage for <job>`), and the alert goes out
+    /// without a diagnosis.
     pub max_tokens: Option<i64>,
     /// Turns off routing a policy refusal to Anthropic's default fallback
     /// model inside the same request (on by default), for an account or
@@ -166,7 +172,7 @@ impl Triage for Anthropic {
                     answer.status
                 ))
             })?;
-            Ok(diagnosis(&message))
+            diagnosis(&message, o.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS))
         })
     }
 }
@@ -290,13 +296,19 @@ pub(crate) fn describe(cx: &TriageContext) -> Vec<u16> {
 }
 
 /// The text blocks of a Messages API answer, joined and trimmed, or `""` for
-/// a refusal or nothing.
-pub(crate) fn diagnosis(message: &Value) -> String {
+/// a refusal or nothing. An answer with no text that stopped at
+/// `max_tokens` (`limit`, the one asked for) is an error, with the SDK's
+/// message: the limit ran out before any of the diagnosis was written (on
+/// the model's thinking, say), and the client reports it to the error
+/// handler rather than send the alert with no diagnosis and no word of why.
+/// Text that was cut short is still the diagnosis.
+pub(crate) fn diagnosis(message: &Value, limit: i64) -> Result<String, BoxError> {
     let Some(o) = message.as_object() else {
-        return String::new();
+        return Ok(String::new());
     };
-    if o.get("stop_reason").and_then(Value::as_str) == Some("refusal") {
-        return String::new();
+    let stop = o.get("stop_reason").and_then(Value::as_str);
+    if stop == Some("refusal") {
+        return Ok(String::new());
     }
     let texts: Vec<&str> = o
         .get("content")
@@ -310,7 +322,15 @@ pub(crate) fn diagnosis(message: &Value) -> String {
                 .collect()
         })
         .unwrap_or_default();
-    js::trim(&texts.join("\n")).to_string()
+    let text = js::trim(&texts.join("\n")).to_string();
+    if text.is_empty() && stop == Some("max_tokens") {
+        // The SDK's words, its option's name included, as `triage.json` holds
+        // them; the option here is `max_tokens`.
+        return Err(post::fail(format!(
+            "triage: the model reached max_tokens ({limit}) before writing a diagnosis; raise maxTokens or lower effort"
+        )));
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

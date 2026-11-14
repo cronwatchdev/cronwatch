@@ -357,12 +357,57 @@ async fn an_evaluated_import_whose_state_write_fails_and_is_not_retried_is_close
     assert_eq!(store.inner.get_run(&run.id).await.unwrap().unwrap().status, RunStatus::Running);
     k.advance(SEND_LEASE_MS + MIN);
     k.check().await;
+    // The placeholder holds the run's own error, so it is closed as the
+    // failure it was, with its own times.
+    let closed = store.inner.get_run(&run.id).await.unwrap().unwrap();
+    assert_eq!(closed.status, RunStatus::Failed);
+    assert_eq!(closed.duration_ms, Some(MIN));
+    assert_eq!(closed.finished_at, run.finished_at);
+    assert_eq!(closed.error.as_deref(), Some("boom"));
+    assert_eq!(k.types(), ["failed"]);
+    assert_eq!(k.cw.job_summary("imported").await.unwrap().unwrap().health, cronwatch::JobHealth::Failing);
+    // The importer comes back and records the same run again: nothing
+    // changes, and nothing is counted twice.
+    assert!(k.cw.record_run(run.clone(), RecordOptions::new()).await.unwrap().is_empty());
+    k.check().await;
+    assert_eq!(k.types(), ["failed"]);
+    let after = state(&store.inner, "imported").await;
+    assert_eq!(after.consecutive_failures, 1);
+    let open: Vec<&str> = after.open.iter().map(|o| o.condition.as_str()).collect();
+    assert_eq!(open, ["failed"]);
+    assert_eq!(after.pending_runs, None);
+    // The next imported success recovers it.
+    k.advance(MIN);
+    let mut next = Run::new("next-import", "imported", RunStatus::Ok, k.now() - 1000);
+    next.finished_at = Some(k.now());
+    next.duration_ms = Some(1000);
+    next.trigger = "source".into();
+    k.cw.record_run(next, RecordOptions::new()).await.unwrap();
+    assert_eq!(k.types(), ["failed", "recovered"]);
+}
+
+/// A stranded placeholder with no error says nothing of how the run ended:
+/// it is closed as timed out, with the check's own words alone.
+#[tokio::test]
+async fn a_stranded_import_without_an_error_is_closed_as_timed_out_in_the_checks_words() {
+    let store = Arc::new(TestStore::default());
+    let k = Kit::with(|b| b.store_arc(store.clone()));
+    k.cw.job("imported", JobOptions::new().schedule("0 * * * *").timeout("1m")).unwrap();
+    k.check().await;
+    let mut run = Run::new("lost-finish", "imported", RunStatus::Ok, k.now());
+    run.finished_at = Some(k.now());
+    run.duration_ms = Some(0);
+    run.output = Some("done".into());
+    run.trigger = "source".into();
+    store.breaks(&["update_run_if"]);
+    assert!(k.cw.record_run(run.clone(), RecordOptions::new()).await.is_err());
+    store.mends(&[]);
+    k.advance(SEND_LEASE_MS + MIN);
+    k.check().await;
     let closed = store.inner.get_run(&run.id).await.unwrap().unwrap();
     assert_eq!(closed.status, RunStatus::Timeout);
-    assert_eq!(closed.duration_ms, Some(MIN));
-    assert_eq!(closed.error.as_deref(), Some("Imported, but its finish was never written; marked as timed out\nboom"));
+    assert_eq!(closed.error.as_deref(), Some("Imported, but its finish was never written; marked as timed out"));
     assert_eq!(k.types(), ["stuck"]);
-    assert_ne!(k.cw.job_summary("imported").await.unwrap().unwrap().health, cronwatch::JobHealth::Healthy);
 }
 
 #[tokio::test]

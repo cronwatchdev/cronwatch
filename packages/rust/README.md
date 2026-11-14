@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
-A job's function returns a `Result`; an `Err` fails the run and comes back from `run`, written `Name: message` with the error type's name. A `String` it returns is the run's output when nothing was logged. A panic is recorded as a failed run and then carries on. Dropping `run`'s future while the function runs records the run as failed at once, rather than leave it to be reported stuck.
+A job's function returns a `Result`; an `Err` fails the run and comes back from `run`, written `Name: message` with the error type's name. A `String` it returns is the run's output when nothing was logged. A panic is recorded as a failed run and then carries on. Dropping `run`'s future while the function runs records the run as failed at once, rather than leave it to be reported stuck. The store failing never stops a job, and a store that hangs does not hold one back for long: `run` and a job's handler give it five seconds to record the run's start, then report `the store took longer than 5s to record the start of <job>; running it unrecorded` to the error handler and run the job. If that write lands later, the run is finished over it, at the job's end or as the write lands, so no row is left running. A run that never finishes is marked stuck by the first check after its `timeout`, and stuck stays open until a run finishes ok: a later run starting, failing, or timing out too does not close it, so a job that hangs every time alerts once.
 
 Something has to notice a run that never happened. A long-running service checks in itself:
 
@@ -105,7 +105,7 @@ let cw = Client::builder()
 # }
 ```
 
-Every request refuses redirects, reads at most 1 MiB of an answer, and names only the URL's origin in an error. A channel's request ends after ten seconds; triage's has a deadline of its own, 24 seconds, and the alert goes out without a diagnosis rather than wait longer.
+Every request refuses redirects, reads at most 1 MiB of an answer, and names only the URL's origin in an error. A channel's request ends after ten seconds; triage's has a deadline of its own, 24 seconds, and the alert goes out without a diagnosis rather than wait longer. `max_tokens` is 4096 unless set, since the model's thinking counts toward it; an answer that reaches the limit before any text is an error (`triage: the model reached max_tokens (4096) before writing a diagnosis; raise maxTokens or lower effort`, the SDK's words: raise `max_tokens`), reported as `triage for <job>`.
 
 ## Dashboard
 

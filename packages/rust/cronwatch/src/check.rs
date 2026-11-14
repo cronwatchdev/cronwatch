@@ -82,7 +82,19 @@ impl Client {
         let result = rx.wait_for(Option::is_some).await.map(|v| v.clone());
         match result {
             Ok(Some(result)) => result,
-            _ => Err(Error::Other("the check ended before it could be read".into())),
+            _ => {
+                // The check's task ended without an answer: it was cancelled,
+                // which is the client's runtime shutting down. Its place is
+                // given up, so the next call starts a check of its own
+                // rather than wait on this one for good.
+                let mut checking = lock(&self.inner.checking);
+                if checking.as_ref().is_some_and(|current| current.same_channel(&rx)) {
+                    *checking = None;
+                }
+                drop(checking);
+                self.report_runtime_gone("check");
+                Err(Error::Other("the check ended before it could be read".into()))
+            }
         }
     }
 
@@ -166,14 +178,24 @@ impl Client {
         }
         run.status = RunStatus::Timeout;
         match run.finished_at {
+            Some(finished_at) if stranded && run.error.is_some() => {
+                // The placeholder of a finished import keeps the run's own
+                // error, and only a run that failed has one: it is closed as
+                // the failure it was, with its own times, and alerts as
+                // failed. A later import of the same run finds it finished
+                // and changes nothing.
+                run.status = RunStatus::Failed;
+                match run.duration_ms {
+                    Some(duration) => run.finished_at = Some(run.started_at.saturating_add(duration)),
+                    None => run.duration_ms = Some(run_duration(run.started_at, finished_at)),
+                }
+            }
             Some(finished_at) if stranded => {
-                // Its own status was never written; a late finish of it is
-                // judged as one after a timeout, so a success still recovers.
+                // Its own status was never written and nothing says it
+                // failed; a late finish of it is judged as one after a
+                // timeout, so a success still recovers.
                 run.duration_ms = Some(run.duration_ms.unwrap_or_else(|| run_duration(run.started_at, finished_at)));
-                run.error = Some(match run.error.take() {
-                    Some(error) => format!("{STRANDED_ERROR}\n{error}"),
-                    None => STRANDED_ERROR.to_string(),
-                });
+                run.error = Some(STRANDED_ERROR.to_string());
             }
             _ => {
                 run.finished_at = Some(now);
@@ -314,7 +336,7 @@ impl Client {
     pub async fn job_summary(&self, name: &str) -> Result<Option<JobSummary>, Error> {
         self.ensure_ready().await?;
         if let Some(def) = self.declared(name) {
-            self.sync_with(&def, true).await?;
+            self.sync_with(&def, true, false).await?;
         }
         let Some(stored) = self.inner.store.get_job(name).await.map_err(Error::store)? else {
             return Ok(None);

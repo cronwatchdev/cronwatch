@@ -221,43 +221,33 @@ pub(crate) async fn read_limited(body: Body) -> Result<Vec<u8>, TooLarge> {
     }
 }
 
-/// Whether the declared JSON object or multipart form can be parsed.
-pub(crate) fn valid_body(content_type: &str, data: &[u8]) -> bool {
-    if content_type.contains("application/json") {
-        let text = String::from_utf8_lossy(data);
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        return matches!(js::parse(text), Ok(Value::Object(_)));
-    }
-    if content_type.contains("multipart/form-data") {
-        return multipart_fields(content_type, data).is_some();
-    }
-    true
-}
+/// A body that cannot be read as its type says: JSON that does not parse or
+/// is not an object, a multipart form that does not parse.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Malformed;
 
 /// A field of a request's form or JSON object, as `String(value)` gives it
-/// in JavaScript; `None` for anything else, or a body that cannot be read
-/// as its type says. The last of several fields of one name wins, as
-/// `Object.fromEntries` has it.
-pub(crate) fn body_field(content_type: &str, data: &[u8], name: &str) -> Option<String> {
+/// in JavaScript, or `None` when the body has no such field (or is of
+/// another type). The body is read once: `Malformed` is the SDK's refusal of
+/// a declared JSON object or multipart form that cannot be parsed. The last
+/// of several fields of one name wins, as `Object.fromEntries` has it.
+pub(crate) fn body_field(content_type: &str, data: &[u8], name: &str) -> Result<Option<String>, Malformed> {
     if content_type.contains("application/json") {
         let text = String::from_utf8_lossy(data);
         let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        return match js::parse(text).ok()? {
-            Value::Object(o) => o.get(name).map(|v| js_text(Some(v))),
-            Value::Array(list) => {
-                let i = js::array_index(name)? as usize;
-                list.get(i).map(|v| js_text(Some(v)))
-            }
-            _ => None,
+        return match js::parse(text) {
+            Ok(Value::Object(o)) => Ok(o.get(name).map(|v| js_text(Some(v)))),
+            _ => Err(Malformed),
         };
     }
     if content_type.contains("multipart/form-data") {
-        return multipart_fields(content_type, data)?.into_iter().rev().find(|(n, _)| n == name).map(|(_, v)| v);
+        let fields = multipart_fields(content_type, data).ok_or(Malformed)?;
+        return Ok(fields.into_iter().rev().find(|(n, _)| n == name).map(|(_, v)| v));
     }
     if content_type.contains("application/x-www-form-urlencoded") {
-        return parse_form(data).into_iter().rev().find(|(n, _)| n == name).map(|(_, v)| v);
+        return Ok(parse_form(data).into_iter().rev().find(|(n, _)| n == name).map(|(_, v)| v));
     }
-    None
+    Ok(None)
 }
 
 /// A media type's parameter, unquoted, its name matched without regard to
@@ -398,24 +388,23 @@ mod tests {
             vec![("a".into(), "b c".into()), ("d".into(), "%zz".into()), ("e".into(), "\u{fffd}".into())]
         );
         assert_eq!(form_encode("b c/é"), "b+c%2F%C3%A9");
-        assert_eq!(body_field("application/json", br#"{"for":7200000}"#, "for").as_deref(), Some("7200000"));
-        assert_eq!(body_field("application/json", "\u{feff}{\"for\":true}".as_bytes(), "for").as_deref(), Some("true"));
-        assert_eq!(body_field("application/json", b"{", "for"), None);
-        assert_eq!(body_field("application/x-www-form-urlencoded", b"for=1h&for=2h", "for").as_deref(), Some("2h"));
-        assert_eq!(body_field("text/plain", b"for=1h", "for"), None);
+        let field = |kind: &str, data: &[u8]| body_field(kind, data, "for");
+        assert_eq!(field("application/json", br#"{"for":7200000}"#), Ok(Some("7200000".into())));
+        assert_eq!(field("application/json", "\u{feff}{\"for\":true}".as_bytes()), Ok(Some("true".into())));
+        assert_eq!(field("application/json", b"{"), Err(Malformed));
+        assert_eq!(field("application/json", b"[1]"), Err(Malformed));
+        assert_eq!(field("application/json", b"{}"), Ok(None));
+        assert_eq!(field("application/x-www-form-urlencoded", b"for=1h&for=2h"), Ok(Some("2h".into())));
+        assert_eq!(field("text/plain", b"for=1h"), Ok(None));
         let multipart = b"--b\r\nContent-Disposition: form-data; name=\"for\"\r\n\r\n2h\r\n--b--\r\n";
-        assert_eq!(body_field("multipart/form-data; boundary=b", multipart, "for").as_deref(), Some("2h"));
+        assert_eq!(field("multipart/form-data; boundary=b", multipart), Ok(Some("2h".into())));
         let file = b"--b\r\nContent-Disposition: form-data; name=\"for\"; filename=\"x.txt\"\r\n\r\n2h\r\n--b--\r\n";
-        assert_eq!(body_field("multipart/form-data; boundary=\"b\"", file, "for").as_deref(), Some("[object File]"));
+        assert_eq!(field("multipart/form-data; boundary=\"b\"", file), Ok(Some("[object File]".into())));
         assert_eq!(
-            body_field(
-                "multipart/form-data; boundary=b",
-                b"--b\r\nContent-Disposition: form-data; name=\"for\"\r\n\r\n2h",
-                "for"
-            ),
-            None
+            field("multipart/form-data; boundary=b", b"--b\r\nContent-Disposition: form-data; name=\"for\"\r\n\r\n2h"),
+            Err(Malformed)
         );
-        assert_eq!(body_field("multipart/form-data", multipart, "for"), None);
+        assert_eq!(field("multipart/form-data", multipart), Err(Malformed));
     }
 
     #[test]

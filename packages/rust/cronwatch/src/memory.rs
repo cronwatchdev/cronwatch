@@ -36,14 +36,18 @@ impl MemoryStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn sorted_runs(&self, keep: impl Fn(&Run) -> bool, newest_first: bool) -> Vec<Run> {
+    /// The runs `keep` takes, in order, `limit` of them at most. They are
+    /// sorted where they are held and only the ones answered are copied, so
+    /// a read of a job's newest few does not copy every run it has, output
+    /// and all, while the store's lock is held.
+    fn sorted_runs(&self, keep: impl Fn(&Run) -> bool, newest_first: bool, limit: usize) -> Vec<Run> {
         let inner = self.lock();
-        let mut out: Vec<(Run, u64)> = inner.runs.values().filter(|(r, _)| keep(r)).cloned().collect();
+        let mut out: Vec<&(Run, u64)> = inner.runs.values().filter(|(r, _)| keep(r)).collect();
         out.sort_by(|(a, sa), (b, sb)| {
             let order = a.started_at.cmp(&b.started_at).then(sa.cmp(sb));
             if newest_first { order.reverse() } else { order }
         });
-        out.into_iter().map(|(r, _)| r).collect()
+        out.into_iter().take(limit).map(|(r, _)| r.clone()).collect()
     }
 }
 
@@ -156,17 +160,15 @@ impl Store for MemoryStore {
     }
 
     fn list_runs<'a>(&'a self, job: &'a str, limit: usize) -> BoxFuture<'a, Result<Vec<Run>, BoxError>> {
-        let mut out = self.sorted_runs(|r| r.job == job, true);
-        out.truncate(limit);
-        ready(out)
+        ready(self.sorted_runs(|r| r.job == job, true, limit))
     }
 
     fn last_run<'a>(&'a self, job: &'a str) -> BoxFuture<'a, Result<Option<Run>, BoxError>> {
-        ready(self.sorted_runs(|r| r.job == job, true).into_iter().next())
+        ready(self.sorted_runs(|r| r.job == job, true, 1).into_iter().next())
     }
 
     fn running_runs(&self) -> BoxFuture<'_, Result<Vec<Run>, BoxError>> {
-        ready(self.sorted_runs(|r| r.status == RunStatus::Running, false))
+        ready(self.sorted_runs(|r| r.status == RunStatus::Running, false, usize::MAX))
     }
 
     fn get_state<'a>(&'a self, job: &'a str) -> BoxFuture<'a, Result<Option<JobState>, BoxError>> {

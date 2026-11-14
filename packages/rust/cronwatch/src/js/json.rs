@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashMap};
+
 use super::format_number;
 use crate::types::JsonError;
 
@@ -136,9 +138,37 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 /// A JavaScript object: keys in JavaScript's order, which is every key that
 /// is an array index (a canonical whole number below 2^32 - 1) in ascending
 /// order, then every other key in the order it was first set.
-#[derive(Clone, Debug, Default, PartialEq)]
+///
+/// The two kinds are held apart, as the Go port's object holds them: the
+/// index keys in a map ordered by their number, and the rest in a list, with
+/// a hashed index of their places once there are more than a few. So setting
+/// a key costs the same however many the object holds, and reading a request
+/// body of a hundred thousand keys is not a scan of them all for each one.
+#[derive(Clone, Default)]
 pub struct Object {
-    entries: Vec<(String, Value)>,
+    /// The keys that are array indexes, by their number, each with its text.
+    indexed: BTreeMap<u32, (String, Value)>,
+    /// Every other key, in the order first set.
+    named: Vec<(String, Value)>,
+    /// Where each key of `named` is, kept only past `LOOKUP_FROM` keys: a
+    /// small object, which nearly every one is, is quicker to scan.
+    lookup: Option<HashMap<String, usize>>,
+}
+
+/// How many named keys an object holds before it keeps a hashed index.
+const LOOKUP_FROM: usize = 16;
+
+impl PartialEq for Object {
+    /// The same keys with the same values in the same order.
+    fn eq(&self, other: &Self) -> bool {
+        self.indexed == other.indexed && self.named == other.named
+    }
+}
+
+impl std::fmt::Debug for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
 }
 
 /// Whether a key is an array index, which JavaScript orders before every
@@ -158,26 +188,39 @@ impl Object {
         Self::default()
     }
 
+    /// Where a named key is, or `None`.
+    fn place(&self, key: &str) -> Option<usize> {
+        match &self.lookup {
+            Some(lookup) => lookup.get(key).copied(),
+            None => self.named.iter().position(|e| e.0 == key),
+        }
+    }
+
     /// Gives `key` the value: a new key takes its place in JavaScript's
     /// order, a key already there keeps its place.
     pub fn set(&mut self, key: impl Into<String>, value: impl Into<Value>) {
         let key = key.into();
         let value = value.into();
-        if let Some(e) = self.entries.iter_mut().find(|e| e.0 == key) {
-            e.1 = value;
-            return;
-        }
         if let Some(n) = array_index(&key) {
-            // Before the first key that is not an index or is a larger index.
-            let at = self
-                .entries
-                .iter()
-                .position(|(k, _)| array_index(k).is_none_or(|m| m > n))
-                .unwrap_or(self.entries.len());
-            self.entries.insert(at, (key, value));
+            match self.indexed.get_mut(&n) {
+                Some(e) => e.1 = value,
+                None => {
+                    self.indexed.insert(n, (key, value));
+                }
+            }
             return;
         }
-        self.entries.push((key, value));
+        if let Some(at) = self.place(&key) {
+            self.named[at].1 = value;
+            return;
+        }
+        if let Some(lookup) = &mut self.lookup {
+            lookup.insert(key.clone(), self.named.len());
+        }
+        self.named.push((key, value));
+        if self.lookup.is_none() && self.named.len() > LOOKUP_FROM {
+            self.lookup = Some(self.named.iter().enumerate().map(|(i, e)| (e.0.clone(), i)).collect());
+        }
     }
 
     /// `set`, returning the object, for building one in a line.
@@ -188,7 +231,10 @@ impl Object {
 
     /// The value at `key`.
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.entries.iter().find(|e| e.0 == key).map(|e| &e.1)
+        match array_index(key) {
+            Some(n) => self.indexed.get(&n).map(|e| &e.1),
+            None => self.place(key).map(|at| &self.named[at].1),
+        }
     }
 
     /// Whether the key is there.
@@ -198,28 +244,36 @@ impl Object {
 
     /// Removes `key`, giving back its value.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        let at = self.entries.iter().position(|e| e.0 == key)?;
-        Some(self.entries.remove(at).1)
+        if let Some(n) = array_index(key) {
+            return self.indexed.remove(&n).map(|e| e.1);
+        }
+        let at = self.place(key)?;
+        let (_, value) = self.named.remove(at);
+        // The keys after it have moved up one, so the index is made again
+        // (or let go, for the few a scan is quicker for).
+        self.lookup = (self.named.len() > LOOKUP_FROM)
+            .then(|| self.named.iter().enumerate().map(|(i, e)| (e.0.clone(), i)).collect());
+        Some(value)
     }
 
     /// `Object.keys`: the keys in JavaScript's order.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|e| e.0.as_str())
+        self.iter().map(|e| e.0)
     }
 
     /// The keys and values, in order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
-        self.entries.iter().map(|e| (e.0.as_str(), &e.1))
+        self.indexed.values().chain(self.named.iter()).map(|e| (e.0.as_str(), &e.1))
     }
 
     /// How many keys there are.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.indexed.len() + self.named.len()
     }
 
     /// Whether there are none.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.indexed.is_empty() && self.named.is_empty()
     }
 
     /// `JSON.stringify` of the object.
@@ -262,7 +316,7 @@ fn write(b: &mut String, v: &Value) {
 
 fn write_object(b: &mut String, o: &Object) {
     b.push('{');
-    for (i, (k, v)) in o.entries.iter().enumerate() {
+    for (i, (k, v)) in o.iter().enumerate() {
         if i > 0 {
             b.push(',');
         }
@@ -563,6 +617,46 @@ mod tests {
         assert_eq!(o.to_json(), r#"{"2":4,"10":2,"b":5,"a":3}"#);
         let parsed = parse(r#"{"z":1,"1":2,"z":3,"4294967295":4}"#).unwrap();
         assert_eq!(parsed.to_json(), r#"{"1":2,"z":3,"4294967295":4}"#);
+    }
+
+    #[test]
+    fn a_large_object_keeps_the_order_and_every_key() {
+        // Past the few keys a scan serves, the object keeps an index of its
+        // named keys; nothing a caller sees changes.
+        let mut o = Object::new();
+        for i in (0..500).rev() {
+            o.set(format!("k{i}"), i);
+            o.set(i.to_string(), i);
+        }
+        o.set("k7", "again");
+        o.set("7", "again");
+        assert_eq!(o.len(), 1000);
+        let keys: Vec<&str> = o.keys().collect();
+        let indexes: Vec<String> = (0..500).map(|i| i.to_string()).collect();
+        let names: Vec<String> = (0..500).rev().map(|i| format!("k{i}")).collect();
+        assert_eq!(keys[..500], indexes.iter().map(String::as_str).collect::<Vec<_>>()[..]);
+        assert_eq!(keys[500..], names.iter().map(String::as_str).collect::<Vec<_>>()[..]);
+        assert_eq!(o.get("k7"), Some(&Value::from("again")));
+        assert_eq!(o.get("7"), Some(&Value::from("again")));
+        assert_eq!(o.get("07"), None, "not an index, and not a key");
+        assert_eq!(o.remove("k499"), Some(Value::from(499)));
+        assert_eq!(o.remove("0"), Some(Value::from(0)));
+        assert_eq!(o.remove("k499"), None);
+        assert_eq!(o.get("k498"), Some(&Value::from(498)), "the keys after a removed one are still found");
+        o.set("k499", "back");
+        assert_eq!(o.keys().last(), Some("k499"));
+        assert_eq!(o.keys().next(), Some("1"));
+        assert_eq!(parse(&o.to_json()).unwrap(), Value::Object(o.clone()));
+        // Down to a few keys and up again.
+        for i in 0..499 {
+            o.remove(&format!("k{i}"));
+        }
+        assert_eq!(o.get("k499"), Some(&Value::from("back")));
+        for i in 0..40 {
+            o.set(format!("n{i}"), i);
+        }
+        assert_eq!(o.get("n39"), Some(&Value::from(39)));
+        assert_eq!(o.get("k499"), Some(&Value::from("back")));
     }
 
     #[test]

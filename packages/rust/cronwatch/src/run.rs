@@ -30,6 +30,9 @@ use crate::types::{Alert, Definition, Metrics, Run, RunStatus, run_duration};
 const HISTORY_PAGE: usize = BASELINE_WINDOW + 5;
 const HISTORY_MAX: usize = 200;
 
+/// What is reported, once, when a task of the client's was cancelled.
+pub(crate) const RUNTIME_GONE: &str = "the tokio runtime this client was built on has shut down, so nothing is recorded, checked, or alerted; build the client on the runtime that runs the jobs";
+
 /// A start with an id still in flight, which a second start of that id in
 /// this process waits on.
 pub(crate) type StartCall = watch::Receiver<Option<Result<RunHandle, Error>>>;
@@ -266,9 +269,71 @@ pub(crate) fn ms_duration(ms: f64) -> Duration {
     Duration::from_secs_f64((ms.clamp(0.0, MAX_INTERVAL_MS as f64)) / 1000.0)
 }
 
-/// How a run's start went: whether its row was written, and the task
-/// closing missed and stuck beside the job.
-type Started = (bool, Option<JoinHandle<()>>);
+/// How long `run` and a job's handler wait for the store to record a run's
+/// start (the job's declaration and the run's row) before running the job
+/// without it. A store that fails does so sooner; this is for one that
+/// hangs.
+pub(crate) const START_DEADLINE: Duration = Duration::from_secs(5);
+
+/// How a run's start went: whether its row was written in time, the task
+/// closing missed beside the job, and, for a start given up on at
+/// `START_DEADLINE`, where its write and the run's end meet.
+struct Started {
+    recorded: bool,
+    closing: Option<JoinHandle<()>>,
+    late: Option<Arc<LateStart>>,
+}
+
+/// A start write given up on, which may still land. The job runs as one
+/// whose start was never written, and whichever of the write and the run's
+/// end comes second sees the other here, under one lock, so a row is never
+/// left running by a process still alive: a write that lands before the
+/// finish is finished over as usual; one that lands after the finish was
+/// recorded is refused by the store (the row is there); one that lands
+/// after the finish failed to be recorded, or after the run was given back,
+/// is finished, or taken back, then.
+#[derive(Default)]
+struct LateStart {
+    state: std::sync::Mutex<LateState>,
+}
+
+#[derive(Default)]
+struct LateState {
+    /// The start's row is in the store.
+    landed: bool,
+    /// What the run's end left for a start that lands after it.
+    after: Option<AfterEnd>,
+}
+
+/// What a start that lands after its run ended has to do.
+enum AfterEnd {
+    /// The finish could not be recorded: record it, as it stood, at this
+    /// time.
+    Finish(Box<Run>, i64),
+    /// The run was given back (`run_or_discard`): take the row back.
+    Discard,
+}
+
+impl LateStart {
+    fn lock(&self) -> std::sync::MutexGuard<'_, LateState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether the start's row has landed.
+    fn landed(&self) -> bool {
+        self.lock().landed
+    }
+
+    /// Whether the start's row has landed; when it has not, `after` is left
+    /// for it to do once it does.
+    fn landed_or(&self, after: AfterEnd) -> bool {
+        let mut state = self.lock();
+        if !state.landed {
+            state.after = Some(after);
+        }
+        state.landed
+    }
+}
 
 /// Records a run as failed if the future running it is dropped while the
 /// job's function runs, rather than leave it `running` to be reported stuck
@@ -278,12 +343,12 @@ struct DropGuard {
     def: Arc<JobDef>,
     run: Run,
     rec: Arc<Recorder>,
-    start: Option<JoinHandle<Started>>,
+    start: Option<JoinHandle<Result<(), Error>>>,
     started: Option<Started>,
     armed: bool,
-    /// Whether the start closed missed and stuck; a run that may be given
-    /// back leaves that to its end, which a dropped run has reached.
-    closed_on_start: bool,
+    /// Whether the start closes missed; a run that may be given back leaves
+    /// that to its end, which a dropped run has reached.
+    close_on_start: bool,
 }
 
 /// A task aborted when this is dropped: the job's timeout timer, which
@@ -297,13 +362,12 @@ impl Drop for AbortOnDrop {
 }
 
 impl DropGuard {
-    async fn wait_start(&mut self) -> bool {
+    async fn wait_start(&mut self) {
         if let Some(start) = self.start.as_mut() {
-            let started = start.await.unwrap_or((false, None));
+            let started = self.client.await_start(&self.def, &self.run, self.close_on_start, start).await;
             self.start = None;
             self.started = Some(started);
         }
-        self.started.as_ref().is_some_and(|s| s.0)
     }
 }
 
@@ -318,19 +382,21 @@ impl Drop for DropGuard {
         let rec = self.rec.clone();
         let start = self.start.take();
         let started = self.started.take();
-        let closed_on_start = self.closed_on_start;
+        let close_on_start = self.close_on_start;
         self.client.inner.handle.spawn(async move {
-            let (recorded, closing) = match (start, started) {
-                (Some(start), _) => start.await.unwrap_or((false, None)),
+            let started = match (start, started) {
+                (Some(mut start), _) => client.await_start(&def, &run, close_on_start, &mut start).await,
                 (None, Some(started)) => started,
-                (None, None) => (false, None),
+                (None, None) => Started { recorded: false, closing: None, late: None },
             };
-            let closing = match closing {
-                None if recorded && !closed_on_start => Some(client.close_on_start(&def, &run)),
+            let closing = match started.closing {
+                None if started.recorded && !close_on_start => Some(client.close_on_start(&def, &run)),
                 closing => closing,
             };
             let failure = "Cancelled: the run's future was dropped before it finished".to_string();
-            client.finish_executed(&def, run, &rec, None, Some(failure), recorded, closing).await;
+            client
+                .finish_executed(&def, run, &rec, None, Some(failure), started.recorded, closing, started.late.as_ref())
+                .await;
         });
     }
 }
@@ -388,7 +454,7 @@ impl Job {
     /// deferred with `DeferredError`. The running row is deleted (through
     /// [`Store::delete_run_if`](crate::Store::delete_run_if)), nothing is
     /// judged or alerted, the job's state is left as it was (the attempt
-    /// closes neither missed nor stuck), and the error is still returned. A
+    /// closes nothing), and the error is still returned. A
     /// row a check already marked stuck is left as it is, and a store
     /// without `delete_run_if` records the run as it ended; both are
     /// reported to the error handler as `discarding <job>`, as is a
@@ -497,7 +563,7 @@ impl Client {
         };
         // The start is written in a task of its own, so a caller that drops
         // this future part way leaves a whole row, which the guard finishes.
-        // A run that may be given back closes missed and stuck only once it
+        // A run that may be given back closes missed only once it
         // is known not to be, as the Go and PHP ports do: one taken back
         // must leave the state as it was, or an overdue job would have
         // missed closed by each attempt given back and opened again by the
@@ -505,7 +571,7 @@ impl Client {
         let close_on_start = discard.is_none();
         let start = {
             let (client, def, run) = (self.clone(), def.clone(), run.clone());
-            self.inner.handle.spawn(async move { client.begin_run(&def, &run, close_on_start).await })
+            self.inner.handle.spawn(async move { client.begin_run(&def, &run).await })
         };
         let rec = Arc::new(Recorder::new());
         let mut guard = DropGuard {
@@ -516,7 +582,7 @@ impl Client {
             start: Some(start),
             started: None,
             armed: true,
-            closed_on_start: close_on_start,
+            close_on_start,
         };
         guard.wait_start().await;
 
@@ -548,7 +614,8 @@ impl Client {
         };
         drop(timer);
         guard.armed = false;
-        let (recorded, closing) = guard.started.take().unwrap_or((false, None));
+        let Started { recorded, closing, late } =
+            guard.started.take().unwrap_or(Started { recorded: false, closing: None, late: None });
 
         let (outcome, failure, result_text) = match outcome {
             Err(panic) => {
@@ -564,11 +631,20 @@ impl Client {
                         // meanwhile never leaves the run running.
                         let client = self.clone();
                         let task = self.inner.handle.spawn(async move {
+                            // A start still being written has no row to take
+                            // back yet: it is taken back when it lands.
+                            let recorded =
+                                recorded || late.as_ref().is_some_and(|late| late.landed_or(AfterEnd::Discard));
                             if !recorded || client.discard_run(&run).await {
                                 return None;
                             }
                             let closing = Some(client.close_on_start(&def, &run));
-                            Some(client.finish_executed(&def, run, &rec, None, Some(text), recorded, closing).await)
+                            let late = late.as_ref();
+                            Some(
+                                client
+                                    .finish_executed(&def, run, &rec, None, Some(text), recorded, closing, late)
+                                    .await,
+                            )
                         });
                         let run = match task.await {
                             Ok(run) => run,
@@ -597,7 +673,7 @@ impl Client {
         };
         let client = self.clone();
         let task = self.inner.handle.spawn(async move {
-            client.finish_executed(&def, run, &rec, result_text, failure, recorded, closing).await
+            client.finish_executed(&def, run, &rec, result_text, failure, recorded, closing, late.as_ref()).await
         });
         // Dropping this future now detaches the recording rather than
         // cancelling it.
@@ -614,10 +690,23 @@ impl Client {
     }
 
     /// Reports a task of the client's own that panicked (a store's panic, a
-    /// channel's), which would otherwise go unseen.
+    /// channel's), which would otherwise go unseen. One that was cancelled
+    /// never ran to its end, which only happens once the runtime the client
+    /// was built on has shut down (a client built inside a `block_on` that
+    /// has returned, or kept across `#[tokio::test]` functions): nothing can
+    /// be recorded from then on, so that is said once per client rather
+    /// than left silent.
     pub(crate) fn report_panicked(&self, err: tokio::task::JoinError, where_: &str) {
-        if let Ok(panic) = err.try_into_panic() {
-            self.report(Error::Other(format!("panicked: {}", panic_text(&*panic))), where_);
+        match err.try_into_panic() {
+            Ok(panic) => self.report(Error::Other(format!("panicked: {}", panic_text(&*panic))), where_),
+            Err(_) => self.report_runtime_gone(where_),
+        }
+    }
+
+    /// Says, once per client, that its runtime has shut down.
+    pub(crate) fn report_runtime_gone(&self, where_: &str) {
+        if !self.inner.warned_runtime_gone.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.report(Error::Other(RUNTIME_GONE.into()), where_);
         }
     }
 
@@ -667,7 +756,7 @@ impl Client {
         }
     }
 
-    /// Closes missed and stuck for a run that has started, beside the job,
+    /// Closes missed for a run that has started, beside the job,
     /// and holds the run in `pending_runs` until its finish is evaluated.
     /// `run` is the run as it started, still running.
     fn close_on_start(&self, def: &Arc<JobDef>, run: &Run) -> JoinHandle<()> {
@@ -685,20 +774,101 @@ impl Client {
         })
     }
 
-    /// The start of a run: the definition synced, the row inserted, and
-    /// (with `close`) missed and stuck closed beside the job, which never
-    /// waits on it.
-    async fn begin_run(&self, def: &Arc<JobDef>, run: &Run, close: bool) -> Started {
+    /// The start of a run: the definition synced and the row inserted.
+    async fn begin_run(&self, def: &Arc<JobDef>, run: &Run) -> Result<(), Error> {
+        self.sync_with(def, true, true).await?;
+        self.inner.store.insert_run(run).await.map_err(Error::store)
+    }
+
+    /// Waits for a run's start to be written, `START_DEADLINE` at most. In
+    /// time, missed closes beside the job (with `close`), which never waits
+    /// on it. Past it, a store that hangs must not hold the job back: it is
+    /// reported, the job runs as one whose start was never written, and the
+    /// write, still under way, is left to a task that meets the run's end
+    /// in a `LateStart`. The start's own task is never cancelled, so a
+    /// caller that drops this wait leaves a whole row or none.
+    async fn await_start(
+        &self,
+        def: &Arc<JobDef>,
+        run: &Run,
+        close: bool,
+        start: &mut JoinHandle<Result<(), Error>>,
+    ) -> Started {
         let name = &def.name;
-        let inserted = match self.sync_with(def, true).await {
-            Ok(()) => self.inner.store.insert_run(run).await.map_err(Error::store),
-            Err(err) => Err(err),
-        };
-        if let Err(err) = inserted {
-            self.report(err, &format!("recording {name}"));
-            return (false, None);
+        match tokio::time::timeout(START_DEADLINE, &mut *start).await {
+            Ok(Ok(Ok(()))) => {
+                let closing = close.then(|| self.close_on_start(def, run));
+                Started { recorded: true, closing, late: None }
+            }
+            // A store that fails, as opposed to hangs: reported, and the
+            // finish writes the whole run instead.
+            Ok(Ok(Err(err))) => {
+                self.report(err, &format!("recording {name}"));
+                Started { recorded: false, closing: None, late: None }
+            }
+            Ok(Err(ended)) => {
+                self.report_panicked(ended, &format!("recording {name}"));
+                Started { recorded: false, closing: None, late: None }
+            }
+            Err(_) => {
+                self.report(
+                    Error::Other(format!(
+                        "the store took longer than {} to record the start of {name}; running it unrecorded",
+                        format_duration(START_DEADLINE.as_millis() as f64)
+                    )),
+                    &format!("recording {name}"),
+                );
+                let late = Arc::new(LateStart::default());
+                // The handle is taken over by the task that waits the write
+                // out; the caller's is left finished with nothing to say.
+                let writing = std::mem::replace(start, self.inner.handle.spawn(async { Ok(()) }));
+                let (client, def, begun, landing) = (self.clone(), def.clone(), run.clone(), late.clone());
+                self.inner.handle.spawn(async move { client.land_late(&def, &begun, writing, &landing).await });
+                Started { recorded: false, closing: None, late: Some(late) }
+            }
         }
-        (true, close.then(|| self.close_on_start(def, run)))
+    }
+
+    /// The end of a start write given up on. One that failed in the end
+    /// left nothing behind, and says nothing: the store was already
+    /// reported, and a finish written meanwhile is what refuses it. One
+    /// that landed says so, and does what the run's end left for it: the
+    /// finish that could not be recorded, written and judged now, or a run
+    /// given back, taken back now.
+    async fn land_late(
+        &self,
+        def: &Arc<JobDef>,
+        begun: &Run,
+        writing: JoinHandle<Result<(), Error>>,
+        late: &LateStart,
+    ) {
+        if !matches!(writing.await, Ok(Ok(()))) {
+            return;
+        }
+        let after = {
+            let mut state = late.lock();
+            state.landed = true;
+            state.after.take()
+        };
+        match after {
+            None => {}
+            Some(AfterEnd::Discard) => {
+                self.discard_run(begun).await;
+            }
+            Some(AfterEnd::Finish(run, finished_at)) => self.record_late_finish(def, &run, finished_at).await,
+        }
+    }
+
+    /// Records the finish of a run whose start landed after its finish
+    /// could not be recorded.
+    async fn record_late_finish(&self, def: &Arc<JobDef>, run: &Run, finished_at: i64) {
+        let name = &def.name;
+        match self.record_finish(def, run, true, finished_at).await {
+            Err(err) => self.report(err, &format!("recording {name}")),
+            Ok(Some(why)) => self
+                .report(Error::Other(format!("run {} of {name} {why}; ignored", run.id)), &format!("finishing {name}")),
+            Ok(None) => {}
+        }
     }
 
     /// The end of a run: its fields set from how it went, judged, written
@@ -713,8 +883,11 @@ impl Client {
         failure: Option<String>,
         recorded: bool,
         closing: Option<JoinHandle<()>>,
+        late: Option<&Arc<LateStart>>,
     ) -> Run {
         let name = def.name.clone();
+        // A start given up on that has landed since is a row to finish over.
+        let recorded = recorded || late.is_some_and(|late| late.landed());
         let finished_at = self.now();
         run.finished_at = Some(finished_at);
         run.duration_ms = Some(run_duration(run.started_at, finished_at));
@@ -734,7 +907,18 @@ impl Client {
             }
         }
         match self.record_finish(def, &run, recorded, finished_at).await {
-            Err(err) => self.report(err, &format!("recording {name}")),
+            Err(err) => {
+                self.report(err, &format!("recording {name}"));
+                // Nothing was recorded, and the start is still being written
+                // (or landed while this was): when it lands, a running row
+                // would be left with no finish coming. It is finished then,
+                // or now if it is already there.
+                if let Some(late) = late.filter(|_| !recorded) {
+                    if late.landed_or(AfterEnd::Finish(Box::new(run.clone()), finished_at)) {
+                        self.record_late_finish(def, &run, finished_at).await;
+                    }
+                }
+            }
             Ok(Some(why)) => self
                 .report(Error::Other(format!("run {} of {name} {why}; ignored", run.id)), &format!("finishing {name}")),
             Ok(None) => {}
@@ -775,7 +959,7 @@ impl Client {
     ) -> Result<Option<String>, Error> {
         if !recorded {
             // The start was never written; the store may be back by now.
-            self.sync(def).await?;
+            self.sync_for_run(def).await?;
             match self.inner.store.insert_run(run).await {
                 Ok(()) => {
                     self.finish_run(&def.stored, run, finished_at).await;
@@ -914,7 +1098,9 @@ impl Client {
     /// was stored, until its pending evaluation marker and its finish are
     /// written; one whose finish is still not written five minutes later is
     /// closed by the next check as timed out, with an error saying so, and
-    /// alerts as a stuck run. A later retry that lands still recovers it. An
+    /// alerts as a stuck run, or, when the run had an error, as the failed
+    /// run it was, with that error and its own times. A later retry that
+    /// lands still recovers the first, and changes nothing of the second. An
     /// import still running is stored with no finish (`finished_at` is
     /// `None`) and times out by the job's timeout, as any running run does.
     pub async fn record_run(&self, input: Run, options: RecordOptions) -> Result<Vec<Alert>, Error> {

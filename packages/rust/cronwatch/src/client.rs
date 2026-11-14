@@ -270,6 +270,7 @@ impl ClientBuilder {
                 last_prune_at: AtomicI64::new(0),
                 timer: Mutex::new(None),
                 warned_deferred_start: AtomicBool::new(false),
+                warned_runtime_gone: AtomicBool::new(false),
             }),
         })
     }
@@ -326,6 +327,9 @@ pub(crate) struct Inner {
     pub last_prune_at: AtomicI64,
     pub timer: Mutex<Option<JoinHandle<()>>>,
     pub warned_deferred_start: AtomicBool,
+    /// Whether a task cancelled under the client has been reported (see
+    /// `report_panicked`).
+    pub warned_runtime_gone: AtomicBool,
 }
 
 impl Drop for Inner {
@@ -537,21 +541,37 @@ impl Client {
 
     /// Writes the declaration of `def`'s name as it stands, unless the store
     /// has it. A handle kept from an earlier declaration writes the one that
-    /// replaced it, never its own over it, and one forgotten since writes its
-    /// own. The writes of one name take turns, in the order they were asked
-    /// for, so one still under way cannot land after a later one; and a name
-    /// declared again while its write was under way is still to be written.
-    /// A name is marked as written only while that same declaration stands,
-    /// so a forget that lands during the write (deleting the row after it)
-    /// leaves the name to be written again, as does one forgotten before it.
+    /// replaced it, never its own over it. The writes of one name take
+    /// turns, in the order they were asked for, so one still under way cannot
+    /// land after a later one; and a name declared again while its write was
+    /// under way is still to be written. A name is marked as written only
+    /// while that same declaration stands, so a forget that lands during the
+    /// write (deleting the row after it) leaves the name to be written again.
+    ///
+    /// This is the write a check, a dashboard read, or `record_run` asks
+    /// for: a name forgotten here since it was asked for is left forgotten
+    /// (see `sync_with`).
     pub(crate) async fn sync(&self, def: &Arc<JobDef>) -> Result<(), Error> {
-        self.sync_with(def, false).await
+        self.sync_with(def, false, false).await
     }
 
-    /// `sync`, and with `confirm`, as a run starts, a name already written is
-    /// read back: another process may have forgotten the job since, and a job
-    /// still declared here comes back on its next run.
-    pub(crate) async fn sync_with(&self, def: &Arc<JobDef>, confirm: bool) -> Result<(), Error> {
+    /// `sync` for a run that never had its start written (the unrecorded
+    /// finish): a job forgotten here is declared again, as at a run's start.
+    pub(crate) async fn sync_for_run(&self, def: &Arc<JobDef>) -> Result<(), Error> {
+        self.sync_with(def, false, true).await
+    }
+
+    /// `sync`, and with `confirm`, a name already written is read back:
+    /// another process may have forgotten the job since, and a job still
+    /// declared here comes back on its next run. `running` says the write is
+    /// for a run. A name forgotten here (`forget`) is then declared again as
+    /// it was, as `run` by name declares it (`declared_again`), so a handle
+    /// kept across the forget writes the job once and the checks keep it
+    /// declared, where it used to write the row on every run and stay out
+    /// of the declared set. Without `running`, a check or a dashboard read
+    /// whose loop picked the name up just before the forget leaves it
+    /// forgotten: only a run brings a forgotten job back.
+    pub(crate) async fn sync_with(&self, def: &Arc<JobDef>, confirm: bool, running: bool) -> Result<(), Error> {
         self.ensure_ready().await?;
         let name = &def.name;
         if lock(&self.inner.declared).synced.contains(name) {
@@ -563,9 +583,20 @@ impl Client {
         let turn = self.sync_lock(name);
         let _turn = turn.lock().await;
         let standing = {
-            let declared = lock(&self.inner.declared);
+            let mut declared = lock(&self.inner.declared);
             if declared.synced.contains(name) {
                 return Ok(());
+            }
+            if !declared.definitions.contains_key(name) {
+                if !running {
+                    return Ok(());
+                }
+                // The declaration forgotten here, else the handle's own (a
+                // handle is only ever made from a declaration, so one of the
+                // two is there).
+                let again = declared.forgotten.remove(name).unwrap_or_else(|| def.clone());
+                declared.order.push(name.clone());
+                declared.definitions.insert(name.clone(), again);
             }
             declared.definitions.get(name).unwrap_or(def).clone()
         };

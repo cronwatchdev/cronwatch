@@ -365,7 +365,8 @@ fn xf(t: f64, sp: Span) -> f64 {
 
 fn lane(job: &JobSummary, runs: &[Run], complete: bool, sp: Span, now_in_lane: bool, name: &str) -> LaneParts {
     let Span { from, to, now } = sp;
-    let x = |t: i64| ((((t - from) as f64) / (to - from) as f64) * LANE_WIDTH).clamp(0.0, LANE_WIDTH);
+    // Saturating: a foreign row's start can be anywhere, the lowest i64 included.
+    let x = |t: i64| (((t.saturating_sub(from) as f64) / (to - from) as f64) * LANE_WIDTH).clamp(0.0, LANE_WIDTH);
     let parsed = lane_schedule(job);
     let (times, dense) = due_times(job, parsed.as_deref(), runs, from, to);
     let missed = missed_at(job, parsed.as_deref(), &times, now);
@@ -572,7 +573,7 @@ fn lane_words(
 
 /// The grid lines and hour labels every `step`, on UTC boundaries.
 fn hour_grid(sp: Span, step: i64, now_label: bool) -> (String, String) {
-    let x = |t: i64| ((t - sp.from) as f64 / (sp.to - sp.from) as f64) * LANE_WIDTH;
+    let x = |t: i64| (t.saturating_sub(sp.from) as f64 / (sp.to - sp.from) as f64) * LANE_WIDTH;
     let now_x = x(sp.now);
     let (mut lines, mut labels) = (String::new(), String::new());
     let mut t = -js::floor_div(-sp.from, step) * step;
