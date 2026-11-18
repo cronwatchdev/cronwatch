@@ -7,7 +7,8 @@
 # deploy/contact/, run `sudo systemctl restart cronwatch-contact`.
 #
 # systemd reads the EnvironmentFile as root before it drops to the user, so
-# the file stays mode 600, owned by joncphillips.
+# the file stays mode 600, owned by joncphillips, and the service user never
+# sees it.
 
 [Unit]
 Description=cronwatch.dev contact form
@@ -16,8 +17,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=joncphillips
-Group=joncphillips
+# A throwaway user systemd makes at start: the service owns no files, so it
+# needs no account, and can't touch anything joncphillips owns.
+DynamicUser=yes
 EnvironmentFile=/home/joncphillips/.config/cronwatch-contact.env
 ExecStart=/opt/node-cronwatch/bin/node /var/www/cronwatch.dev/deploy/contact/server.mjs
 Restart=always
@@ -28,7 +30,7 @@ UMask=0077
 # it writes nothing to disk.
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
