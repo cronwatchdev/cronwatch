@@ -38,8 +38,8 @@ final class WatchedQueueWorker extends QueueWorkerBase implements ContainerFacto
     array $configuration,
     $plugin_id,
     $plugin_definition,
-    private readonly QueueWorkerInterface $inner,
-    private readonly Recorder $recorder,
+    protected QueueWorkerInterface $inner,
+    protected Recorder $recorder,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }

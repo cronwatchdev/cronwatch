@@ -7,6 +7,7 @@
 
 declare(strict_types=1);
 
+use Cronwatch\Bridge\ChannelSettings;
 use Drupal\cronwatch\Storage;
 
 /**
@@ -32,10 +33,10 @@ function cronwatch_uninstall(): void {
  */
 function cronwatch_update_10001(): void {
   $config = \Drupal::configFactory()->getEditable('cronwatch.settings');
-  foreach (\Cronwatch\Bridge\ChannelSettings::defaults() as $key => $default) {
+  foreach (ChannelSettings::defaults() as $key => $default) {
     if ($config->get($key) === NULL) {
       $config->set($key, $default);
     }
   }
-  $config->save(TRUE);
+  $config->save();
 }

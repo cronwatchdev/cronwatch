@@ -31,9 +31,9 @@ final class SettingsForm extends ConfigFormBase {
   public function __construct(
     ConfigFactoryInterface $config_factory,
     TypedConfigManagerInterface $typed_config,
-    private readonly Recorder $recorder,
-    private readonly QueueWorkerManagerInterface $queues,
-    private readonly bool $watchingCron,
+    protected Recorder $recorder,
+    protected QueueWorkerManagerInterface $queues,
+    protected bool $watchingCron,
   ) {
     parent::__construct($config_factory, $typed_config);
   }

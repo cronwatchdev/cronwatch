@@ -2,6 +2,12 @@
 
 All notable changes to the CronWatch module for Drupal, newest first. Each release carries the CronWatch library (`cronwatch/cronwatch`) of the same version.
 
+## Unreleased
+
+### Fixed
+- The settings form and a watched queue worker keep their services in protected properties, which Drupal's serialization (and Drupal 12) can see, instead of private ones.
+- The update that adds the channel settings saves them through the configuration schema, as Drupal 11.4 asks.
+
 ## 0.15.0 - 2026-11-14
 
 ### Fixed
