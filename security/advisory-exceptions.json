@@ -136,5 +136,44 @@
     ],
     "expires": "2027-01-10",
     "reason": "Rails 7.2 is past its security support, and these advisories (published 2026-11-10) are fixed only in Rails 8.0.5.2 and 8.1.4.1. The lockfile is the unpublished Rails 7.2 test bundle, which keeps the gem's Rails 7.2 compatibility tested; the gem itself has no Rails dependency, and an app chooses and patches its own Rails. Remove by expiry, with Rails 7.2 support if no fix appears."
+  },
+  {
+    "ecosystem": "crates.io",
+    "name": "chrono",
+    "version": "0.4.45",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0543"
+    ],
+    "expires": "2027-02-20",
+    "reason": "chrono is flagged unmaintained, with no fixed release and no vulnerability. It is reached only through cronwatch-apalis and cronwatch-tokio-cron-scheduler: apalis-cron and tokio-cron-scheduler take chrono's types in their public APIs, so the integrations cannot leave it while those schedulers use it. The core and cronwatch-sqlx do not depend on it. Review when either scheduler moves off chrono, or by expiry."
+  },
+  {
+    "ecosystem": "crates.io",
+    "name": "chrono-tz",
+    "version": "0.10.4",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0555"
+    ],
+    "expires": "2027-02-20",
+    "reason": "chrono-tz is flagged unmaintained, with no fixed release and no vulnerability. It is reached only through cronwatch-apalis and cronwatch-tokio-cron-scheduler: apalis-cron and tokio-cron-scheduler take chrono's types in their public APIs, so the integrations cannot leave it while those schedulers use it. The core and cronwatch-sqlx do not depend on it. Review when either scheduler moves off chrono, or by expiry."
+  },
+  {
+    "ecosystem": "crates.io",
+    "name": "chrono-tz-build",
+    "version": "0.5.0",
+    "sources": [
+      "packages/rust/Cargo.lock"
+    ],
+    "advisories": [
+      "RUSTSEC-2026-0559"
+    ],
+    "expires": "2027-02-20",
+    "reason": "chrono-tz-build is flagged unmaintained, with no fixed release and no vulnerability. It is reached only through cronwatch-apalis and cronwatch-tokio-cron-scheduler: apalis-cron and tokio-cron-scheduler take chrono's types in their public APIs, so the integrations cannot leave it while those schedulers use it. The core and cronwatch-sqlx do not depend on it. Review when either scheduler moves off chrono, or by expiry."
   }
 ]
