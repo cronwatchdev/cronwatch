@@ -2,7 +2,7 @@
 Contributors: joncphillips
 Tags: cron, wp-cron, monitoring, scheduled tasks, alerts
 Requires at least: 6.5
-Tested up to: 7.1
+Tested up to: 7.2
 Requires PHP: 8.2
 Stable tag: 0.15.0
 License: GPLv2 or later

@@ -1,0 +1,73 @@
+# The WordPress plugin's readme.txt from main -> wordpress.org's SVN, without
+# a release: trunk/readme.txt and tags/<Stable tag>/readme.txt, which is
+# where the plugin directory reads "Tested up to" from. For the day a new
+# WordPress comes out and the plugin needs nothing but that line.
+#
+# Only the header's "Tested up to" may differ from the readme already in
+# SVN: any other change (a changelog entry, new wording) belongs to the next
+# release, and the run refuses it. A readme SVN already has is left alone,
+# so a rerun is safe.
+#
+# Started by hand only. It uses the wordpress-org environment and its
+# secrets SVN_USERNAME and SVN_PASSWORD, as wordpress-zip.yml does, and
+# never runs the repository's code: it only copies a text file.
+name: WordPress readme
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wordpress-zip
+  cancel-in-progress: false
+
+jobs:
+  svn:
+    if: vars.WPORG_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: wordpress-org
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: packages/php/wordpress/readme.txt
+          sparse-checkout-cone-mode: false
+      - name: Commit the readme to wordpress.org's SVN
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SVN_URL: https://plugins.svn.wordpress.org/cronwatch
+        run: |
+          readme="$GITHUB_WORKSPACE/packages/php/wordpress/readme.txt"
+          stable="$(sed -n 's/^Stable tag: *\([^ ]*\)$/\1/p' "$readme")"
+          case "$stable" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "readme.txt has no Stable tag"; exit 1 ;; esac
+          if [ -z "$SVN_USERNAME" ] || [ -z "$SVN_PASSWORD" ]; then echo "SVN_USERNAME and SVN_PASSWORD must be set in the wordpress-org environment"; exit 1; fi
+          command -v svn >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q subversion; }
+          co="$RUNNER_TEMP/svn"
+          svn co -q --depth empty "$SVN_URL" "$co"
+          svn update -q --set-depth empty "$co/trunk" "$co/tags"
+          svn update -q --set-depth empty "$co/tags/$stable"
+          svn update -q "$co/trunk/readme.txt" "$co/tags/$stable/readme.txt"
+          if [ ! -f "$co/tags/$stable/readme.txt" ]; then echo "tags/$stable is not in SVN: release it first"; exit 1; fi
+          for f in "$co/trunk/readme.txt" "$co/tags/$stable/readme.txt"; do
+            if ! diff <(grep -v '^Tested up to:' "$f") <(grep -v '^Tested up to:' "$readme"); then
+              echo "readme.txt differs from SVN's ${f#"$co"/} in more than its Tested up to line; that waits for the next release"
+              exit 1
+            fi
+          done
+          cp "$readme" "$co/trunk/readme.txt"
+          cp "$readme" "$co/tags/$stable/readme.txt"
+          cd "$co"
+          if [ -z "$(svn st)" ]; then echo "SVN already has this readme"; exit 0; fi
+          svn diff
+          tested="$(sed -n 's/^Tested up to: *\([^ ]*\)$/\1/p' "$readme")"
+          # The password goes in on standard input, never on the command line,
+          # where any process on the runner could read it.
+          printf '%s' "$SVN_PASSWORD" | svn ci -m "Tested up to $tested" --non-interactive --no-auth-cache \
+            --username "$SVN_USERNAME" --password-from-stdin
