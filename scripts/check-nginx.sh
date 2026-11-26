@@ -20,9 +20,22 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=cronwatch.dev" \
 : >"$le/options-ssl-nginx.conf"
 openssl dhparam -dsaparam -out "$le/ssl-dhparams.pem" 2048 2>/dev/null
 
+# The vhost logs AI agent requests with the runlight_agents format and the
+# $runlight_agent_record map, which the server keeps in the shared
+# /etc/nginx/conf.d/runlight-agents.conf. A stand-in defines both, and an
+# empty directory takes the log's place. Its name sorts it before the vhost,
+# since a log format must be defined before an access_log names it.
+cat >"$work/00-runlight-agents.conf" <<'EOF'
+map $host $runlight_agent_record { default 0; }
+log_format runlight_agents '$host';
+EOF
+mkdir -p "$work/runlight-agents"
+
 # The official image includes conf.d/*.conf inside its http block, as
 # sites-enabled is on the server.
 docker run --rm \
+    -v "$work/00-runlight-agents.conf:/etc/nginx/conf.d/00-runlight-agents.conf:ro" \
     -v "$ROOT/deploy/nginx.conf:/etc/nginx/conf.d/cronwatch.conf:ro" \
+    -v "$work/runlight-agents:/var/log/runlight-agents" \
     -v "$le:/etc/letsencrypt:ro" \
     "$IMAGE" nginx -t
