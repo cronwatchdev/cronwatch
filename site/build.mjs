@@ -177,7 +177,7 @@ const THEME_COLOR = "#09090b";
 
 /* Runlight, the owner's analytics. Left off the contact pages, so a script
    from another origin never shares a page with what someone types there. */
-const ANALYTICS = `<script defer src="https://analytics.joncp.dev/s.js?site=cronwatch.dev" data-site="cronwatch.dev"></script>\n`;
+const ANALYTICS = `<script defer src="https://t.cronwatch.dev/s.js?site=cronwatch.dev" data-site="cronwatch.dev"></script>\n`;
 
 function layout({ title, description, body, path: pagePath, kind = "page", index = true, head = "" }) {
   const canonical = `${SITE}${pagePath}`;

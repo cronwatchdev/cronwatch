@@ -6,7 +6,7 @@ updated: 2026-10-15
 
 # Privacy
 
-cronwatch.dev is the documentation site for an open source library. It has no visitor accounts or advertising. It uses Runlight analytics, hosted by the maintainer at analytics.joncp.dev, to understand how people use the site. This page explains what the site collects.
+cronwatch.dev is the documentation site for an open source library. It has no visitor accounts or advertising. It uses Runlight analytics, hosted by the maintainer and served from t.cronwatch.dev, to understand how people use the site. This page explains what the site collects.
 
 ## The library keeps its data with you
 
@@ -16,7 +16,7 @@ CronWatch runs inside your own application and stores job runs, output, and aler
 
 The site sets no analytics cookies. If you switch between light and dark paper, your choice is saved in your browser's local storage under `cronwatch-theme`, so the next page opens the same way. If you opt out of analytics using the link below, `runlight_ignore` stores that choice. These preferences stay in your browser, and clearing your site data removes them.
 
-Most styles and scripts load from cronwatch.dev. The analytics script loads from analytics.joncp.dev, on every page except the contact form and its replies. The fonts come from Adobe Fonts (use.typekit.net), which sees your IP address and browser when it serves them.
+Most styles and scripts load from cronwatch.dev. The analytics script loads from t.cronwatch.dev, on every page except the contact form and its replies. The fonts come from Adobe Fonts (use.typekit.net), which sees your IP address and browser when it serves them.
 
 ## Site analytics
 
