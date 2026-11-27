@@ -173,7 +173,7 @@ const assets = { css: "", js: "", theme: "", search: "", index: "" };
 
 /* The browser chrome matches --paper; theme.js and site.js swap it to the
    dark paper when the sheet is turned over. */
-const THEME_COLOR = "#09090b";
+const THEME_COLOR = "#f4f4f5";
 
 /* Runlight, the owner's analytics. Left off the contact pages, so a script
    from another origin never shares a page with what someone types there. */
@@ -188,7 +188,7 @@ function layout({ title, description, body, path: pagePath, kind = "page", index
     return `<a href="${l.href}"${cls ? ` class="${cls}"` : ""}>${escape(l.label)}</a>`;
   }).join("");
   return `<!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
